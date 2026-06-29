@@ -1,6 +1,0 @@
-{
-  "name": "For You",
-  "description": "An intimate, calming, and sincere interactive apology experience.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
