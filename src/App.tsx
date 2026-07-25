@@ -33,9 +33,36 @@ export default function App() {
   const {session, state, mode} = grace;
 
   // Nothing of hers renders until the session is settled, so a lapsed cookie
-  // can't flash her transcript on screen first.
+  // can't flash her transcript on screen first. But an unreachable server used
+  // to leave this as a blank glow forever, with nothing to explain it.
   if (session === null) {
-    return <div className="ambient h-screen" />;
+    return (
+      <div className="relative grid h-screen place-items-center overflow-hidden px-6">
+        <div className="ambient pointer-events-none absolute inset-0 -z-10" />
+        <div className="max-w-sm text-center">
+          <h1 className="font-serif text-3xl tracking-wide text-slate-100">Grace</h1>
+          {grace.error ? (
+            <>
+              <p className="mt-4 text-sm leading-relaxed text-mist/80">
+                I can’t reach my own server, so I can’t tell you anything useful
+                yet.
+              </p>
+              <p className="mt-3 rounded-lg border border-ember/25 bg-ember/10 px-3 py-2 text-left font-mono text-xs text-ember/90">
+                {grace.error}
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="mt-4 rounded-full border border-edge px-4 py-1.5 text-sm text-mist transition hover:text-slate-200">
+                Try again
+              </button>
+            </>
+          ) : (
+            <p className="mt-2 text-sm text-mist/60">One moment…</p>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (session === 'required' || session === 'misconfigured') {
