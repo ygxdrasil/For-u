@@ -1,12 +1,12 @@
 import {PanelRight} from 'lucide-react';
 import {useState} from 'react';
-import {Composer} from './components/Composer.tsx';
-import {Lock} from './components/Lock.tsx';
-import {Orb} from './components/Orb.tsx';
-import {ProfilePanel} from './components/ProfilePanel.tsx';
-import {Transcript} from './components/Transcript.tsx';
-import type {Mode} from './hooks/useGrace.ts';
-import {useGrace} from './hooks/useGrace.ts';
+import {Composer} from './components/Composer';
+import {Lock} from './components/Lock';
+import {Orb} from './components/Orb';
+import {ProfilePanel} from './components/ProfilePanel';
+import {Transcript} from './components/Transcript';
+import type {Mode} from './hooks/useGrace';
+import {useGrace} from './hooks/useGrace';
 
 const MODE_LABEL: Record<Mode, string> = {
   offline: 'Not configured',
