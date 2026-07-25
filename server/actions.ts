@@ -1,7 +1,5 @@
-import path from 'node:path';
 import type {ActionCategory, ActionPolicy, ConfirmationPolicy} from '../shared/types.ts';
-import {config} from './config.ts';
-import {JsonStore} from './store.ts';
+import {Document} from './store/index.ts';
 
 /**
  * The user's two hard limits are enforced here rather than only in the prompt.
@@ -16,30 +14,26 @@ const DEFAULT_POLICIES: ActionPolicy[] = [
   {category: 'research', policy: 'never'},
 ];
 
-const store = new JsonStore<ActionPolicy[]>(
-  path.join(config.dataDir, 'policies.json'),
-  () => DEFAULT_POLICIES,
-);
+const store = new Document<ActionPolicy[]>('policies', () => DEFAULT_POLICIES);
 
-export function getPolicies(): ActionPolicy[] {
+export function getPolicies(): Promise<ActionPolicy[]> {
   return store.read();
 }
 
-export function policyFor(category: ActionCategory): ConfirmationPolicy {
-  return (
-    store.read().find((entry) => entry.category === category)?.policy ?? 'always'
-  );
+export async function policyFor(category: ActionCategory): Promise<ConfirmationPolicy> {
+  const policies = await store.read();
+  return policies.find((entry) => entry.category === category)?.policy ?? 'always';
 }
 
 /**
  * Locked categories reject changes outright — including changes Grace herself
  * proposes, which is the point.
  */
-export function setPolicy(
+export async function setPolicy(
   category: ActionCategory,
   policy: ConfirmationPolicy,
-): {ok: boolean; reason?: string} {
-  const current = store.read();
+): Promise<{ok: boolean; reason?: string}> {
+  const current = await store.read();
   const existing = current.find((entry) => entry.category === category);
 
   if (!existing) {
@@ -53,7 +47,7 @@ export function setPolicy(
     };
   }
 
-  store.write(
+  await store.write(
     current.map((entry) =>
       entry.category === category ? {...entry, policy} : entry,
     ),
@@ -64,13 +58,13 @@ export function setPolicy(
 
 /**
  * Every real-world action in later phases routes through this before running.
- * Returns whether the action may proceed unattended.
+ * Returns whether the action needs sign-off before it may proceed.
  */
-export function requiresConfirmation(
+export async function requiresConfirmation(
   category: ActionCategory,
   highRisk = false,
-): boolean {
-  const policy = policyFor(category);
+): Promise<boolean> {
+  const policy = await policyFor(category);
   if (policy === 'always') return true;
   if (policy === 'never') return false;
   return highRisk;

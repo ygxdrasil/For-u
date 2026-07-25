@@ -1,6 +1,7 @@
 import {PanelRight} from 'lucide-react';
 import {useState} from 'react';
 import {Composer} from './components/Composer.tsx';
+import {Lock} from './components/Lock.tsx';
 import {Orb} from './components/Orb.tsx';
 import {ProfilePanel} from './components/ProfilePanel.tsx';
 import {Transcript} from './components/Transcript.tsx';
@@ -29,7 +30,17 @@ export default function App() {
   const grace = useGrace();
   const [panelOpen, setPanelOpen] = useState(false);
 
-  const {state, mode} = grace;
+  const {session, state, mode} = grace;
+
+  // Nothing of hers renders until the session is settled, so a lapsed cookie
+  // can't flash her transcript on screen first.
+  if (session === null) {
+    return <div className="ambient h-screen" />;
+  }
+
+  if (session === 'required' || session === 'misconfigured') {
+    return <Lock status={session} onSubmit={grace.signIn} />;
+  }
   const notice =
     mode === 'offline'
       ? 'No Gemini API key found. Add GEMINI_API_KEY to .env.local and restart.'
@@ -112,6 +123,7 @@ export default function App() {
             onForget={grace.forget}
             onRename={grace.rename}
             onClear={grace.clear}
+            onSignOut={session === 'ok' ? () => void grace.signOut() : undefined}
           />
         )}
       </main>

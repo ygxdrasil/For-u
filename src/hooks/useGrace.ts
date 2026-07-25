@@ -4,14 +4,17 @@ import type {
   InputMode,
   Message,
   Profile,
+  ProfileEntry,
 } from '../../shared/types.ts';
 import * as api from '../lib/api.ts';
+import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
 import {useListener} from '../voice/useListener.ts';
 import {useSpeech} from '../voice/useSpeech.ts';
 
 export type Mode = 'offline' | 'idle' | 'waiting' | 'listening' | 'thinking' | 'speaking';
 
 export function useGrace() {
+  const [session, setSession] = useState<SessionStatus | null>(null);
   const [state, setState] = useState<GraceState | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState('');
@@ -23,14 +26,52 @@ export function useGrace() {
   const abortRef = useRef<AbortController | null>(null);
   const speech = useSpeech(voiceOn);
 
+  const load = useCallback(async () => {
+    const loaded = await api.fetchState();
+    setState(loaded);
+    setMessages(loaded.messages);
+  }, []);
+
   useEffect(() => {
     api
-      .fetchState()
-      .then((loaded) => {
-        setState(loaded);
-        setMessages(loaded.messages);
+      .fetchSession()
+      .then(async (status) => {
+        setSession(status);
+        if (status === 'ok' || status === 'open') await load();
       })
       .catch((cause: Error) => setError(cause.message));
+  }, [load]);
+
+  const signIn = useCallback(
+    async (password: string) => {
+      await api.login(password);
+      setSession('ok');
+      setError(null);
+      await load();
+    },
+    [load],
+  );
+
+  const signOut = useCallback(async () => {
+    await api.logout();
+    setSession('required');
+    setState(null);
+    setMessages([]);
+  }, []);
+
+  const addLearned = useCallback((entries: ProfileEntry[]) => {
+    if (entries.length === 0) return;
+    setState((current) =>
+      current
+        ? {
+            ...current,
+            profile: {
+              ...current.profile,
+              entries: [...current.profile.entries, ...entries],
+            },
+          }
+        : current,
+    );
   }, []);
 
   const send = useCallback(
@@ -57,6 +98,7 @@ export function useGrace() {
       const controller = new AbortController();
       abortRef.current = controller;
       const speakIt = via === 'voice' && voiceOn;
+      let landed = false;
 
       try {
         for await (const event of api.streamChat(spoken, via, controller.signal)) {
@@ -68,25 +110,17 @@ export function useGrace() {
             const {message} = event;
             setStreaming('');
             setMessages((current) => [...current, message]);
+            landed = true;
           } else if (event.type === 'learned') {
-            setState((current) =>
-              current
-                ? {
-                    ...current,
-                    profile: {
-                      ...current.profile,
-                      entries: [...current.profile.entries, ...event.entries],
-                    },
-                  }
-                : current,
-            );
+            addLearned(event.entries);
           } else if (event.type === 'error') {
             setError(event.message);
             setStreaming('');
           }
         }
       } catch (cause) {
-        if ((cause as Error).name !== 'AbortError') {
+        if (cause instanceof NeedsPassword) setSession('required');
+        else if ((cause as Error).name !== 'AbortError') {
           setError((cause as Error).message);
         }
         setStreaming('');
@@ -94,8 +128,14 @@ export function useGrace() {
         abortRef.current = null;
         setBusy(false);
       }
+
+      // Learning and compaction happen after the reply, as their own request,
+      // so neither delays what she says.
+      if (landed) {
+        api.reflect().then(addLearned).catch(() => {});
+      }
     },
-    [speech, voiceOn],
+    [addLearned, speech, voiceOn],
   );
 
   const handleRequest = useCallback(
@@ -149,6 +189,7 @@ export function useGrace() {
   }, [state, speech.speaking, busy, micOn, listener.awake]);
 
   return {
+    session,
     state,
     messages,
     streaming,
@@ -160,6 +201,8 @@ export function useGrace() {
     speech,
     setMicOn,
     setVoiceOn,
+    signIn,
+    signOut,
     send,
     stop,
     forget,

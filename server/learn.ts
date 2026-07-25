@@ -59,7 +59,7 @@ export async function learnFrom(
 ): Promise<ProfileEntry[]> {
   if (!config.learnFromConversation) return [];
 
-  const known = getProfile().entries;
+  const known = (await getProfile()).entries;
   const knownList =
     known.length > 0
       ? known.map((entry) => `- ${entry.text}`).join('\n')

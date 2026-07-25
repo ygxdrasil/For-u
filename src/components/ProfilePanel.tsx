@@ -50,6 +50,8 @@ interface ProfilePanelProps {
   onForget: (id: string) => void;
   onRename: (addressAs: string | null) => void;
   onClear: () => void;
+  /** Only present when a password is in use. */
+  onSignOut?: () => void;
 }
 
 export function ProfilePanel({
@@ -60,6 +62,7 @@ export function ProfilePanel({
   onForget,
   onRename,
   onClear,
+  onSignOut,
 }: ProfilePanelProps) {
   const [address, setAddress] = useState(profile.addressAs ?? '');
   const [current, setCurrent] = useState(policies);
@@ -214,6 +217,17 @@ export function ProfilePanel({
             Clears what was said. What she has learned about you stays.
           </p>
         </Section>
+
+        {onSignOut && (
+          <Section title="Session">
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="w-full rounded-lg border border-edge px-3 py-2 text-sm text-mist transition hover:border-ice/40 hover:text-slate-200">
+              Sign out
+            </button>
+          </Section>
+        )}
       </div>
     </aside>
   );

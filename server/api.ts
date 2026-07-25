@@ -7,6 +7,14 @@ import type {
   InputMode,
 } from '../shared/types.ts';
 import {getPolicies, setPolicy} from './actions.ts';
+import {
+  authStatus,
+  checkPassword,
+  clearSession,
+  issueSession,
+  pauseAfterFailure,
+  requireAuth,
+} from './auth.ts';
 import {config, isConfigured} from './config.ts';
 import {learnFrom} from './learn.ts';
 import {getProvider} from './llm/index.ts';
@@ -22,6 +30,7 @@ import {
   setAddressAs,
 } from './memory.ts';
 import {buildSystemPrompt} from './persona.ts';
+import {getBackend} from './store/index.ts';
 
 /**
  * Express 4 lets a rejected async handler escape as an unhandled rejection,
@@ -40,31 +49,81 @@ function guard(handler: (req: Request, res: Response) => Promise<void>) {
 
 const NO_KEY_MESSAGE =
   'No Gemini API key is configured, so I have no voice to think with. ' +
-  'Add GEMINI_API_KEY to .env.local and restart me.';
+  'Add GEMINI_API_KEY and restart me.';
 
 /**
  * A full express app rather than a bare Router: Vite's dev middleware hands over
  * a plain Node response, and it is express itself — not Router — that adds
- * res.json and friends. Mounting the app works in both dev and production.
+ * res.json and friends. Mounting the app works in dev, production and serverless.
  */
 export function createApi(): Express {
   const api = express();
   api.use(express.json({limit: '1mb'}));
 
+  // ---- open endpoints ----------------------------------------------------
+
   api.get('/health', (_req, res) => {
-    res.json({ok: true, configured: isConfigured(), model: config.model});
+    res.json({
+      ok: true,
+      configured: isConfigured(),
+      model: config.model,
+      storage: getBackend().name,
+      encrypted: Boolean(config.secret),
+    });
   });
 
-  api.get('/state', (_req, res) => {
-    const state: GraceState = {
-      messages: getMessages(),
-      profile: getProfile(),
-      policies: getPolicies(),
-      ready: isConfigured(),
-      model: config.model,
-    };
-    res.json(state);
+  api.get('/session', (req, res) => {
+    res.json({status: authStatus(req)});
   });
+
+  api.post(
+    '/login',
+    guard(async (req, res) => {
+      const status = authStatus(req);
+      if (status === 'misconfigured') {
+        res.status(503).json({error: 'no password is set on the server'});
+        return;
+      }
+
+      if (!checkPassword(String(req.body?.password ?? ''))) {
+        await pauseAfterFailure();
+        res.status(401).json({error: 'that is not the password'});
+        return;
+      }
+
+      issueSession(res);
+      res.json({ok: true});
+    }),
+  );
+
+  api.post('/logout', (_req, res) => {
+    clearSession(res);
+    res.json({ok: true});
+  });
+
+  // ---- everything below needs a session ----------------------------------
+
+  api.use(requireAuth);
+
+  api.get(
+    '/state',
+    guard(async (_req, res) => {
+      const [messages, profile, policies] = await Promise.all([
+        getMessages(),
+        getProfile(),
+        getPolicies(),
+      ]);
+
+      const state: GraceState = {
+        messages,
+        profile,
+        policies,
+        ready: isConfigured(),
+        model: config.model,
+      };
+      res.json(state);
+    }),
+  );
 
   api.post(
     '/chat',
@@ -98,12 +157,19 @@ export function createApi(): Express {
       const controller = new AbortController();
       res.on('close', () => controller.abort());
 
-      record('user', text, via);
+      await record('user', text, via);
+
+      const [profile, summary, policies, turns] = await Promise.all([
+        getProfile(),
+        getSummary(),
+        getPolicies(),
+        recentTurns(),
+      ]);
 
       const system = buildSystemPrompt({
-        profile: getProfile(),
-        summary: getSummary(),
-        policies: getPolicies(),
+        profile,
+        summary,
+        policies,
         via,
         now: new Date(),
       });
@@ -111,15 +177,13 @@ export function createApi(): Express {
       let reply = '';
 
       try {
-        const stream = getProvider().stream({
+        for await (const delta of getProvider().stream({
           system,
-          turns: recentTurns(),
+          turns,
           signal: controller.signal,
           temperature: 0.7,
           fast: true,
-        });
-
-        for await (const delta of stream) {
+        })) {
           reply += delta;
           send({type: 'delta', text: delta});
         }
@@ -128,7 +192,7 @@ export function createApi(): Express {
         console.error('[grace] generation failed:', message);
 
         // A half-finished reply is still worth keeping; the user heard it.
-        if (reply.trim()) record('grace', reply, via);
+        if (reply.trim()) await record('grace', reply, via);
         send({
           type: 'error',
           message: `I couldn't finish that thought — ${message}`,
@@ -143,50 +207,88 @@ export function createApi(): Express {
         return;
       }
 
-      send({type: 'done', message: record('grace', reply, via)});
-
-      // Held open a moment longer so the profile panel can update in place.
-      const learned = await learnFrom(text, reply);
-      if (learned.length > 0) send({type: 'learned', entries: learned});
+      send({type: 'done', message: await record('grace', reply, via)});
       res.end();
-
-      void compactIfNeeded();
     }),
   );
 
-  api.post('/profile/address', (req, res) => {
-    const raw = req.body?.addressAs;
-    const addressAs =
-      typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 40) : null;
-    res.json(setAddressAs(addressAs));
-  });
+  /**
+   * Profile extraction and compaction, as their own request.
+   *
+   * These used to run inside /chat, which was fine for a long-lived process but
+   * pushes a serverless invocation towards its time limit for work the user is
+   * not waiting on. The client calls this once a reply has landed.
+   */
+  api.post(
+    '/reflect',
+    guard(async (_req, res) => {
+      if (!isConfigured()) {
+        res.json({learned: [], compacted: false});
+        return;
+      }
 
-  api.delete('/profile/:id', (req, res) => {
-    res.json(forget(req.params.id));
-  });
+      const log = await getMessages();
+      const graceAt = log.findLastIndex((message) => message.speaker === 'grace');
+      const userAt = log
+        .slice(0, Math.max(graceAt, 0))
+        .findLastIndex((message) => message.speaker === 'user');
 
-  api.post('/policies', (req, res) => {
-    const category = req.body?.category as ActionCategory;
-    const policy = req.body?.policy as ConfirmationPolicy;
+      const learned =
+        graceAt >= 0 && userAt >= 0
+          ? await learnFrom(log[userAt].text, log[graceAt].text)
+          : [];
 
-    if (!['always', 'high-risk', 'never'].includes(policy)) {
-      res.status(400).json({error: 'unknown confirmation policy'});
-      return;
-    }
+      // If this times out the condition persists, so the next reflect retries.
+      const compacted = await compactIfNeeded();
+      res.json({learned, compacted});
+    }),
+  );
 
-    const result = setPolicy(category, policy);
-    if (!result.ok) {
-      res.status(409).json({error: result.reason});
-      return;
-    }
+  api.post(
+    '/profile/address',
+    guard(async (req, res) => {
+      const raw = req.body?.addressAs;
+      const addressAs =
+        typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 40) : null;
+      res.json(await setAddressAs(addressAs));
+    }),
+  );
 
-    res.json(getPolicies());
-  });
+  api.delete(
+    '/profile/:id',
+    guard(async (req, res) => {
+      res.json(await forget(req.params.id));
+    }),
+  );
 
-  api.post('/conversation/clear', (_req, res) => {
-    clearConversation();
-    res.json({ok: true});
-  });
+  api.post(
+    '/policies',
+    guard(async (req, res) => {
+      const category = req.body?.category as ActionCategory;
+      const policy = req.body?.policy as ConfirmationPolicy;
+
+      if (!['always', 'high-risk', 'never'].includes(policy)) {
+        res.status(400).json({error: 'unknown confirmation policy'});
+        return;
+      }
+
+      const result = await setPolicy(category, policy);
+      if (!result.ok) {
+        res.status(409).json({error: result.reason});
+        return;
+      }
+
+      res.json(await getPolicies());
+    }),
+  );
+
+  api.post(
+    '/conversation/clear',
+    guard(async (_req, res) => {
+      await clearConversation();
+      res.json({ok: true});
+    }),
+  );
 
   return api;
 }

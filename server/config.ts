@@ -11,7 +11,13 @@ export const config = {
   /** Flash is the free-tier workhorse. Override to trade cost for depth. */
   model: process.env.GRACE_MODEL ?? 'gemini-2.5-flash',
 
-  /** Where memory lives. Local disk by default — it never leaves the machine. */
+  /** Encrypts memory at rest, and signs login cookies. */
+  secret: process.env.GRACE_SECRET,
+
+  /** When set, Grace asks for this before she'll talk to anyone. */
+  password: process.env.GRACE_PASSWORD ?? '',
+
+  /** Where memory lives when running on local disk. */
   dataDir: process.env.GRACE_DATA_DIR ?? path.resolve(process.cwd(), '.grace'),
 
   port: Number(process.env.PORT ?? 3001),
@@ -24,6 +30,9 @@ export const config = {
 
   /** Set GRACE_LEARN=false to stop Grace building a profile of you. */
   learnFromConversation: process.env.GRACE_LEARN !== 'false',
+
+  /** True on Vercel and friends, where an open instance is a public one. */
+  deployed: Boolean(process.env.VERCEL ?? process.env.GRACE_DEPLOYED),
 } as const;
 
 export function isConfigured(): boolean {

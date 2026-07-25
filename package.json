@@ -10,11 +10,12 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "selftest": "GRACE_DATA_DIR=.selftest-data GEMINI_API_KEY=stub-key tsx scripts/selftest.ts"
+    "selftest": "GRACE_DATA_DIR=.selftest-data GEMINI_API_KEY=stub-key GRACE_SECRET=selftest-secret GRACE_PASSWORD=selftest-password tsx scripts/selftest.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@upstash/redis": "^1.38.0",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",

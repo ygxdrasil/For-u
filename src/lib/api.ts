@@ -5,11 +5,53 @@ import type {
   GraceState,
   InputMode,
   Profile,
+  ProfileEntry,
 } from '../../shared/types.ts';
 
+export type SessionStatus = 'open' | 'ok' | 'required' | 'misconfigured';
+
+/** Thrown when the session has lapsed, so the UI can show the lock screen. */
+export class NeedsPassword extends Error {
+  constructor() {
+    super('password required');
+    this.name = 'NeedsPassword';
+  }
+}
+
+async function expectOk(response: Response): Promise<Response> {
+  if (response.status === 401) throw new NeedsPassword();
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {error?: string} | null;
+    throw new Error(body?.error ?? `request failed (${response.status})`);
+  }
+  return response;
+}
+
+export async function fetchSession(): Promise<SessionStatus> {
+  const response = await fetch('/api/session');
+  const body = (await response.json()) as {status: SessionStatus};
+  return body.status;
+}
+
+export async function login(password: string): Promise<void> {
+  const response = await fetch('/api/login', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password}),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {error?: string} | null;
+    throw new Error(body?.error ?? 'could not sign in');
+  }
+}
+
+export async function logout(): Promise<void> {
+  await fetch('/api/logout', {method: 'POST'});
+}
+
 export async function fetchState(): Promise<GraceState> {
-  const response = await fetch('/api/state');
-  if (!response.ok) throw new Error(`state request failed (${response.status})`);
+  const response = await expectOk(await fetch('/api/state'));
   return response.json();
 }
 
@@ -29,9 +71,8 @@ export async function* streamChat(
     signal,
   });
 
-  if (!response.ok || !response.body) {
-    throw new Error(`chat request failed (${response.status})`);
-  }
+  await expectOk(response);
+  if (!response.body) throw new Error('no response body to read');
 
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
@@ -56,17 +97,33 @@ export async function* streamChat(
   }
 }
 
+/**
+ * Asks Grace to think over what was just said — updating what she knows and
+ * folding old turns into her summary. Runs after the reply so neither sits in
+ * front of it.
+ */
+export async function reflect(): Promise<ProfileEntry[]> {
+  const response = await fetch('/api/reflect', {method: 'POST'});
+  if (!response.ok) return [];
+  const body = (await response.json()) as {learned?: ProfileEntry[]};
+  return body.learned ?? [];
+}
+
 export async function setAddressAs(addressAs: string | null): Promise<Profile> {
-  const response = await fetch('/api/profile/address', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({addressAs}),
-  });
+  const response = await expectOk(
+    await fetch('/api/profile/address', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({addressAs}),
+    }),
+  );
   return response.json();
 }
 
 export async function forgetEntry(id: string): Promise<Profile> {
-  const response = await fetch(`/api/profile/${id}`, {method: 'DELETE'});
+  const response = await expectOk(
+    await fetch(`/api/profile/${id}`, {method: 'DELETE'}),
+  );
   return response.json();
 }
 
