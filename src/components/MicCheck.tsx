@@ -73,7 +73,7 @@ export function MicCheck({onClose}: {onClose: () => void}) {
       );
       results.push({
         label: 'Wake word available',
-        value: speech ? 'yes' : 'no — press Talk instead, which always works',
+        value: speech ? 'yes' : 'no — press Speak instead, which always works',
         ok: true,
       });
 

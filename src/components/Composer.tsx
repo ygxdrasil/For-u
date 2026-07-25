@@ -93,9 +93,9 @@ export function Composer({
         label={
           micSupported
             ? micOn
-              ? 'Microphone on'
-              : 'Microphone off'
-            : 'This browser has no speech recognition'
+              ? 'Wake word on'
+              : 'Wake word off'
+            : 'This browser has no wake-word support'
         }
         onClick={onToggleMic}>
         {micOn ? <Mic size={17} /> : <MicOff size={17} />}
@@ -124,7 +124,7 @@ export function Composer({
         type="button"
         onClick={recording ? onRecordStop : onRecordStart}
         disabled={recorderBusy}
-        aria-label={recording ? 'Stop recording and send' : 'Hold a moment and speak'}
+        aria-label={recording ? 'Stop recording and send' : 'Record what you say'}
         className={`relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 py-2 text-sm transition disabled:opacity-40 ${
           recording
             ? 'border-ice/60 bg-ice/20 text-ice'

@@ -11,7 +11,7 @@ import {useGrace} from './hooks/useGrace';
 
 const MODE_LABEL: Record<Mode, string> = {
   offline: 'Not configured',
-  idle: 'Microphone off',
+  idle: 'Ready',
   waiting: 'Listening for “Grace”',
   listening: 'Go ahead',
   thinking: 'Thinking',
@@ -98,6 +98,12 @@ export default function App() {
           </span>
           <button
             type="button"
+            onClick={() => setMicCheckOpen((open) => !open)}
+            className="text-xs text-mist transition hover:text-slate-200">
+            Mic
+          </button>
+          <button
+            type="button"
             onClick={() => setPanelOpen((open) => !open)}
             aria-label="What Grace knows"
             className="text-mist transition hover:text-slate-200">
@@ -111,21 +117,9 @@ export default function App() {
           <Orb mode={mode} />
           <div className="px-8 text-center">
             <p className="text-sm text-slate-300">{MODE_LABEL[mode]}</p>
-            {mode === 'waiting' && (
-              <p className="mt-1.5 text-xs leading-relaxed text-mist/50">
-                Say her name, then what you need.
-              </p>
-            )}
-            {mode === 'idle' && grace.listener.supported && (
-              <p className="mt-1.5 text-xs leading-relaxed text-mist/50">
-                Turn on the microphone to talk to her.
-              </p>
-            )}
-            {!grace.listener.supported && (
-              <p className="mt-1.5 text-xs leading-relaxed text-mist/50">
-                This browser can’t listen. Chrome or Edge can.
-              </p>
-            )}
+            <p className="mt-1.5 text-xs leading-relaxed text-mist/50">
+              Press Speak, say your piece, press Stop.
+            </p>
           </div>
         </aside>
 
@@ -163,13 +157,12 @@ export default function App() {
         )}
       </main>
 
-      {/* Visible at every screen size. The old copy of this lived in a panel
-          that disappeared below laptop width, so on a phone a dead microphone
-          came with no explanation at all. */}
+      {/* Only the wake word depends on the browser. Recording works regardless,
+          so this no longer claims she cannot hear you at all. */}
       {cannotListen && (
         <p className="border-t border-edge bg-surface/80 px-5 py-2 text-xs text-mist">
-          This browser can’t do speech recognition, so the microphone is off.
-          Chrome or Edge can. Typing works anywhere.
+          This browser has no wake word, so saying “Grace” won’t rouse her. Press
+          Speak instead — that works everywhere.
         </p>
       )}
 
