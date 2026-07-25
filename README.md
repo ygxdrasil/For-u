@@ -40,6 +40,20 @@ She goes deaf while thinking and speaking, so she never answers her own voice.
 The orb shows which state she is in: slow breathing while waiting, bright and
 rippling while listening, a turning arc while thinking.
 
+### Checking she works
+
+```bash
+npm run selftest
+```
+
+Runs a real conversation through the whole pipeline with the model stubbed out —
+SSE streaming, memory persistence, context assembly, profile extraction,
+compaction, and the guardrails — and asserts on each. Thirteen checks, no API
+key needed, a few seconds.
+
+What it deliberately does not cover is the Gemini call itself. That one needs a
+live key, and the first thing to try once you have one is simply saying hello.
+
 ## What she remembers
 
 Everything you say is kept. Alongside the transcript she builds a profile —

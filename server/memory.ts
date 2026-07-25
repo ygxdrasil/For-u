@@ -46,6 +46,11 @@ export function getSummary(): string | null {
   return meta.read().summary;
 }
 
+/** How much of the log the summary already covers. Exposed for verification. */
+export function getSummarizedThrough(): number {
+  return meta.read().summarizedThrough;
+}
+
 export function record(speaker: Speaker, text: string, via: InputMode): Message {
   const message: Message = {
     id: randomUUID(),
@@ -61,15 +66,24 @@ export function record(speaker: Speaker, text: string, via: InputMode): Message 
 /**
  * The window replayed to the model verbatim. Everything older lives in the
  * summary, and the raw log on disk keeps all of it either way.
+ *
+ * It starts where the summary stops rather than at a fixed depth: compaction
+ * runs less often than the window slides, so a fixed depth would drop the
+ * messages in between out of context entirely — recent enough to be missing
+ * from the summary, old enough to have fallen off the window.
  */
 export function recentTurns(): Turn[] {
-  return messages
-    .read()
-    .slice(-config.verbatimTurns)
-    .map((message) => ({
-      role: message.speaker === 'grace' ? ('assistant' as const) : ('user' as const),
-      text: message.text,
-    }));
+  const log = messages.read();
+  const {summarizedThrough} = meta.read();
+  const from = Math.min(
+    summarizedThrough,
+    Math.max(0, log.length - config.verbatimTurns),
+  );
+
+  return log.slice(from).map((message) => ({
+    role: message.speaker === 'grace' ? ('assistant' as const) : ('user' as const),
+    text: message.text,
+  }));
 }
 
 export function setAddressAs(addressAs: string | null): Profile {

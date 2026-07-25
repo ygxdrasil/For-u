@@ -9,3 +9,6 @@ coverage/
 
 # Grace's memory — conversations, profile, and policies. Never commit this.
 .grace/
+
+# Scratch data from npm run selftest.
+.selftest-data/

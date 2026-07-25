@@ -90,6 +90,8 @@ export function ProfilePanel({
   return (
     <aside
       aria-hidden={!open}
+      // Without this the offscreen panel's inputs stay in the tab order.
+      inert={!open}
       className={`absolute inset-y-0 right-0 z-20 w-full max-w-sm border-l border-edge/70 bg-surface/95 backdrop-blur transition-transform duration-300 ${
         open ? 'translate-x-0' : 'translate-x-full'
       }`}>

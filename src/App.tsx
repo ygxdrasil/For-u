@@ -86,8 +86,9 @@ export default function App() {
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col">
-          {/* The orb rides along the top on narrow screens. */}
-          <div className="flex justify-center border-b border-edge/70 py-3 lg:hidden">
+          {/* The orb rides along the top on narrow screens. The wrapper is sized
+              to the scaled-down orb, since a transform leaves the box behind. */}
+          <div className="flex h-28 shrink-0 items-center justify-center overflow-hidden border-b border-edge/70 lg:hidden">
             <div className="scale-50">
               <Orb mode={mode} />
             </div>
@@ -121,8 +122,11 @@ export default function App() {
         </p>
       )}
 
+      {/* Speaking is interruptible: typing while she talks cuts her off, which
+          is the point. Only an in-flight request actually blocks sending. */}
       <Composer
-        busy={mode === 'thinking' || mode === 'speaking'}
+        busy={mode === 'thinking'}
+        canStop={mode === 'thinking' || mode === 'speaking'}
         micOn={grace.micOn}
         voiceOn={grace.voiceOn}
         micSupported={grace.listener.supported}

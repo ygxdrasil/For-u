@@ -14,3 +14,11 @@ export function getProvider(): LlmProvider {
   }
   return provider;
 }
+
+/**
+ * Swap the model out from under Grace. Exists so the whole pipeline — memory,
+ * persona, learning, streaming — can be exercised without a network call.
+ */
+export function setProvider(next: LlmProvider | null): void {
+  provider = next;
+}

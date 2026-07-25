@@ -2,7 +2,10 @@ import {Mic, MicOff, Send, Square, Volume2, VolumeX} from 'lucide-react';
 import {useState, type ReactNode} from 'react';
 
 interface ComposerProps {
+  /** A request is in flight. Sending another would collide with it. */
   busy: boolean;
+  /** There is something to interrupt — a request, or Grace mid-sentence. */
+  canStop: boolean;
   micOn: boolean;
   voiceOn: boolean;
   micSupported: boolean;
@@ -46,6 +49,7 @@ function ToggleButton({
 
 export function Composer({
   busy,
+  canStop,
   micOn,
   voiceOn,
   micSupported,
@@ -107,7 +111,7 @@ export function Composer({
         className="min-w-0 flex-1 rounded-full border border-edge bg-surface px-4 py-2.5 text-sm text-slate-200 placeholder:text-mist/50 focus:border-ice/40 focus:outline-none"
       />
 
-      {busy ? (
+      {canStop ? (
         <button
           type="button"
           onClick={onStop}
