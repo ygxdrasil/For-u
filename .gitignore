@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Grace's memory — conversations, profile, and policies. Never commit this.
+.grace/
