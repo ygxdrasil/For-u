@@ -99,7 +99,11 @@ export function useGrace() {
 
       const controller = new AbortController();
       abortRef.current = controller;
-      const speakIt = via === 'voice' && voiceOn;
+      // She speaks whenever her voice is on. This used to require that the
+      // message had been spoken too, which meant that anyone typing to her
+      // never heard a word — she looked mute rather than set to silent.
+      const speakIt = voiceOn;
+      speech.unlock();
       let landed = false;
 
       try {

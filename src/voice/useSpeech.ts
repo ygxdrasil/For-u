@@ -31,9 +31,25 @@ export function useSpeech(enabled: boolean) {
     () => typeof window !== 'undefined' && 'speechSynthesis' in window,
   );
 
+  const [blocked, setBlocked] = useState(false);
+
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const bufferRef = useRef('');
   const pendingRef = useRef(0);
+  const unlockedRef = useRef(false);
+
+  /**
+   * Browsers refuse to speak until speech has been started once from a real
+   * user action. Getting that out of the way during a click means her first
+   * actual reply isn't the one that gets swallowed.
+   */
+  const unlock = useCallback(() => {
+    if (!supported || unlockedRef.current) return;
+    unlockedRef.current = true;
+    const primer = new SpeechSynthesisUtterance(' ');
+    primer.volume = 0;
+    window.speechSynthesis.speak(primer);
+  }, [supported]);
 
   useEffect(() => {
     if (!supported) return;
@@ -77,8 +93,16 @@ export function useSpeech(enabled: boolean) {
         pendingRef.current = Math.max(0, pendingRef.current - 1);
         if (pendingRef.current === 0) setSpeaking(false);
       };
-      utterance.onend = finish;
-      utterance.onerror = finish;
+      utterance.onend = () => {
+        setBlocked(false);
+        finish();
+      };
+      utterance.onerror = (event) => {
+        // A refusal is worth surfacing; an interruption is us cancelling her.
+        const reason = (event as SpeechSynthesisErrorEvent).error;
+        if (reason === 'not-allowed' || reason === 'audio-busy') setBlocked(true);
+        finish();
+      };
 
       window.speechSynthesis.speak(utterance);
     },
@@ -117,5 +141,5 @@ export function useSpeech(enabled: boolean) {
 
   useEffect(() => cancel, [cancel]);
 
-  return {speaking, supported, push, flush, cancel};
+  return {speaking, supported, blocked, unlock, push, flush, cancel};
 }

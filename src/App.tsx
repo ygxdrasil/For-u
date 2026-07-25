@@ -193,6 +193,13 @@ export default function App() {
         </p>
       )}
 
+      {grace.speech.blocked && grace.voiceOn && (
+        <p className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
+          Your browser is refusing to let me speak. Click anywhere on the page and
+          send another message — that usually settles it.
+        </p>
+      )}
+
       {grace.transcribing && (
         <p className="border-t border-edge/70 bg-surface/50 px-5 py-2 text-xs text-mist/70">
           Working out what you said…

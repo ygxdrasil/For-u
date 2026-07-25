@@ -1,4 +1,8 @@
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
+import {transcribe} from '../lib/api';
+import {toWav} from '../voice/wav';
+
+const TEST_SECONDS = 4;
 
 interface Finding {
   label: string;
@@ -15,6 +19,63 @@ interface Finding {
  */
 export function MicCheck({onClose}: {onClose: () => void}) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const playbackRef = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      if (playbackRef.current) URL.revokeObjectURL(playbackRef.current);
+    },
+    [],
+  );
+
+  /**
+   * The whole chain, end to end, on demand: record, play it back so you can
+   * hear for yourself whether anything was captured, then transcribe it. Far
+   * more use than a list of capabilities when the complaint is "she can't
+   * hear me".
+   */
+  const runTest = async () => {
+    setTesting(true);
+    setResult(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+      const recorder = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (event) => chunks.push(event.data);
+
+      const recorded = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, {type: recorder.mimeType}));
+      });
+
+      recorder.start();
+      setResult(`Recording for ${TEST_SECONDS} seconds — say something.`);
+      await new Promise((r) => setTimeout(r, TEST_SECONDS * 1000));
+      recorder.stop();
+      stream.getTracks().forEach((track) => track.stop());
+
+      const blob = await recorded;
+      if (playbackRef.current) URL.revokeObjectURL(playbackRef.current);
+      playbackRef.current = URL.createObjectURL(blob);
+
+      setResult('Playing it back — if you hear nothing, the microphone captured nothing.');
+      await new Audio(playbackRef.current).play().catch(() => {});
+
+      const audio = await toWav(blob);
+      const text = await transcribe(audio.base64, audio.mimeType);
+      setResult(
+        text
+          ? `Heard: “${text}”  — hearing works.`
+          : 'The recording arrived, but no words were made out. Try again louder, or closer.',
+      );
+    } catch (cause) {
+      setResult(`Failed: ${(cause as Error).message}`);
+    } finally {
+      setTesting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -98,6 +159,17 @@ export function MicCheck({onClose}: {onClose: () => void}) {
           className="text-xs text-mist transition hover:text-slate-200">
           Hide
         </button>
+      </div>
+
+      <div className="mb-3 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void runTest()}
+          disabled={testing}
+          className="rounded-full border border-ice/40 bg-ice/15 px-3 py-1.5 text-xs text-ice transition hover:bg-ice/25 disabled:opacity-40">
+          {testing ? 'Testing…' : 'Test my microphone'}
+        </button>
+        {result && <span className="text-xs text-slate-300">{result}</span>}
       </div>
 
       {findings === null ? (
