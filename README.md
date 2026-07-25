@@ -54,6 +54,35 @@ key needed, a few seconds.
 What it deliberately does not cover is the Gemini call itself. That one needs a
 live key, and the first thing to try once you have one is simply saying hello.
 
+## Putting her online
+
+She runs two ways from the same code. On your own machine she keeps her memory
+in a file. Deployed, she keeps it in Redis — because serverless has no permanent
+disk, and a file there would vanish between messages.
+
+To deploy on Vercel:
+
+1. Get this source into a GitHub repository (the files themselves, not a
+   `.bundle` — that's an archive git has to unpack, and uploading it just stores
+   the box rather than the code).
+2. In Vercel, **Add New → Project**, and import that repository.
+3. Under **Storage**, add a Redis store and connect it to the project. That
+   injects `KV_REST_API_URL` and `KV_REST_API_TOKEN` on its own.
+4. Under **Settings → Environment Variables**, add:
+   - `GEMINI_API_KEY` — your key
+   - `GRACE_PASSWORD` — what you'll type to get in
+   - `GRACE_SECRET` — a long random string, encrypts her memory
+5. Redeploy.
+
+**She refuses to run deployed without `GRACE_PASSWORD`.** Not a warning — she
+returns an error to every request instead of sitting open at a public address
+where anyone who finds it could read what she knows about you.
+
+Visit `/api/health` on the deployed URL to confirm the wiring: it reports
+whether the key is present, which storage she found, and whether memory is
+encrypted. `"storage":"Redis"` means the database is connected;
+`"storage":"local disk"` means it isn't, and she'll forget everything.
+
 ## What she remembers
 
 Everything you say is kept. Alongside the transcript she builds a profile —

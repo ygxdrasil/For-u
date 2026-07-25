@@ -43,7 +43,7 @@ export default function App() {
   }
   const notice =
     mode === 'offline'
-      ? 'No Gemini API key found. Add GEMINI_API_KEY to .env.local and restart.'
+      ? 'No Gemini API key found. Set GEMINI_API_KEY where Grace is running, then restart or redeploy her.'
       : grace.error;
 
   return (
