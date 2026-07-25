@@ -58,7 +58,9 @@ const NO_KEY_MESSAGE =
  */
 export function createApi(): Express {
   const api = express();
-  api.use(express.json({limit: '1mb'}));
+  // Recorded speech arrives as base64 in a JSON body, so the default 100kb
+  // ceiling would reject anything longer than a sentence or two.
+  api.use(express.json({limit: '25mb'}));
 
   // ---- open endpoints ----------------------------------------------------
 
@@ -241,6 +243,49 @@ export function createApi(): Express {
       // If this times out the condition persists, so the next reflect retries.
       const compacted = await compactIfNeeded();
       res.json({learned, compacted});
+    }),
+  );
+
+  /**
+   * Spoken audio in, text out.
+   *
+   * The browser records; the transcription happens here. That is the whole
+   * point: it works in browsers with no speech recognition of their own, and a
+   * failure produces an error we can actually read rather than silence.
+   */
+  api.post(
+    '/transcribe',
+    guard(async (req, res) => {
+      if (!isConfigured()) {
+        res.status(503).json({error: 'No Gemini API key is configured.'});
+        return;
+      }
+
+      const audio = String(req.body?.audio ?? '');
+      const mimeType = String(req.body?.mimeType ?? 'audio/wav');
+
+      if (!audio) {
+        res.status(400).json({error: 'no audio was sent'});
+        return;
+      }
+
+      try {
+        const text = await getProvider().transcribe({audio, mimeType});
+        res.json({text});
+      } catch (error) {
+        // Providers return a wall of JSON. Keep it in the log and say
+        // something the person holding the microphone can act on.
+        const detail = (error as Error).message ?? 'unknown error';
+        console.error('[grace] transcription failed:', detail);
+
+        const explained = /API[_ ]?KEY|not valid|UNAUTHENTICATED/i.test(detail)
+          ? 'My API key was rejected. Check GEMINI_API_KEY where I am running.'
+          : /quota|RESOURCE_EXHAUSTED|rate/i.test(detail)
+            ? 'I have hit the daily limit on my free allowance. It resets tomorrow.'
+            : 'I could not make out that recording. Try again, a little closer to the microphone.';
+
+        res.status(502).json({error: explained});
+      }
     }),
   );
 

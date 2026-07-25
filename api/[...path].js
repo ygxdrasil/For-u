@@ -312,6 +312,9 @@ import { Type } from "@google/genai";
 
 // server/llm/gemini.ts
 import { GoogleGenAI } from "@google/genai";
+var TRANSCRIBE_PROMPT = `Write out exactly what is said in this recording.
+
+Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio. If the recording contains no speech, return nothing at all.`;
 var GeminiProvider = class {
   constructor(apiKey, model) {
     this.model = model;
@@ -331,6 +334,28 @@ var GeminiProvider = class {
       this.params(request)
     );
     return response.text ?? "";
+  }
+  async transcribe(request) {
+    const response = await this.client.models.generateContent({
+      model: this.model,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType: request.mimeType, data: request.audio } },
+            { text: TRANSCRIBE_PROMPT }
+          ]
+        }
+      ],
+      config: {
+        // Transcription is not a creative task; drifting off the audio is the
+        // one failure mode that matters.
+        temperature: 0,
+        abortSignal: request.signal,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    });
+    return (response.text ?? "").trim();
   }
   params(request) {
     const config2 = {
@@ -669,7 +694,7 @@ function guard(handler) {
 var NO_KEY_MESSAGE = "No Gemini API key is configured, so I have no voice to think with. Add GEMINI_API_KEY and restart me.";
 function createApi() {
   const api = express();
-  api.use(express.json({ limit: "1mb" }));
+  api.use(express.json({ limit: "25mb" }));
   api.get("/health", (_req, res) => {
     res.json({
       ok: true,
@@ -809,6 +834,30 @@ function createApi() {
       const learned = graceAt >= 0 && userAt >= 0 ? await learnFrom(log[userAt].text, log[graceAt].text) : [];
       const compacted = await compactIfNeeded();
       res.json({ learned, compacted });
+    })
+  );
+  api.post(
+    "/transcribe",
+    guard(async (req, res) => {
+      if (!isConfigured()) {
+        res.status(503).json({ error: "No Gemini API key is configured." });
+        return;
+      }
+      const audio = String(req.body?.audio ?? "");
+      const mimeType = String(req.body?.mimeType ?? "audio/wav");
+      if (!audio) {
+        res.status(400).json({ error: "no audio was sent" });
+        return;
+      }
+      try {
+        const text = await getProvider().transcribe({ audio, mimeType });
+        res.json({ text });
+      } catch (error) {
+        const detail = error.message ?? "unknown error";
+        console.error("[grace] transcription failed:", detail);
+        const explained = /API[_ ]?KEY|not valid|UNAUTHENTICATED/i.test(detail) ? "My API key was rejected. Check GEMINI_API_KEY where I am running." : /quota|RESOURCE_EXHAUSTED|rate/i.test(detail) ? "I have hit the daily limit on my free allowance. It resets tomorrow." : "I could not make out that recording. Try again, a little closer to the microphone.";
+        res.status(502).json({ error: explained });
+      }
     })
   );
   api.post(

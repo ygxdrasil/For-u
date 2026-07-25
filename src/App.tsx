@@ -2,6 +2,7 @@ import {PanelRight} from 'lucide-react';
 import {useState} from 'react';
 import {Composer} from './components/Composer';
 import {Lock} from './components/Lock';
+import {MicCheck} from './components/MicCheck';
 import {Orb} from './components/Orb';
 import {ProfilePanel} from './components/ProfilePanel';
 import {Transcript} from './components/Transcript';
@@ -29,6 +30,7 @@ const MODE_DOT: Record<Mode, string> = {
 export default function App() {
   const grace = useGrace();
   const [panelOpen, setPanelOpen] = useState(false);
+  const [micCheckOpen, setMicCheckOpen] = useState(false);
 
   const {session, state, mode} = grace;
 
@@ -177,17 +179,34 @@ export default function App() {
         </p>
       )}
 
-      {/* Confirms the microphone is genuinely open, so silence reads as "she
-          heard nothing" rather than "this button did nothing". */}
-      {grace.micOn && !notice && !cannotListen && (
-        <p className="border-t border-edge/70 bg-surface/50 px-5 py-2 text-xs text-mist/70">
-          {grace.listener.running
-            ? grace.listener.awake
-              ? 'Listening — go ahead.'
-              : 'Microphone open. Say “Grace”, or press Talk.'
-            : 'Starting the microphone…'}
+      {/* Everything the microphone has to say for itself, in one place. */}
+      {(grace.recorder.error || grace.misheard) && (
+        <p className="flex items-center justify-between gap-3 border-t border-rose-400/20 bg-rose-400/10 px-5 py-2 text-xs text-rose-200">
+          <span>{grace.recorder.error ?? grace.misheard}</span>
+          <button
+            type="button"
+            onClick={() => setMicCheckOpen(true)}
+            className="shrink-0 underline underline-offset-2 hover:text-rose-100">
+            Check microphone
+          </button>
         </p>
       )}
+
+      {grace.recorder.state === 'recording' && (
+        <p className="border-t border-ice/20 bg-ice/5 px-5 py-2 text-xs text-ice/90">
+          {grace.recorder.heardSomething
+            ? 'Hearing you. Press Stop when you’re done.'
+            : 'Recording — but no sound yet. Check the right microphone is selected.'}
+        </p>
+      )}
+
+      {grace.transcribing && (
+        <p className="border-t border-edge/70 bg-surface/50 px-5 py-2 text-xs text-mist/70">
+          Working out what you said…
+        </p>
+      )}
+
+      {micCheckOpen && <MicCheck onClose={() => setMicCheckOpen(false)} />}
 
       {/* Speaking is interruptible: typing while she talks cuts her off, which
           is the point. Only an in-flight request actually blocks sending. */}
@@ -199,6 +218,15 @@ export default function App() {
         micSupported={grace.listener.supported}
         voiceSupported={grace.speech.supported}
         awake={grace.listener.awake}
+        recording={grace.recorder.state === 'recording'}
+        recorderBusy={
+          grace.recorder.state === 'starting' ||
+          grace.recorder.state === 'working' ||
+          grace.transcribing
+        }
+        level={grace.recorder.level}
+        onRecordStart={() => void grace.recorder.start()}
+        onRecordStop={grace.recorder.stop}
         onSend={(text) => void grace.send(text, 'text')}
         onStop={grace.stop}
         onToggleMic={() => grace.setMicOn(!grace.micOn)}

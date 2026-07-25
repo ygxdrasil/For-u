@@ -17,7 +17,12 @@ import type {ChatEvent, ProfileEntry} from '../shared/types';
 import {createApi} from '../server/api';
 import {config} from '../server/config';
 import {setProvider} from '../server/llm/index';
-import type {GenerateRequest, LlmProvider, Turn} from '../server/llm/types';
+import type {
+  GenerateRequest,
+  LlmProvider,
+  TranscribeRequest,
+  Turn,
+} from '../server/llm/types';
 import {
   clearConversation,
   getMessages,
@@ -32,6 +37,7 @@ import type {Backend} from '../server/store/types';
 const REPLY_CHUNKS = ['Good morning. ', 'Nothing pressing today. ', 'Tea at four?'];
 const REPLY = REPLY_CHUNKS.join('');
 const LEARNED_FACT = 'Prefers tea in the afternoon';
+const TRANSCRIBED = 'What is on today?';
 
 /** Stands in for Gemini, and records what it was asked. */
 class StubProvider implements LlmProvider {
@@ -54,6 +60,13 @@ class StubProvider implements LlmProvider {
       });
     }
     return 'Earlier, they discussed the day ahead and settled on tea at four.';
+  }
+
+  lastAudio: TranscribeRequest | null = null;
+
+  async transcribe(request: TranscribeRequest): Promise<string> {
+    this.lastAudio = request;
+    return TRANSCRIBED;
   }
 }
 
@@ -221,6 +234,32 @@ try {
   await reflect();
   assert.equal((await getProfile()).entries.length, before, 'same fact twice is one fact');
   ok('repeat facts deduplicated rather than stacking up');
+
+  // ---- hearing -----------------------------------------------------------
+  // The route that replaced the browser's own speech recognition, which does
+  // not exist in Firefox or on iOS and failed silently everywhere else.
+  const spoken = await call('/transcribe', {
+    method: 'POST',
+    body: JSON.stringify({audio: 'ZmFrZS13YXY=', mimeType: 'audio/wav'}),
+  });
+  assert.equal(spoken.status, 200);
+  assert.equal(((await spoken.json()) as {text: string}).text, TRANSCRIBED);
+  assert.equal(stub.lastAudio?.mimeType, 'audio/wav', 'audio reaches the model');
+  ok('recorded speech is transcribed server-side');
+
+  const noAudio = await call('/transcribe', {
+    method: 'POST',
+    body: JSON.stringify({mimeType: 'audio/wav'}),
+  });
+  assert.equal(noAudio.status, 400, 'an empty recording is rejected, not sent on');
+  ok('empty recording refused with a reason');
+
+  assert.equal(
+    (await call('/transcribe', {method: 'POST', body: '{}'})).status,
+    400,
+    'transcription must require audio',
+  );
+  ok('transcription endpoint validates its input');
 
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {

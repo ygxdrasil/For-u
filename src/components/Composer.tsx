@@ -12,6 +12,12 @@ interface ComposerProps {
   voiceSupported: boolean;
   /** She is already capturing a request. */
   awake: boolean;
+  /** Recording state, and how loud the microphone is hearing you right now. */
+  recording: boolean;
+  recorderBusy: boolean;
+  level: number;
+  onRecordStart: () => void;
+  onRecordStop: () => void;
   onSend: (text: string) => void;
   onStop: () => void;
   onToggleMic: () => void;
@@ -59,6 +65,11 @@ export function Composer({
   micSupported,
   voiceSupported,
   awake,
+  recording,
+  recorderBusy,
+  level,
+  onRecordStart,
+  onRecordStop,
   onSend,
   onStop,
   onToggleMic,
@@ -104,21 +115,45 @@ export function Composer({
         {voiceOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
       </ToggleButton>
 
-      {/* Saying her name is nice when it works, but it is a poor only way in —
-          nothing happens until she catches the word, and if she doesn't, the
-          whole thing looks dead. This starts her listening outright. */}
-      {micOn && (
+      {/* The dependable way in. Press, speak, press again — the recording is
+          transcribed on the server, so it works in browsers that have no
+          speech recognition of their own. The bar fills with however loud the
+          microphone is hearing you, which is the fastest way to tell a quiet
+          room from a dead microphone. */}
+      <button
+        type="button"
+        onClick={recording ? onRecordStop : onRecordStart}
+        disabled={recorderBusy}
+        aria-label={recording ? 'Stop recording and send' : 'Hold a moment and speak'}
+        className={`relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 py-2 text-sm transition disabled:opacity-40 ${
+          recording
+            ? 'border-ice/60 bg-ice/20 text-ice'
+            : 'border-edge bg-surface text-mist hover:text-slate-200'
+        }`}>
+        {recording && (
+          <span
+            className="absolute inset-y-0 left-0 bg-ice/25 transition-[width] duration-75"
+            style={{width: `${Math.min(100, level * 180)}%`}}
+          />
+        )}
+        <AudioLines size={15} className="relative" />
+        <span className="relative hidden sm:inline">
+          {recorderBusy ? 'One moment' : recording ? 'Stop' : 'Speak'}
+        </span>
+      </button>
+
+      {/* Only useful where the browser supports a wake word at all. */}
+      {micOn && !recording && (
         <button
           type="button"
           onClick={onTalk}
-          aria-label="Talk to Grace now"
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-2 text-sm transition ${
+          aria-label="Listen for a spoken request"
+          className={`hidden shrink-0 rounded-full border px-3 py-2 text-sm transition lg:block ${
             awake
               ? 'border-ice/50 bg-ice/20 text-ice'
               : 'border-edge bg-surface text-mist hover:text-slate-200'
           }`}>
-          <AudioLines size={15} />
-          <span className="hidden sm:inline">{awake ? 'Listening' : 'Talk'}</span>
+          {awake ? 'Listening' : 'Wake'}
         </button>
       )}
 

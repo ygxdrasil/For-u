@@ -9,7 +9,9 @@ import type {
 import * as api from '../lib/api.ts';
 import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
 import {useListener} from '../voice/useListener.ts';
+import {useRecorder} from '../voice/useRecorder.ts';
 import {useSpeech} from '../voice/useSpeech.ts';
+import type {EncodedAudio} from '../voice/wav.ts';
 
 export type Mode = 'offline' | 'idle' | 'waiting' | 'listening' | 'thinking' | 'speaking';
 
@@ -152,6 +154,36 @@ export function useGrace() {
     onRequest: handleRequest,
   });
 
+  /**
+   * The reliable route in. The browser records, the server transcribes, and
+   * anything that goes wrong along the way says so.
+   */
+  const [transcribing, setTranscribing] = useState(false);
+  const [misheard, setMisheard] = useState<string | null>(null);
+
+  const handleRecording = useCallback(
+    async (audio: EncodedAudio) => {
+      setMisheard(null);
+      setTranscribing(true);
+      try {
+        const text = await api.transcribe(audio.base64, audio.mimeType);
+        if (!text) {
+          setMisheard('I couldn’t make out any words in that.');
+          return;
+        }
+        await send(text, 'voice');
+      } catch (cause) {
+        if (cause instanceof NeedsPassword) setSession('required');
+        else setMisheard((cause as Error).message);
+      } finally {
+        setTranscribing(false);
+      }
+    },
+    [send],
+  );
+
+  const recorder = useRecorder({onCaptured: (audio) => void handleRecording(audio)});
+
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -182,11 +214,23 @@ export function useGrace() {
 
   const mode: Mode = useMemo(() => {
     if (state && !state.ready) return 'offline';
+    // Recording wins over everything: it is the one state where what the
+    // interface shows has to match what the microphone is doing.
+    if (recorder.state === 'recording') return 'listening';
+    if (recorder.state === 'working' || transcribing) return 'thinking';
     if (speech.speaking) return 'speaking';
     if (busy) return 'thinking';
     if (!micOn) return 'idle';
     return listener.awake ? 'listening' : 'waiting';
-  }, [state, speech.speaking, busy, micOn, listener.awake]);
+  }, [
+    state,
+    recorder.state,
+    transcribing,
+    speech.speaking,
+    busy,
+    micOn,
+    listener.awake,
+  ]);
 
   return {
     session,
@@ -198,6 +242,9 @@ export function useGrace() {
     micOn,
     voiceOn,
     listener,
+    recorder,
+    transcribing,
+    misheard,
     speech,
     setMicOn,
     setVoiceOn,

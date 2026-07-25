@@ -109,6 +109,32 @@ export async function reflect(): Promise<ProfileEntry[]> {
   return body.learned ?? [];
 }
 
+/**
+ * Send recorded speech to be turned into text.
+ *
+ * Done on the server so hearing works in browsers that have no speech
+ * recognition of their own, and so a failure comes back as a readable message.
+ */
+export async function transcribe(
+  audio: string,
+  mimeType: string,
+): Promise<string> {
+  const response = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({audio, mimeType}),
+  });
+
+  if (response.status === 401) throw new NeedsPassword();
+
+  const body = (await response.json().catch(() => null)) as
+    | {text?: string; error?: string}
+    | null;
+
+  if (!response.ok) throw new Error(body?.error ?? 'transcription failed');
+  return (body?.text ?? '').trim();
+}
+
 export async function setAddressAs(addressAs: string | null): Promise<Profile> {
   const response = await expectOk(
     await fetch('/api/profile/address', {

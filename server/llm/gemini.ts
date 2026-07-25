@@ -1,6 +1,10 @@
 import {GoogleGenAI} from '@google/genai';
 import type {GenerateContentConfig} from '@google/genai';
-import type {GenerateRequest, LlmProvider} from './types';
+import type {GenerateRequest, LlmProvider, TranscribeRequest} from './types';
+
+const TRANSCRIBE_PROMPT = `Write out exactly what is said in this recording.
+
+Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio. If the recording contains no speech, return nothing at all.`;
 
 export class GeminiProvider implements LlmProvider {
   readonly name = 'gemini';
@@ -28,6 +32,30 @@ export class GeminiProvider implements LlmProvider {
       this.params(request),
     );
     return response.text ?? '';
+  }
+
+  async transcribe(request: TranscribeRequest): Promise<string> {
+    const response = await this.client.models.generateContent({
+      model: this.model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {inlineData: {mimeType: request.mimeType, data: request.audio}},
+            {text: TRANSCRIBE_PROMPT},
+          ],
+        },
+      ],
+      config: {
+        // Transcription is not a creative task; drifting off the audio is the
+        // one failure mode that matters.
+        temperature: 0,
+        abortSignal: request.signal,
+        thinkingConfig: {thinkingBudget: 0},
+      },
+    });
+
+    return (response.text ?? '').trim();
   }
 
   private params(request: GenerateRequest) {
