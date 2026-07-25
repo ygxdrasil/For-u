@@ -30,6 +30,8 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
   const [awake, setAwake] = useState(false);
   const [heard, setHeard] = useState('');
   const [error, setError] = useState<string | null>(null);
+  /** Whether the browser is actually listening right now, not just asked to. */
+  const [running, setRunning] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const shouldRunRef = useRef(false);
@@ -104,18 +106,42 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
       setHeard(interim);
     };
 
+    recognition.onstart = () => {
+      setRunning(true);
+      setError(null);
+    };
+
     recognition.onerror = (event) => {
       if (event.error === 'no-speech' || event.error === 'aborted') return;
+
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         shouldRunRef.current = false;
-        setError('Microphone access was refused.');
+        setError(
+          'Your browser blocked the microphone. Click the padlock beside the ' +
+            'web address, allow the microphone, then reload.',
+        );
         return;
       }
-      setError(event.error);
+
+      if (event.error === 'network') {
+        setError(
+          'Speech recognition could not reach its service. It needs an internet ' +
+            'connection, and some networks block it.',
+        );
+        return;
+      }
+
+      if (event.error === 'audio-capture') {
+        setError('No microphone was found on this device.');
+        return;
+      }
+
+      setError(`The microphone stopped: ${event.error}`);
     };
 
     // Browsers stop recognition on their own schedule; pick it straight back up.
     recognition.onend = () => {
+      setRunning(false);
       setHeard('');
       if (!shouldRunRef.current) return;
       try {
@@ -157,5 +183,5 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
 
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
 
-  return {supported, awake, heard, error, wake, sleep};
+  return {supported, running, awake, heard, error, wake, sleep};
 }

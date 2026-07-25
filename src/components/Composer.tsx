@@ -1,4 +1,4 @@
-import {Mic, MicOff, Send, Square, Volume2, VolumeX} from 'lucide-react';
+import {AudioLines, Mic, MicOff, Send, Square, Volume2, VolumeX} from 'lucide-react';
 import {useState, type ReactNode} from 'react';
 
 interface ComposerProps {
@@ -10,10 +10,14 @@ interface ComposerProps {
   voiceOn: boolean;
   micSupported: boolean;
   voiceSupported: boolean;
+  /** She is already capturing a request. */
+  awake: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
   onToggleMic: () => void;
   onToggleVoice: () => void;
+  /** Start capturing straight away, without waiting for the wake word. */
+  onTalk: () => void;
 }
 
 function ToggleButton({
@@ -54,10 +58,12 @@ export function Composer({
   voiceOn,
   micSupported,
   voiceSupported,
+  awake,
   onSend,
   onStop,
   onToggleMic,
   onToggleVoice,
+  onTalk,
 }: ComposerProps) {
   const [draft, setDraft] = useState('');
 
@@ -97,6 +103,24 @@ export function Composer({
         onClick={onToggleVoice}>
         {voiceOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
       </ToggleButton>
+
+      {/* Saying her name is nice when it works, but it is a poor only way in —
+          nothing happens until she catches the word, and if she doesn't, the
+          whole thing looks dead. This starts her listening outright. */}
+      {micOn && (
+        <button
+          type="button"
+          onClick={onTalk}
+          aria-label="Talk to Grace now"
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-2 text-sm transition ${
+            awake
+              ? 'border-ice/50 bg-ice/20 text-ice'
+              : 'border-edge bg-surface text-mist hover:text-slate-200'
+          }`}>
+          <AudioLines size={15} />
+          <span className="hidden sm:inline">{awake ? 'Listening' : 'Talk'}</span>
+        </button>
+      )}
 
       <input
         value={draft}

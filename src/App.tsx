@@ -68,10 +68,14 @@ export default function App() {
   if (session === 'required' || session === 'misconfigured') {
     return <Lock status={session} onSubmit={grace.signIn} />;
   }
+  // The microphone failing used to be silent: the listener recorded an error
+  // that nothing ever rendered, so a dead mic and a working one looked alike.
   const notice =
     mode === 'offline'
       ? 'No Gemini API key found. Set GEMINI_API_KEY where Grace is running, then restart or redeploy her.'
-      : grace.error;
+      : (grace.error ?? grace.listener.error);
+
+  const cannotListen = !grace.listener.supported;
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden">
@@ -136,7 +140,9 @@ export default function App() {
             <Transcript
               messages={grace.messages}
               streaming={grace.streaming}
-              heard={grace.listener.awake ? grace.listener.heard : ''}
+              // Shown whenever the microphone is on, not only once she has
+              // caught her name — otherwise there is no sign she can hear you.
+              heard={grace.micOn ? grace.listener.heard : ''}
             />
           </div>
         </section>
@@ -155,9 +161,31 @@ export default function App() {
         )}
       </main>
 
+      {/* Visible at every screen size. The old copy of this lived in a panel
+          that disappeared below laptop width, so on a phone a dead microphone
+          came with no explanation at all. */}
+      {cannotListen && (
+        <p className="border-t border-edge bg-surface/80 px-5 py-2 text-xs text-mist">
+          This browser can’t do speech recognition, so the microphone is off.
+          Chrome or Edge can. Typing works anywhere.
+        </p>
+      )}
+
       {notice && (
         <p className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
           {notice}
+        </p>
+      )}
+
+      {/* Confirms the microphone is genuinely open, so silence reads as "she
+          heard nothing" rather than "this button did nothing". */}
+      {grace.micOn && !notice && !cannotListen && (
+        <p className="border-t border-edge/70 bg-surface/50 px-5 py-2 text-xs text-mist/70">
+          {grace.listener.running
+            ? grace.listener.awake
+              ? 'Listening — go ahead.'
+              : 'Microphone open. Say “Grace”, or press Talk.'
+            : 'Starting the microphone…'}
         </p>
       )}
 
@@ -170,10 +198,12 @@ export default function App() {
         voiceOn={grace.voiceOn}
         micSupported={grace.listener.supported}
         voiceSupported={grace.speech.supported}
+        awake={grace.listener.awake}
         onSend={(text) => void grace.send(text, 'text')}
         onStop={grace.stop}
         onToggleMic={() => grace.setMicOn(!grace.micOn)}
         onToggleVoice={() => grace.setVoiceOn(!grace.voiceOn)}
+        onTalk={grace.listener.wake}
       />
     </div>
   );
