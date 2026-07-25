@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
-import {rmSync} from 'node:fs';
+import {existsSync, readFileSync, rmSync} from 'node:fs';
 import type {AddressInfo} from 'node:net';
 import type {ChatEvent, ProfileEntry} from '../shared/types';
 import {createApi} from '../server/api';
@@ -127,6 +127,24 @@ async function reflect(): Promise<ProfileEntry[]> {
 
 try {
   console.log('\nGrace self-test (model and storage stubbed)\n');
+
+  // ---- deploy config points at files that exist --------------------------
+  // A stale pattern here fails the build with "doesn't match any Serverless
+  // Functions", which costs a whole deploy cycle to discover. It has happened.
+  const vercel = JSON.parse(readFileSync('vercel.json', 'utf8')) as {
+    functions?: Record<string, unknown>;
+  };
+  for (const pattern of Object.keys(vercel.functions ?? {})) {
+    assert.ok(
+      existsSync(pattern),
+      `vercel.json declares "${pattern}", but no such file exists`,
+    );
+  }
+  assert.ok(
+    existsSync('api/[...path].js'),
+    'the bundled function must be committed, not generated at deploy time',
+  );
+  ok('vercel.json function patterns match files that exist');
 
   // ---- the lock ----------------------------------------------------------
   assert.equal((await call('/state')).status, 401, 'locked before signing in');
