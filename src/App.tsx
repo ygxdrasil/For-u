@@ -87,9 +87,15 @@ export default function App() {
   const dashboard = state && (
     <Dashboard
       state={state}
+      messages={grace.messages}
       mode={mode}
       micLevel={grace.recorder.level}
       recording={grace.recorder.state === 'recording'}
+      micBusy={
+        grace.recorder.state === 'starting' ||
+        grace.recorder.state === 'working' ||
+        grace.transcribing
+      }
       micError={grace.recorder.error}
       voiceSource={grace.speech.source}
       voiceOn={grace.voiceOn}

@@ -44,7 +44,10 @@ export function getMode(): Promise<ModeState> {
 }
 
 export function isMode(value: unknown): value is AttentionMode {
-  return typeof value === 'string' && value in MODES;
+  // `in` walks the prototype chain, so "toString" and "constructor"
+  // passed and were persisted, after which every prompt ended with
+  // "you are in undefined mode. undefined".
+  return typeof value === 'string' && Object.hasOwn(MODES, value);
 }
 
 export async function setMode(mode: AttentionMode): Promise<ModeState> {

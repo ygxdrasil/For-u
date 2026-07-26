@@ -279,6 +279,10 @@ export async function listDevices(): Promise<MicDevice[]> {
 export async function sampleLevel(stream: MediaStream, ms = 1200): Promise<number> {
   const context = new AudioContext();
   try {
+    // A suspended context runs no graph at all, so every reading is zero and
+    // a perfectly good microphone is reported as silent.
+    if (context.state === 'suspended') await context.resume();
+
     const analyser = context.createAnalyser();
     analyser.fftSize = 512;
     context.createMediaStreamSource(stream).connect(analyser);

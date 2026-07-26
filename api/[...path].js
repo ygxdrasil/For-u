@@ -46,6 +46,7 @@ function isConfigured() {
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   randomBytes,
   scryptSync,
   timingSafeEqual
@@ -53,7 +54,7 @@ import {
 var ALGORITHM = "aes-256-gcm";
 var keys = /* @__PURE__ */ new Map();
 function keyFor(secret, salt) {
-  const id = `${salt}:${secret.length}`;
+  const id = `${salt}:${createHash("sha256").update(secret).digest("hex")}`;
   let derived = keys.get(id);
   if (!derived) {
     derived = scryptSync(secret, Buffer.from(salt, "hex"), 32);
@@ -157,6 +158,7 @@ var RedisBackend = class {
   }
   async quarantine(key, value) {
     await this.client.set(`${this.keyFor(key)}:unreadable:${Date.now()}`, value);
+    await this.client.del(this.keyFor(key));
   }
 };
 function redisCredentials() {
@@ -244,7 +246,7 @@ async function setPolicy(category, policy) {
 }
 
 // server/auth.ts
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var COOKIE = "grace_session";
 var SESSION_DAYS = 30;
 function signingKey() {
@@ -252,6 +254,20 @@ function signingKey() {
 }
 function sign(payload) {
   return createHmac("sha256", signingKey()).update(payload).digest("hex");
+}
+function issueNonce(purpose, validForMs = 10 * 6e4) {
+  const expires = Date.now() + validForMs;
+  const payload = `${purpose}.${expires}`;
+  return `${expires}.${sign(payload)}`;
+}
+function checkNonce(purpose, token) {
+  const [expires, signature] = token.split(".");
+  if (!expires || !signature) return false;
+  if (Number(expires) < Date.now()) return false;
+  const expected = sign(`${purpose}.${expires}`);
+  const left = Buffer.from(expected);
+  const right = Buffer.from(signature);
+  return left.length === right.length && timingSafeEqual2(left, right);
 }
 function readCookie(req) {
   const header = req.headers.cookie;
@@ -672,7 +688,6 @@ Grace: ${graceText}`
 }
 
 // server/google/oauth.ts
-import { randomBytes as randomBytes2, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 var TOKEN_URL = "https://oauth2.googleapis.com/token";
 var SCOPES = [
@@ -683,7 +698,6 @@ var SCOPES = [
   "email"
 ];
 var store2 = new Document("google", () => null);
-var pendingStates = /* @__PURE__ */ new Map();
 var accessTokens = /* @__PURE__ */ new Map();
 function googleConfigured() {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
@@ -694,8 +708,7 @@ function redirectUri() {
   return host ? `https://${host}/api/google-callback` : "http://localhost:3001/api/google-callback";
 }
 function authorizeUrl() {
-  const state = randomBytes2(32).toString("base64url");
-  pendingStates.set(state, Date.now() + 10 * 6e4);
+  const state = issueNonce("google-oauth");
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID ?? "",
     redirect_uri: redirectUri(),
@@ -711,17 +724,6 @@ function authorizeUrl() {
     state
   });
   return `${AUTH_URL}?${params.toString()}`;
-}
-function checkState(state) {
-  const expiry = pendingStates.get(state);
-  pendingStates.delete(state);
-  if (!expiry || expiry < Date.now()) return false;
-  const seen = Buffer.from(state);
-  for (const candidate of [state]) {
-    const known = Buffer.from(candidate);
-    if (known.length === seen.length && timingSafeEqual2(known, seen)) return true;
-  }
-  return false;
 }
 async function postToken(body) {
   const response = await fetch(TOKEN_URL, {
@@ -749,7 +751,7 @@ var GoogleError = class extends Error {
   }
 };
 async function completeSignIn(code, state) {
-  if (!checkState(state)) {
+  if (!checkNonce("google-oauth", state)) {
     throw new GoogleError("That sign-in link had expired. Start again.");
   }
   const token = await postToken({
@@ -901,10 +903,15 @@ async function recentMail(query = "in:inbox", limit = 10) {
 // server/google/briefing.ts
 var PATIENCE_MS = 3500;
 function timeboxed(work, fallback) {
+  let timer;
   return Promise.race([
     work.catch(() => fallback),
-    new Promise((resolve) => setTimeout(() => resolve(fallback), PATIENCE_MS))
-  ]);
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), PATIENCE_MS);
+    })
+    // Clearing it matters: two of these run per reply, and a serverless
+    // invocation is kept alive by a pending timer.
+  ]).finally(() => clearTimeout(timer));
 }
 async function buildBriefing() {
   const saved = await connection().catch(() => null);
@@ -974,7 +981,7 @@ function getMode() {
   return store3.read();
 }
 function isMode(value) {
-  return typeof value === "string" && value in MODES;
+  return typeof value === "string" && Object.hasOwn(MODES, value);
 }
 async function setMode(mode) {
   const current = await store3.read();
@@ -1016,9 +1023,9 @@ You may draft, prepare, price, compare, and stage any of it \u2014 and you shoul
 var PHASE_NOTE = `You can search the web, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
 You have no connection to their home yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
-var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected. You can read their mail and their diary, and you can put entries in the diary and write draft replies.
+var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current. You can read it and talk about it.
 
-You do not send mail. Ever. A draft goes to their drafts folder and they press send themselves \u2014 that is their standing instruction and it is not negotiable. When you add something to their diary, you do not notify the other attendees either; telling people is outbound communication and theirs to authorise.`;
+You cannot yet act on either of them \u2014 you cannot write a draft, and you cannot add or move anything in their diary. Say so plainly if you are asked, and do not claim to have done something you have not. You have never been able to send mail and never will: that is their standing instruction.`;
 function describeProfile(profile2) {
   if (profile2.entries.length === 0) {
     return `You have not learned anything about the user yet. This is early days \u2014 pay attention and remember what matters.`;
@@ -1303,11 +1310,22 @@ function createApi() {
     res.redirect(authorizeUrl());
   });
   api.get("/google-callback", guard(async (req, res) => {
+    const escape = (value) => value.replace(
+      /[&<>"']/g,
+      (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      })[character]
+    );
     const finish = (message) => res.status(200).send(
-      `<!doctype html><meta charset="utf-8"><title>Grace</title><body style="background:#07090c;color:#e2e8f0;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;text-align:center"><div><p style="max-width:32rem;line-height:1.6">${message}</p><a href="/" style="color:#7dd3fc">Back to Grace</a></div>`
+      `<!doctype html><meta charset="utf-8"><title>Grace</title><body style="background:#07090c;color:#e2e8f0;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;text-align:center"><div><p style="max-width:32rem;line-height:1.6">${escape(message)}</p><a href="/" style="color:#7dd3fc">Back to Grace</a></div>`
     );
     if (req.query.error) {
-      finish(`Google declined: ${String(req.query.error)}.`);
+      console.error("[grace] google declined:", String(req.query.error));
+      finish("Google declined the connection. Nothing has changed.");
       return;
     }
     try {

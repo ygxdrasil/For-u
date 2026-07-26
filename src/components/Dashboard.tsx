@@ -9,7 +9,12 @@ import {
   Volume2,
 } from 'lucide-react';
 import {useEffect, useMemo, useState, type ReactNode} from 'react';
-import type {AttentionMode, GoogleStatus, GraceState} from '../../shared/types';
+import type {
+  AttentionMode,
+  GoogleStatus,
+  GraceState,
+  Message,
+} from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
 import {Faculties, type Faculty} from './Faculties';
 import {Orb} from './Orb';
@@ -78,9 +83,12 @@ function Readout({
 
 interface DashboardProps {
   state: GraceState;
+  /** The live transcript, not the snapshot inside `state`. */
+  messages: Message[];
   mode: Mode;
   micLevel: number;
   recording: boolean;
+  micBusy: boolean;
   micError: string | null;
   voiceSource: 'grace' | 'browser';
   voiceOn: boolean;
@@ -100,9 +108,11 @@ interface DashboardProps {
  */
 export function Dashboard({
   state,
+  messages,
   mode,
   micLevel,
   recording,
+  micBusy,
   micError,
   voiceSource,
   voiceOn,
@@ -115,7 +125,7 @@ export function Dashboard({
   const attention = state.mode.mode;
   const held = sinceLabel(state.mode.since);
 
-  const spokenTurns = state.messages.filter((message) => message.via === 'voice').length;
+  const spokenTurns = messages.filter((message) => message.via === 'voice').length;
   const latest = [...state.profile.entries].slice(-3).reverse();
 
   const faculties = useMemo<Faculty[]>(
@@ -162,7 +172,7 @@ export function Dashboard({
         detail: google?.problem
           ? 'Needs reconnecting'
           : google?.connected
-            ? 'Reading, never sending'
+            ? 'Reading only'
             : 'Not connected',
         health: google?.problem ? 'degraded' : google?.connected ? 'live' : 'absent',
         icon: <Mail size={14} />,
@@ -173,7 +183,7 @@ export function Dashboard({
         detail: google?.problem
           ? 'Needs reconnecting'
           : google?.connected
-            ? 'Reading and adding'
+            ? 'Reading your day'
             : 'Not connected',
         health: google?.problem ? 'degraded' : google?.connected ? 'live' : 'absent',
         icon: <CalendarDays size={14} />,
@@ -187,7 +197,7 @@ export function Dashboard({
       <div className="flex flex-col items-center">
         {/* The orb is the control now, not an ornament. Pressing it is the one
             way in that cannot be got wrong. */}
-        <Orb mode={mode} level={micLevel} onPress={onTalk} />
+        <Orb mode={mode} level={micLevel} onPress={onTalk} busy={micBusy} />
         <p className="mt-2 text-sm text-slate-200">{MODE_LABEL[mode]}</p>
       </div>
 
@@ -290,7 +300,7 @@ export function Dashboard({
         <Readout
           icon={<Ear size={11} />}
           label="Exchanges"
-          value={`${Math.floor(state.messages.length / 2)}${
+          value={`${Math.floor(messages.length / 2)}${
             spokenTurns > 0 ? ` · ${spokenTurns} spoken` : ''
           }`}
         />

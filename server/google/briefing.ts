@@ -16,10 +16,15 @@ import {connection} from './oauth';
 const PATIENCE_MS = 3500;
 
 function timeboxed<T>(work: Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     work.catch(() => fallback),
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), PATIENCE_MS)),
-  ]);
+    new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), PATIENCE_MS);
+    }),
+    // Clearing it matters: two of these run per reply, and a serverless
+    // invocation is kept alive by a pending timer.
+  ]).finally(() => clearTimeout(timer));
 }
 
 export async function buildBriefing(): Promise<string | null> {

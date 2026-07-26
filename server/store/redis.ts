@@ -31,7 +31,12 @@ export class RedisBackend implements Backend {
   }
 
   async quarantine(key: string, value: string): Promise<void> {
+    // Set the copy aside and then remove the original. Without the delete the
+    // next read fails on the same value and quarantines it again — five
+    // documents are read per page load, so an unreadable store grew five
+    // orphan keys every time anyone opened Grace, forever, with no way back.
     await this.client.set(`${this.keyFor(key)}:unreadable:${Date.now()}`, value);
+    await this.client.del(this.keyFor(key));
   }
 }
 

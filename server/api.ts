@@ -356,17 +356,35 @@ export function createApi(): Express {
 
   // Google sends the browser here, so it answers in HTML rather than JSON.
   api.get('/google-callback', guard(async (req, res) => {
+    // Everything on this page is escaped. The session cookie is SameSite=Lax,
+    // so a top-level navigation carries it, which would make a reflected
+    // parameter here enough to run script on Grace's own origin against a
+    // signed-in user and read the entire conversation.
+    const escape = (value: string) =>
+      value.replace(
+        /[&<>"']/g,
+        (character) =>
+          ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+          })[character] as string,
+      );
+
     const finish = (message: string) =>
       res.status(200).send(
         `<!doctype html><meta charset="utf-8"><title>Grace</title>` +
           `<body style="background:#07090c;color:#e2e8f0;font-family:system-ui;` +
           `display:grid;place-items:center;height:100vh;margin:0;text-align:center">` +
-          `<div><p style="max-width:32rem;line-height:1.6">${message}</p>` +
+          `<div><p style="max-width:32rem;line-height:1.6">${escape(message)}</p>` +
           `<a href="/" style="color:#7dd3fc">Back to Grace</a></div>`,
       );
 
     if (req.query.error) {
-      finish(`Google declined: ${String(req.query.error)}.`);
+      console.error('[grace] google declined:', String(req.query.error));
+      finish('Google declined the connection. Nothing has changed.');
       return;
     }
 

@@ -29,9 +29,11 @@ interface OrbProps {
   level?: number;
   /** Press to talk. Given, the orb becomes the primary control. */
   onPress?: () => void;
+  /** The microphone is mid-handshake; a second press would strand the first. */
+  busy?: boolean;
 }
 
-export function Orb({mode, level = 0, onPress}: OrbProps) {
+export function Orb({mode, level = 0, onPress, busy = false}: OrbProps) {
   // Damped, and floored at 1, so the orb never shrinks below its resting size
   // and never lurches on a single loud sample.
   const swell = 1 + Math.min(0.28, level * 0.5);
@@ -84,11 +86,12 @@ export function Orb({mode, level = 0, onPress}: OrbProps) {
     <button
       type="button"
       onClick={onPress}
+      disabled={busy}
       aria-label={mode === 'listening' ? 'Listening — speak now' : 'Press to speak'}
-      className="group rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-ice/50">
+      className="group rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-ice/50 disabled:cursor-wait">
       {body}
       <span className="mt-1 block text-center text-[0.65rem] uppercase tracking-[0.18em] text-mist/40 transition group-hover:text-ice/70">
-        {mode === 'listening' ? 'Listening' : 'Press to speak'}
+        {busy ? 'One moment' : mode === 'listening' ? 'Listening' : 'Press to speak'}
       </span>
     </button>
   );

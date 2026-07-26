@@ -1,4 +1,4 @@
-import {randomBytes, timingSafeEqual} from 'node:crypto';
+import {checkNonce, issueNonce} from '../auth';
 import {Document} from '../store/index';
 
 /**
@@ -43,9 +43,10 @@ interface Connection {
 
 const store = new Document<Connection | null>('google', () => null);
 
-/** Short-lived, so it lives in memory; a cold start simply means signing in again. */
-const pendingStates = new Map<string, number>();
-
+/**
+ * Warm-instance cache only. A cold start simply refreshes again, which costs
+ * one round trip and nothing else.
+ */
 const accessTokens = new Map<string, {token: string; expiresAt: number}>();
 
 export function googleConfigured(): boolean {
@@ -67,8 +68,11 @@ export function redirectUri(): string {
 }
 
 export function authorizeUrl(): string {
-  const state = randomBytes(32).toString('base64url');
-  pendingStates.set(state, Date.now() + 10 * 60_000);
+  // Signed rather than stored. Starting the handshake and completing it are
+  // two separate serverless invocations, quite possibly on different
+  // instances, so anything kept in memory between them is gone by the time
+  // the callback arrives — which would make connecting fail every time.
+  const state = issueNonce('google-oauth');
 
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID ?? '',
@@ -86,20 +90,6 @@ export function authorizeUrl(): string {
   });
 
   return `${AUTH_URL}?${params.toString()}`;
-}
-
-function checkState(state: string): boolean {
-  const expiry = pendingStates.get(state);
-  pendingStates.delete(state);
-  if (!expiry || expiry < Date.now()) return false;
-
-  // Constant-time, so a mismatch cannot be found a character at a time.
-  const seen = Buffer.from(state);
-  for (const candidate of [state]) {
-    const known = Buffer.from(candidate);
-    if (known.length === seen.length && timingSafeEqual(known, seen)) return true;
-  }
-  return false;
 }
 
 interface TokenResponse {
@@ -149,7 +139,7 @@ export async function completeSignIn(
   code: string,
   state: string,
 ): Promise<{email: string}> {
-  if (!checkState(state)) {
+  if (!checkNonce('google-oauth', state)) {
     throw new GoogleError('That sign-in link had expired. Start again.');
   }
 

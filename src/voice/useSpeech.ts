@@ -73,6 +73,10 @@ export function useSpeech(enabled: boolean) {
    * front of every sentence she says for the rest of the day.
    */
   const serverVoiceRef = useRef<boolean | null>(null);
+  /** Settles the audio currently playing, so cancelling never strands it. */
+  const settleRef = useRef<(() => void) | null>(null);
+  /** Which run the live pump belongs to. */
+  const pumpRunRef = useRef(-1);
 
   const hasSynth = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
@@ -160,7 +164,8 @@ export function useSpeech(enabled: boolean) {
         window.speechSynthesis.speak(utterance);
         // Some browsers never fire either event. Roughly a word every 350ms,
         // plus slack, so a stuck utterance can't wedge the queue forever.
-        window.setTimeout(finish, 4000 + text.length * 90);
+        const guard = window.setTimeout(finish, 4000 + text.length * 90);
+        utterance.addEventListener('end', () => window.clearTimeout(guard), {once: true});
       }),
     [hasSynth],
   );
@@ -176,6 +181,7 @@ export function useSpeech(enabled: boolean) {
         const done = (failure?: Error) => {
           if (settled) return;
           settled = true;
+          settleRef.current = null;
           URL.revokeObjectURL(url);
           element.onended = null;
           element.onerror = null;
@@ -185,6 +191,9 @@ export function useSpeech(enabled: boolean) {
 
         element.onended = () => done();
         element.onerror = () => done(new Error('the audio would not play'));
+        // pause() fires neither event, so without this a cancel would leave
+        // the blob URL un-revoked and the pump awaiting a promise forever.
+        settleRef.current = () => done(new Error('cancelled'));
         element.src = url;
         element.play().then(
           () => setBlocked(false),
@@ -206,6 +215,7 @@ export function useSpeech(enabled: boolean) {
     if (pumpingRef.current) return;
     pumpingRef.current = true;
     const run = runRef.current;
+    pumpRunRef.current = run;
 
     try {
       while (queueRef.current.length > 0 && run === runRef.current) {
@@ -237,9 +247,15 @@ export function useSpeech(enabled: boolean) {
         }
       }
     } finally {
-      pumpingRef.current = false;
-      if (run === runRef.current && queueRef.current.length === 0) {
-        setSpeaking(false);
+      // Only the pump that is still current may release the flag. A cancelled
+      // pump unwinding late would otherwise clear it for the pump that
+      // replaced it, and two loops would then share one queue and one audio
+      // element — overlapping, out-of-order speech.
+      if (pumpRunRef.current === run) {
+        pumpingRef.current = false;
+        if (run === runRef.current && queueRef.current.length === 0) {
+          setSpeaking(false);
+        }
       }
     }
   }, [playAudio, speakInBrowser]);
@@ -308,6 +324,9 @@ export function useSpeech(enabled: boolean) {
 
   const cancel = useCallback(() => {
     runRef.current += 1;
+    settleRef.current?.();
+    settleRef.current = null;
+    pumpingRef.current = false;
     bufferRef.current = '';
     queueRef.current = [];
     pumpingRef.current = false;

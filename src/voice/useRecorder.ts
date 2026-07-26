@@ -68,6 +68,16 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
   const onCapturedRef = useRef(onCaptured);
   const stopRef = useRef<() => void>(() => {});
   const spokeRef = useRef(false);
+  /** True from the moment start() is called until the recorder is idle again. */
+  const busyRef = useRef(false);
+  /** Set when the watchdog fired, so its diagnosis is not written over. */
+  const starvedRef = useRef(false);
+
+  /** The only way back to idle, so the re-entrancy guard cannot be stranded. */
+  const becomeIdle = useCallback(() => {
+    busyRef.current = false;
+    setState('idle');
+  }, []);
 
   useEffect(() => {
     onCapturedRef.current = onCaptured;
@@ -99,13 +109,21 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
       recorder.stop();
     } else {
       teardown();
-      setState('idle');
+      becomeIdle();
     }
   }, [teardown]);
 
   stopRef.current = stop;
 
   const start = useCallback(async () => {
+    // Re-entrancy guard. Opening the microphone takes as long as the
+    // permission prompt stays up, and a second press in that window used to
+    // overwrite the lease, the audio context and the animation frame — leaving
+    // the first stream open for the rest of the session with the browser's
+    // recording light on and a level meter running forever.
+    if (busyRef.current) return;
+    busyRef.current = true;
+
     setError(null);
     setHeardSomething(false);
     spokeRef.current = false;
@@ -115,7 +133,7 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
     try {
       lease = await acquire(deviceId);
     } catch (cause) {
-      setState('idle');
+      becomeIdle();
       setError(
         cause instanceof MicError
           ? cause.message
@@ -133,13 +151,13 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
     const track = stream.getAudioTracks()[0];
     if (!track || track.readyState === 'ended') {
       teardown();
-      setState('idle');
+      becomeIdle();
       setError('The microphone opened but immediately closed. Try reloading the page.');
       return;
     }
     if (track.muted) {
       teardown();
-      setState('idle');
+      becomeIdle();
       setError(
         `“${track.label || 'That microphone'}” is muted at the system level. Check the ` +
           'mute key or switch, and that it is not muted in your sound settings.',
@@ -223,19 +241,18 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
     // Never hard-code a container. audio/mp4 support depends on the machine
     // having a platform encoder, so the same code can succeed on one Windows
     // laptop and throw NotSupportedError on the next.
-    const format = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/mp4;codecs=mp4a.40.2',
-      'audio/ogg;codecs=opus',
-    ].find((type) => MediaRecorder.isTypeSupported(type));
-
     let recorder: MediaRecorder;
     try {
+      const format = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/ogg;codecs=opus',
+      ].find((type) => MediaRecorder.isTypeSupported?.(type));
       recorder = new MediaRecorder(stream, format ? {mimeType: format} : undefined);
     } catch (cause) {
       teardown();
-      setState('idle');
+      becomeIdle();
       setError(`This browser refused to start a recording: ${(cause as Error).message}`);
       return;
     }
@@ -257,7 +274,7 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
     recorder.onerror = () => {
       setError('The recording stopped unexpectedly.');
       teardown();
-      setState('idle');
+      becomeIdle();
     };
 
     recorder.onstop = async () => {
@@ -268,8 +285,12 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
       teardown();
 
       if (recording.size === 0) {
-        setError('Nothing was recorded at all. Reload the page and try again.');
-        setState('idle');
+        // Leave the watchdog's message alone if it already fired: "a virtual
+        // device with nothing routed into it" is a diagnosis, and this is not.
+        if (!starvedRef.current) {
+          setError('Nothing was recorded at all. Reload the page and try again.');
+        }
+        becomeIdle();
         return;
       }
 
@@ -281,7 +302,7 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
           'No sound reached me. Open Sound check and confirm the right microphone ' +
             'is selected — the level bar should move while you talk.',
         );
-        setState('idle');
+        becomeIdle();
         return;
       }
 
@@ -290,25 +311,34 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
         const audio = await toWav(recording);
         if (audio.seconds < MIN_SECONDS) {
           setError('That was too short to make out. Hold it a little longer.');
-          setState('idle');
+          becomeIdle();
           return;
         }
         onCapturedRef.current(audio);
       } catch (cause) {
         setError(`The recording could not be prepared: ${(cause as Error).message}`);
       } finally {
-        setState('idle');
+        becomeIdle();
       }
     };
 
     // A one-second timeslice doubles as a heartbeat. Without it the only data
     // event arrives at stop(), so a capture that is producing nothing looks
     // identical to one that is working right up until the moment it fails.
-    recorder.start(1000);
+    try {
+      recorder.start(1000);
+    } catch (cause) {
+      teardown();
+      becomeIdle();
+      setError(`This browser refused to record: ${(cause as Error).message}`);
+      return;
+    }
     setState('recording');
 
+    starvedRef.current = false;
     watchdogRef.current = window.setTimeout(() => {
       if (recorderRef.current !== recorder) return;
+      starvedRef.current = true;
       setError(
         'The microphone opened but sent no audio at all. This usually means the ' +
           'selected input is a virtual device with nothing routed into it. Open ' +

@@ -1,6 +1,7 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   randomBytes,
   scryptSync,
   timingSafeEqual,
@@ -25,7 +26,11 @@ interface Envelope {
 const keys = new Map<string, Buffer>();
 
 function keyFor(secret: string, salt: string): Buffer {
-  const id = `${salt}:${secret.length}`;
+  // Keyed on a digest of the secret, not its length: two different secrets of
+  // the same length against the same salt would otherwise collide and hand
+  // back the wrong key, failing decryption and routing perfectly good memory
+  // into the quarantine path.
+  const id = `${salt}:${createHash('sha256').update(secret).digest('hex')}`;
   let derived = keys.get(id);
   if (!derived) {
     derived = scryptSync(secret, Buffer.from(salt, 'hex'), 32);

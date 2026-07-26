@@ -339,12 +339,15 @@ try {
   assert.equal(state.storage.encrypted, true, 'the dashboard must report the truth');
   ok('dashboard readouts come from real state, not placeholders');
 
-  assert.equal(
-    (await call('/mode', {method: 'POST', body: JSON.stringify({mode: 'nap'})})).status,
-    400,
-    'an unknown mode must be refused',
-  );
-  ok('unknown modes rejected');
+  for (const rejected of ['nap', 'toString', 'constructor', '__proto__', 'valueOf']) {
+    assert.equal(
+      (await call('/mode', {method: 'POST', body: JSON.stringify({mode: rejected})}))
+        .status,
+      400,
+      `"${rejected}" must be refused as a mode`,
+    );
+  }
+  ok('unknown modes rejected, including inherited property names');
 
   await call('/mode', {method: 'POST', body: JSON.stringify({mode: 'open'})});
 

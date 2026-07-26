@@ -1,4 +1,4 @@
-import {createHmac} from 'node:crypto';
+import {createHmac, timingSafeEqual} from 'node:crypto';
 import type {NextFunction, Request, Response} from 'express';
 import {config} from './config';
 import {matches} from './crypto';
@@ -26,6 +26,30 @@ function signingKey(): string {
 
 function sign(payload: string): string {
   return createHmac('sha256', signingKey()).update(payload).digest('hex');
+}
+
+/**
+ * A one-off token that carries its own expiry and proves its own authenticity.
+ *
+ * Used for the OAuth handshake, where the two halves run as separate
+ * serverless invocations on possibly different instances — so anything held in
+ * memory between them is simply gone by the time it is needed.
+ */
+export function issueNonce(purpose: string, validForMs = 10 * 60_000): string {
+  const expires = Date.now() + validForMs;
+  const payload = `${purpose}.${expires}`;
+  return `${expires}.${sign(payload)}`;
+}
+
+export function checkNonce(purpose: string, token: string): boolean {
+  const [expires, signature] = token.split('.');
+  if (!expires || !signature) return false;
+  if (Number(expires) < Date.now()) return false;
+
+  const expected = sign(`${purpose}.${expires}`);
+  const left = Buffer.from(expected);
+  const right = Buffer.from(signature);
+  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 function readCookie(req: Request): string | null {
