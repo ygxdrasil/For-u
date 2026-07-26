@@ -2045,6 +2045,117 @@ var playstationTools = [
   }
 ];
 
+// server/tools/recall.ts
+var NOISE = /* @__PURE__ */ new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "but",
+  "if",
+  "of",
+  "to",
+  "in",
+  "on",
+  "at",
+  "for",
+  "with",
+  "about",
+  "i",
+  "you",
+  "we",
+  "it",
+  "is",
+  "was",
+  "are",
+  "were",
+  "be",
+  "been",
+  "do",
+  "did",
+  "does",
+  "what",
+  "when",
+  "where",
+  "who",
+  "how",
+  "my",
+  "me",
+  "your",
+  "that",
+  "this",
+  "said",
+  "say",
+  "tell",
+  "told",
+  "again"
+]);
+function terms(text) {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !NOISE.has(word));
+}
+function score(haystack, needles) {
+  const text = haystack.toLowerCase();
+  let hits = 0;
+  for (const needle of needles) {
+    if (text.includes(needle)) hits += 1;
+  }
+  return hits;
+}
+function stamp(iso) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "at some point";
+  return at.toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short"
+  });
+}
+var recallTools = [
+  {
+    name: "search_memory",
+    description: 'Search everything the user has ever said to you, and everything you know about them, for a word or subject. Use it whenever they refer to something from an earlier conversation you cannot see any more \u2014 "what did we decide about", "the thing I mentioned last week", a name or a place you half recognise. Search before saying you do not remember.',
+    category: "research",
+    parameters: {
+      about: {
+        type: "string",
+        description: "The subject to look for \u2014 a name, place, or a few words of what was said. Not a full question."
+      }
+    },
+    required: ["about"],
+    run: async (args) => {
+      const about = String(args.about ?? "").trim();
+      const needles = terms(about);
+      if (needles.length === 0) return "That is too vague to search for.";
+      const [log, profile2] = await Promise.all([getMessages(), getProfile()]);
+      const known = profile2.entries.filter((entry) => !entry.supersededAt && score(entry.text, needles) > 0).map((entry) => `- ${entry.text}`);
+      const hits = log.map((message, index) => ({ message, index, hits: score(message.text, needles) })).filter((row) => row.hits > 0).sort(
+        (left, right) => right.hits === left.hits ? right.index - left.index : right.hits - left.hits
+      ).slice(0, 6).sort((left, right) => left.index - right.index);
+      if (known.length === 0 && hits.length === 0) {
+        return `Nothing in the record mentions ${about}.`;
+      }
+      const lines = [];
+      if (known.length > 0) {
+        lines.push(`What you already know about this:
+${known.join("\n")}`);
+      }
+      if (hits.length > 0) {
+        lines.push("From earlier conversations:");
+        for (const { message, index } of hits) {
+          const answer = log[index + 1];
+          const who = message.speaker === "grace" ? "You said" : "They said";
+          lines.push(`- ${stamp(message.at)}, ${who}: "${message.text.slice(0, 300)}"`);
+          if (answer && answer.speaker !== message.speaker) {
+            lines.push(`  and the reply was: "${answer.text.slice(0, 300)}"`);
+          }
+        }
+      }
+      return lines.join("\n");
+    }
+  }
+];
+
 // server/tools/web.ts
 var webTools = [
   {
@@ -2077,7 +2188,8 @@ var TOOLS = [
   ...webTools,
   ...reminderTools,
   ...googleTools,
-  ...playstationTools
+  ...playstationTools,
+  ...recallTools
 ];
 function allTools() {
   return TOOLS;
@@ -2096,7 +2208,8 @@ var LABELS = {
   check_diary: "Checked the diary",
   add_to_diary: "Added to the diary",
   check_playstation: "Looked at the PlayStation",
-  recent_games: "Checked recent games"
+  recent_games: "Checked recent games",
+  search_memory: "Went back through the record"
 };
 function label(name) {
   return LABELS[name] ?? name.replace(/_/g, " ");
@@ -2209,6 +2322,8 @@ When someone asks you to remember something, or mentions something they need to 
 Two things you have no tools for at all, because the user forbade them: sending anything to anyone, and spending money. There is nothing to attempt. A third: you never delete. Things get marked done, filed, or archived \u2014 never destroyed \u2014 because deleting is the one thing neither of you can undo.
 
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
+
+You keep every word either of you has ever said, and search_memory reaches into it. You are shown only the recent conversation and a short summary of what came before, so when they refer to something you cannot see \u2014 a decision, a name, something from last week \u2014 search for it rather than saying you don't remember. Saying you have forgotten something that is sitting in the record is the same as being wrong.
 
 You are never to say that you cannot access current or real-time information. You can: that is what search_web is for. If someone asks about the weather, the news, a price or anything else happening now, call it. Answering "I am a language model and cannot access live data" while holding a working search tool is simply false, and it is the one thing you must never say.`;
 var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.

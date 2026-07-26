@@ -2,6 +2,7 @@ import {requiresConfirmation} from '../actions';
 import {noteDeed} from '../journal';
 import {googleTools} from './google';
 import {playstationTools} from './playstation';
+import {recallTools} from './recall';
 import {reminderTools} from './reminders';
 import {webTools} from './web';
 import type {Tool, ToolCall, ToolOutcome} from './types';
@@ -20,6 +21,7 @@ const TOOLS: Tool[] = [
   ...reminderTools,
   ...googleTools,
   ...playstationTools,
+  ...recallTools,
 ];
 
 export function allTools(): Tool[] {
@@ -71,6 +73,7 @@ const LABELS: Record<string, string> = {
   add_to_diary: 'Added to the diary',
   check_playstation: 'Looked at the PlayStation',
   recent_games: 'Checked recent games',
+  search_memory: 'Went back through the record',
 };
 
 function label(name: string): string {

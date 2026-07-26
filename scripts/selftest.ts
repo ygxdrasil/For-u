@@ -604,6 +604,33 @@ try {
   );
   ok('she can see the PlayStation and says plainly that she cannot operate it');
 
+  // ---- she can go back and look ------------------------------------------
+  // Her working memory is the recent window and a short summary. Everything
+  // older used to be unreachable, which meant "I don't remember" about things
+  // sitting in the log — the same as being wrong.
+  await chat('The flat in Porto has a leaking tap in the back bathroom.');
+  for (let filler = 0; filler < 14; filler += 1) {
+    await chat(`Something unrelated, number ${filler}.`);
+  }
+
+  const recalled = await runTool({name: 'search_memory', args: {about: 'Porto tap'}});
+  assert.ok(recalled.ok);
+  assert.match(recalled.result, /leaking tap/, 'she should find what was said');
+  // It has to be far enough back to be a real search rather than a glance at
+  // the last few turns, which is the only case that would have worked before.
+  const log = await getMessages();
+  const buried = log.findIndex((message) => /leaking tap/.test(message.text));
+  assert.ok(
+    log.length - buried > 20,
+    `the hit should be well back in the log, not in the recent window (${
+      log.length - buried
+    } messages back)`,
+  );
+
+  const nothing = await runTool({name: 'search_memory', args: {about: 'submarines'}});
+  assert.match(nothing.result, /nothing in the record/i, 'and not invent a hit');
+  ok('she searches the whole record rather than claiming to have forgotten');
+
   // ---- reaching the phone ------------------------------------------------
   const keyed = (await (await call('/push-key')).json()) as {
     key: string;
