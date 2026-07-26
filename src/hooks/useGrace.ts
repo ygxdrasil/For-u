@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {
   AttentionMode,
+  GoogleStatus,
   GraceState,
   InputMode,
   Message,
@@ -239,6 +240,16 @@ export function useGrace() {
     [applyProfile],
   );
 
+  const [google, setGoogle] = useState<GoogleStatus | null>(null);
+
+  const refreshGoogle = useCallback(() => {
+    api.googleStatus().then(setGoogle).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (session === 'ok' || session === 'open') refreshGoogle();
+  }, [session, refreshGoogle]);
+
   const setAttention = useCallback(async (next: AttentionMode) => {
     const mode = await api.setAttentionMode(next);
     setState((current) => (current ? {...current, mode} : current));
@@ -296,5 +307,11 @@ export function useGrace() {
     rename,
     clear,
     setAttention,
+    google,
+    refreshGoogle,
+    disconnectGoogle: async () => {
+      await api.disconnectGoogle();
+      refreshGoogle();
+    },
   };
 }

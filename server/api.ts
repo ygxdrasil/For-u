@@ -17,6 +17,18 @@ import {
 } from './auth';
 import {config, isConfigured} from './config';
 import {learnFrom} from './learn';
+import {buildBriefing} from './google/briefing';
+import {upcoming} from './google/calendar';
+import {recentMail} from './google/gmail';
+import {
+  authorizeUrl,
+  completeSignIn,
+  connection,
+  disconnect,
+  googleConfigured,
+  redirectUri,
+  type GoogleError,
+} from './google/oauth';
 import {getProvider} from './llm/index';
 import {getMode, isMode, setMode} from './modes';
 import {
@@ -193,6 +205,7 @@ export function createApi(): Express {
         via,
         now: new Date(),
         mode: (await getMode()).mode,
+        briefing: await buildBriefing().catch(() => null),
       });
 
       let reply = '';
@@ -308,6 +321,81 @@ export function createApi(): Express {
       }
     }),
   );
+
+  // ---- Google -----------------------------------------------------------
+  api.get('/google/status', guard(async (_req, res) => {
+    const saved = await connection();
+    res.json({
+      configured: googleConfigured(),
+      connected: Boolean(saved && !saved.brokenReason),
+      email: saved?.email ?? null,
+      problem: saved?.brokenReason ?? null,
+      redirectUri: redirectUri(),
+    });
+  }));
+
+  api.get('/google/start', (req, res) => {
+    if (!googleConfigured()) {
+      res.status(503).json({
+        error: 'Google is not set up yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.',
+      });
+      return;
+    }
+    void req;
+    res.redirect(authorizeUrl());
+  });
+
+  // Google sends the browser here, so it answers in HTML rather than JSON.
+  api.get('/google/callback', guard(async (req, res) => {
+    const finish = (message: string) =>
+      res.status(200).send(
+        `<!doctype html><meta charset="utf-8"><title>Grace</title>` +
+          `<body style="background:#07090c;color:#e2e8f0;font-family:system-ui;` +
+          `display:grid;place-items:center;height:100vh;margin:0;text-align:center">` +
+          `<div><p style="max-width:32rem;line-height:1.6">${message}</p>` +
+          `<a href="/" style="color:#7dd3fc">Back to Grace</a></div>`,
+      );
+
+    if (req.query.error) {
+      finish(`Google declined: ${String(req.query.error)}.`);
+      return;
+    }
+
+    try {
+      const {email} = await completeSignIn(
+        String(req.query.code ?? ''),
+        String(req.query.state ?? ''),
+      );
+      finish(`Connected as ${email || 'your Google account'}. You can close this.`);
+    } catch (error) {
+      finish(`Could not connect: ${(error as Error).message}`);
+    }
+  }));
+
+  api.post('/google/disconnect', guard(async (_req, res) => {
+    await disconnect();
+    res.json({ok: true});
+  }));
+
+  api.get('/google/mail', guard(async (req, res) => {
+    try {
+      res.json({
+        messages: await recentMail(String(req.query.q ?? 'in:inbox'), 10),
+      });
+    } catch (error) {
+      const failure = error as GoogleError;
+      res.status(failure.needsReconnect ? 409 : 502).json({error: failure.message});
+    }
+  }));
+
+  api.get('/google/diary', guard(async (_req, res) => {
+    try {
+      res.json({events: await upcoming(24)});
+    } catch (error) {
+      const failure = error as GoogleError;
+      res.status(failure.needsReconnect ? 409 : 502).json({error: failure.message});
+    }
+  }));
 
   api.post(
     '/speak',

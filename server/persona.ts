@@ -11,6 +11,8 @@ interface PersonaContext {
   now: Date;
   /** How much of the user's attention she may take right now. */
   mode: AttentionMode;
+  /** Live diary and mail, when Google is connected. */
+  briefing?: string | null;
 }
 
 const IDENTITY = `You are Grace, a personal assistant to one person — the user you are speaking with.
@@ -50,7 +52,12 @@ You may draft, prepare, price, compare, and stage any of it — and you should. 
 
 const PHASE_NOTE = `You can search the web, and you should whenever an answer depends on something current, specific, or outside what you already know — news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
-You do not read or send email, you cannot see the user's calendar, and you have no connection to their home yet. Those are being built. If you are asked for one of them, say plainly that it isn't connected yet rather than pretending or inventing what it would have found. You never sign in to any website as the user.`;
+You have no connection to their home yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
+
+/** Swapped in once Google is connected, since the limits are then different. */
+const CONNECTED_NOTE = `Their Gmail and Google Calendar are connected. You can read their mail and their diary, and you can put entries in the diary and write draft replies.
+
+You do not send mail. Ever. A draft goes to their drafts folder and they press send themselves — that is their standing instruction and it is not negotiable. When you add something to their diary, you do not notify the other attendees either; telling people is outbound communication and theirs to authorise.`;
 
 function describeProfile(profile: Profile): string {
   if (profile.entries.length === 0) {
@@ -98,7 +105,7 @@ function describePolicies(policies: ActionPolicy[]): string {
 }
 
 export function buildSystemPrompt(context: PersonaContext): string {
-  const {profile, summary, policies, via, now, mode} = context;
+  const {profile, summary, policies, via, now, mode, briefing} = context;
 
   const address = profile.addressAs
     ? `Address the user as "${profile.addressAs}" — sparingly, not in every reply.`
@@ -132,8 +139,10 @@ export function buildSystemPrompt(context: PersonaContext): string {
     describeProfile(profile),
     recall,
     describePolicies(policies),
+    briefing ?? null,
     LIMITS,
     PHASE_NOTE,
+    briefing ? CONNECTED_NOTE : null,
     clock,
     channel,
     `The user has you in ${MODES[mode].label} mode. ${MODES[mode].guidance}`,

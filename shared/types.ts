@@ -58,6 +58,17 @@ export interface ActionPolicy {
   locked?: boolean;
 }
 
+export interface GoogleStatus {
+  /** Whether the keys are present at all. */
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
+  /** Set when Google has stopped honouring the connection. */
+  problem: string | null;
+  /** Shown during setup: this must match Google's console exactly. */
+  redirectUri: string;
+}
+
 /** How much of your attention Grace may take. */
 export type AttentionMode = 'open' | 'work' | 'focus' | 'away';
 

@@ -9,7 +9,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import {useEffect, useMemo, useState, type ReactNode} from 'react';
-import type {AttentionMode, GraceState} from '../../shared/types';
+import type {AttentionMode, GoogleStatus, GraceState} from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
 import {Faculties, type Faculty} from './Faculties';
 import {Orb} from './Orb';
@@ -84,6 +84,7 @@ interface DashboardProps {
   micError: string | null;
   voiceSource: 'grace' | 'browser';
   voiceOn: boolean;
+  google: GoogleStatus | null;
   onSetAttention: (mode: AttentionMode) => void;
   onTalk: () => void;
   onOpenSoundCheck: () => void;
@@ -105,6 +106,7 @@ export function Dashboard({
   micError,
   voiceSource,
   voiceOn,
+  google,
   onSetAttention,
   onTalk,
   onOpenSoundCheck,
@@ -157,19 +159,27 @@ export function Dashboard({
       {
         id: 'mail',
         label: 'Mail',
-        detail: 'Not connected',
-        health: 'absent',
+        detail: google?.problem
+          ? 'Needs reconnecting'
+          : google?.connected
+            ? 'Reading, never sending'
+            : 'Not connected',
+        health: google?.problem ? 'degraded' : google?.connected ? 'live' : 'absent',
         icon: <Mail size={14} />,
       },
       {
         id: 'diary',
         label: 'Diary',
-        detail: 'Not connected',
-        health: 'absent',
+        detail: google?.problem
+          ? 'Needs reconnecting'
+          : google?.connected
+            ? 'Reading and adding'
+            : 'Not connected',
+        health: google?.problem ? 'degraded' : google?.connected ? 'live' : 'absent',
         icon: <CalendarDays size={14} />,
       },
     ],
-    [micError, recording, state.profile.entries.length, voiceOn, voiceSource],
+    [google, micError, recording, state.profile.entries.length, voiceOn, voiceSource],
   );
 
   return (
@@ -202,8 +212,45 @@ export function Dashboard({
           faculties={faculties}
           onSelect={(id) => {
             if (id === 'hearing' || id === 'voice') onOpenSoundCheck();
+            if ((id === 'mail' || id === 'diary') && google?.configured) {
+              // A full page visit rather than a fetch: Google's consent screen
+              // will not load inside anything.
+              window.location.href = '/api/google/start';
+            }
           }}
         />
+
+        {google && !google.connected && (
+          <div className="mt-2 rounded-lg border border-edge/70 bg-surface/40 px-3 py-2.5">
+            {google.configured ? (
+              <>
+                <p className="text-xs leading-relaxed text-mist/80">
+                  Connect Gmail and Calendar and she can read your day.
+                </p>
+                <a
+                  href="/api/google/start"
+                  className="mt-2 inline-block rounded-full border border-ice/40 bg-ice/15 px-3 py-1 text-xs text-ice transition hover:bg-ice/25">
+                  Connect Google
+                </a>
+              </>
+            ) : (
+              <p className="text-xs leading-relaxed text-mist/70">
+                Mail and diary need Google keys. See{' '}
+                <span className="font-mono text-mist/90">GOOGLE-SETUP.md</span> — it’s
+                two values pasted into Vercel.
+              </p>
+            )}
+          </div>
+        )}
+
+        {google?.problem && (
+          <p className="mt-2 rounded-lg border border-ember/25 bg-ember/10 px-3 py-2 text-xs leading-relaxed text-ember/90">
+            {google.problem}{' '}
+            <a href="/api/google/start" className="underline underline-offset-2">
+              Reconnect
+            </a>
+          </p>
+        )}
       </div>
 
       <div>

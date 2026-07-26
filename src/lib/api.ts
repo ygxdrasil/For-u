@@ -2,6 +2,7 @@ import type {
   ActionCategory,
   AttentionMode,
   ChatEvent,
+  GoogleStatus,
   ModeState,
   ConfirmationPolicy,
   GraceState,
@@ -168,6 +169,16 @@ export async function speak(
     throw failure;
   }
   return {audio: body.audio, mimeType: body.mimeType ?? 'audio/wav'};
+}
+
+export async function googleStatus(): Promise<GoogleStatus | null> {
+  const response = await fetch('/api/google/status');
+  if (!response.ok) return null;
+  return response.json();
+}
+
+export async function disconnectGoogle(): Promise<void> {
+  await fetch('/api/google/disconnect', {method: 'POST'});
 }
 
 export async function setAttentionMode(mode: AttentionMode): Promise<ModeState> {

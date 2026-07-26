@@ -93,6 +93,7 @@ export default function App() {
       micError={grace.recorder.error}
       voiceSource={grace.speech.source}
       voiceOn={grace.voiceOn}
+      google={grace.google}
       onSetAttention={(next) => void grace.setAttention(next)}
       onTalk={talk}
       onOpenSoundCheck={() => setSoundCheckOpen(true)}

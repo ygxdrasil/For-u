@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
-import {existsSync, readFileSync, rmSync} from 'node:fs';
+import {existsSync, readdirSync, readFileSync, rmSync} from 'node:fs';
 import type {AddressInfo} from 'node:net';
 import type {ChatEvent, ProfileEntry} from '../shared/types';
 import {createApi} from '../server/api';
@@ -347,6 +347,28 @@ try {
   ok('unknown modes rejected');
 
   await call('/mode', {method: 'POST', body: JSON.stringify({mode: 'open'})});
+
+  // ---- she cannot send mail, as a matter of code -------------------------
+  // Google publishes no draft-only scope, so gmail.compose carries the ability
+  // to send whether we want it or not. The user's first hard limit therefore
+  // cannot be enforced by scope, and is enforced here instead: if a send call
+  // ever appears in this repository, this fails.
+  const googleSources = readdirSync('server/google')
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => readFileSync(`server/google/${name}`, 'utf8'));
+
+  for (const source of googleSources) {
+    assert.doesNotMatch(
+      source,
+      /drafts\/[^'"`\s]*\/send|messages\/send|\.send\(/,
+      'nothing in the Google layer may send mail',
+    );
+  }
+  assert.ok(
+    googleSources.some((source) => source.includes('drafts')),
+    'the draft path should exist, or this check is proving nothing',
+  );
+  ok('no code path exists that sends mail on the user’s behalf');
 
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {
