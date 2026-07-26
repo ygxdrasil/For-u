@@ -358,6 +358,43 @@ function checkPassword(candidate) {
   return config.password.length > 0 && matches(candidate, config.password);
 }
 
+// server/keys.ts
+var store2 = new Document("keys", () => ({}));
+var cached = null;
+async function loadKeys() {
+  if (!cached) cached = await store2.read();
+  return cached;
+}
+async function setKey(name, value) {
+  const current = await store2.read();
+  const trimmed = value.trim();
+  const next = { ...current, [name]: trimmed || void 0 };
+  await store2.write(next);
+  cached = next;
+}
+function geminiKey() {
+  return cached?.gemini || config.apiKey;
+}
+function tail(value) {
+  if (!value) return null;
+  return value.length <= 4 ? "\u2022\u2022\u2022\u2022" : `\u2022\u2022\u2022\u2022${value.slice(-4)}`;
+}
+async function keyStatus() {
+  const keys2 = await loadKeys();
+  return {
+    gemini: {
+      set: Boolean(keys2.gemini || config.apiKey),
+      pasted: Boolean(keys2.gemini),
+      hint: tail(keys2.gemini) ?? (config.apiKey ? "from the environment" : null)
+    },
+    govee: {
+      set: Boolean(keys2.govee),
+      pasted: Boolean(keys2.govee),
+      hint: tail(keys2.govee)
+    }
+  };
+}
+
 // server/learn.ts
 import { Type } from "@google/genai";
 
@@ -567,9 +604,14 @@ ${request.text}` }]
 
 // server/llm/index.ts
 var provider = null;
+var builtWith = null;
+var overridden = false;
 function getProvider() {
-  if (!provider) {
-    provider = new GeminiProvider(config.apiKey, config.model);
+  if (overridden && provider) return provider;
+  const key = geminiKey();
+  if (!provider || builtWith !== key) {
+    provider = new GeminiProvider(key, config.model);
+    builtWith = key;
   }
   return provider;
 }
@@ -780,7 +822,7 @@ var SCOPES = [
   "openid",
   "email"
 ];
-var store2 = new Document("google", () => null);
+var store3 = new Document("google", () => null);
 var accessTokens = /* @__PURE__ */ new Map();
 function googleConfigured() {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
@@ -856,7 +898,7 @@ async function completeSignIn(code, state) {
       `This is Grace's owner's account only. Signed in as ${email}, expected ${owner}.`
     );
   }
-  await store2.write({
+  await store3.write({
     refreshToken: token.refresh_token,
     email,
     scopes: (token.scope ?? "").split(" ").filter(Boolean),
@@ -865,18 +907,18 @@ async function completeSignIn(code, state) {
   return { email };
 }
 async function connection() {
-  return store2.read();
+  return store3.read();
 }
 async function disconnect() {
   accessTokens.clear();
-  await store2.write(null);
+  await store3.write(null);
 }
 async function accessToken() {
-  const saved = await store2.read();
+  const saved = await store3.read();
   if (!saved) throw new GoogleError("Google is not connected yet.", true);
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
-  const cached2 = accessTokens.get(saved.refreshToken);
-  if (cached2 && cached2.expiresAt > Date.now() + 6e4) return cached2.token;
+  const cached3 = accessTokens.get(saved.refreshToken);
+  if (cached3 && cached3.expiresAt > Date.now() + 6e4) return cached3.token;
   const token = await postToken({
     client_id: process.env.GOOGLE_CLIENT_ID ?? "",
     client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
@@ -885,7 +927,7 @@ async function accessToken() {
   });
   if (token.error === "invalid_grant") {
     const reason = "Google has disconnected Grace \u2014 usually a changed password or a revoked permission. Reconnect to put it back.";
-    await store2.write({ ...saved, brokenReason: reason });
+    await store3.write({ ...saved, brokenReason: reason });
     throw new GoogleError(reason, true);
   }
   if (token.error || !token.access_token) {
@@ -986,7 +1028,7 @@ async function recentMail(query = "in:inbox", limit = 10) {
 // server/google/briefing.ts
 var PATIENCE_MS = 2500;
 var FRESH_FOR_MS = 9e4;
-var cached = null;
+var cached2 = null;
 function timeboxed(work, fallback) {
   let timer;
   return Promise.race([
@@ -999,10 +1041,10 @@ function timeboxed(work, fallback) {
   ]).finally(() => clearTimeout(timer));
 }
 async function buildBriefing() {
-  if (cached && cached.until > Date.now()) return cached.text;
+  if (cached2 && cached2.until > Date.now()) return cached2.text;
   const saved = await connection().catch(() => null);
   if (!saved || saved.brokenReason) {
-    cached = { text: null, until: Date.now() + FRESH_FOR_MS };
+    cached2 = { text: null, until: Date.now() + FRESH_FOR_MS };
     return null;
   }
   const [events, mail] = await Promise.all([
@@ -1039,15 +1081,15 @@ async function buildBriefing() {
     "",
     "Use it when it is relevant and say nothing about it when it is not. Do not recite the whole list unless asked for it. You can read this, and that is all \u2014 you cannot reply, draft, file, or change anything. Say so if asked rather than claiming to have done it."
   ].join("\n");
-  cached = { text, until: Date.now() + FRESH_FOR_MS };
+  cached2 = { text, until: Date.now() + FRESH_FOR_MS };
   return text;
 }
 
 // server/tools/reminders.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-var store3 = new Document("reminders", () => []);
+var store4 = new Document("reminders", () => []);
 async function outstanding() {
-  const all = await store3.read();
+  const all = await store4.read();
   return all.filter((reminder) => !reminder.doneAt).sort((left, right) => {
     if (!left.due) return 1;
     if (!right.due) return -1;
@@ -1093,7 +1135,7 @@ var reminderTools = [
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         doneAt: null
       };
-      await store3.update((current) => [...current, reminder]);
+      await store4.update((current) => [...current, reminder]);
       return `Noted: ${describe(reminder)}`;
     }
   },
@@ -1130,7 +1172,7 @@ ${open.map((item) => `- ${describe(item)}`).join("\n")}`;
       if (matches2.length > 1) {
         return `More than one matches: ${matches2.map((item) => item.text).join("; ")}. Ask which one they mean.`;
       }
-      await store3.update(
+      await store4.update(
         (current) => current.map(
           (item) => item.id === matches2[0].id ? { ...item, doneAt: (/* @__PURE__ */ new Date()).toISOString() } : item
         )
@@ -1169,6 +1211,9 @@ var webTools = [
 
 // server/tools/index.ts
 var TOOLS = [...webTools, ...reminderTools];
+function allTools() {
+  return TOOLS;
+}
 function findTool(name) {
   return TOOLS.find((tool) => tool.name === name);
 }
@@ -1260,18 +1305,18 @@ var MODES = {
   }
 };
 var DEFAULT = { mode: "open", since: (/* @__PURE__ */ new Date(0)).toISOString() };
-var store4 = new Document("mode", () => DEFAULT);
+var store5 = new Document("mode", () => DEFAULT);
 function getMode() {
-  return store4.read();
+  return store5.read();
 }
 function isMode(value) {
   return typeof value === "string" && Object.hasOwn(MODES, value);
 }
 async function setMode(mode) {
-  const current = await store4.read();
+  const current = await store5.read();
   if (current.mode === mode) return current;
   const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
-  await store4.write(next);
+  await store5.write(next);
   return next;
 }
 
@@ -1424,7 +1469,13 @@ function createApi() {
       configured: isConfigured(),
       model: config.model,
       storage: getBackend().name,
-      encrypted: Boolean(config.secret)
+      encrypted: Boolean(config.secret),
+      // Named here so a server-side deploy can actually be verified. A change
+      // behind the API leaves the frontend bundle identical, so there was
+      // previously no way to tell a live server from a stale one — which is
+      // how "it's deployed" got said about something that wasn't.
+      tools: allTools().map((tool) => tool.name),
+      google: googleConfigured()
     });
   });
   api.get("/session", (req, res) => {
@@ -1452,6 +1503,12 @@ function createApi() {
     res.json({ ok: true });
   });
   api.use(requireAuth);
+  api.use((_req, _res, next) => {
+    loadKeys().then(
+      () => next(),
+      () => next()
+    );
+  });
   api.get(
     "/state",
     guard(async (_req, res) => {
@@ -1473,6 +1530,24 @@ function createApi() {
         storage: { backend: getBackend().name, encrypted: Boolean(config.secret) }
       };
       res.json(state);
+    })
+  );
+  api.get(
+    "/keys",
+    guard(async (_req, res) => {
+      res.json(await keyStatus());
+    })
+  );
+  api.post(
+    "/keys",
+    guard(async (req, res) => {
+      const name = String(req.body?.name ?? "");
+      if (name !== "gemini" && name !== "govee") {
+        res.status(400).json({ error: "unknown key" });
+        return;
+      }
+      await setKey(name, String(req.body?.value ?? ""));
+      res.json(await keyStatus());
     })
   );
   api.post(

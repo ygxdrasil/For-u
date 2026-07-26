@@ -392,6 +392,32 @@ try {
   );
   ok('deliberation stays on whenever a tool is attached');
 
+  // ---- keys pasted in rather than set in the environment ------------------
+  const keysBefore = (await (await call('/keys')).json()) as {gemini: {pasted: boolean}};
+  assert.equal(keysBefore.gemini.pasted, false, 'nothing pasted yet');
+
+  const saved = await call('/keys', {
+    method: 'POST',
+    body: JSON.stringify({name: 'gemini', value: 'AIzaTESTKEY1234'}),
+  });
+  assert.equal(saved.status, 200);
+  const status = (await saved.json()) as {gemini: {pasted: boolean; hint: string}};
+  assert.equal(status.gemini.pasted, true);
+  assert.equal(status.gemini.hint, '••••1234', 'only the tail may be shown');
+
+  // The whole point: a key must never come back out over the wire.
+  const body = JSON.stringify(await (await call('/keys')).json());
+  assert.doesNotMatch(body, /AIzaTESTKEY/, 'a stored key must never be returned');
+  ok('keys can be pasted in, and are never handed back');
+
+  assert.equal(
+    (await call('/keys', {method: 'POST', body: JSON.stringify({name: 'nope'})})).status,
+    400,
+    'an unknown key name must be refused',
+  );
+  await call('/keys', {method: 'POST', body: JSON.stringify({name: 'gemini', value: ''})});
+  ok('unknown key names refused');
+
   // ---- attention modes ---------------------------------------------------
   // These are not decoration: the mode has to reach the model, or "Focus" is
   // a button that changes a colour and nothing else.

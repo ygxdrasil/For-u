@@ -16,6 +16,7 @@ import {
   requireAuth,
 } from './auth';
 import {config, isConfigured} from './config';
+import {keyStatus, loadKeys, setKey} from './keys';
 import {learnFrom} from './learn';
 import {buildBriefing} from './google/briefing';
 import {upcoming} from './google/calendar';
@@ -30,7 +31,7 @@ import {
   type GoogleError,
 } from './google/oauth';
 import {getProvider} from './llm/index';
-import {auditTools, declarations, runTool} from './tools/index';
+import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {getMode, isMode, setMode} from './modes';
 import {
   clearConversation,
@@ -132,6 +133,12 @@ export function createApi(): Express {
       model: config.model,
       storage: getBackend().name,
       encrypted: Boolean(config.secret),
+      // Named here so a server-side deploy can actually be verified. A change
+      // behind the API leaves the frontend bundle identical, so there was
+      // previously no way to tell a live server from a stale one — which is
+      // how "it's deployed" got said about something that wasn't.
+      tools: allTools().map((tool) => tool.name),
+      google: googleConfigured(),
     });
   });
 
@@ -168,6 +175,16 @@ export function createApi(): Express {
 
   api.use(requireAuth);
 
+  // Stored keys are read before any route that might need one, so a key pasted
+  // into Grace takes effect on the very next request. A failure here must not
+  // block the request: she falls back to the environment.
+  api.use((_req, _res, next) => {
+    loadKeys().then(
+      () => next(),
+      () => next(),
+    );
+  });
+
   api.get(
     '/state',
     guard(async (_req, res) => {
@@ -190,6 +207,27 @@ export function createApi(): Express {
         storage: {backend: getBackend().name, encrypted: Boolean(config.secret)},
       };
       res.json(state);
+    }),
+  );
+
+  api.get(
+    '/keys',
+    guard(async (_req, res) => {
+      res.json(await keyStatus());
+    }),
+  );
+
+  api.post(
+    '/keys',
+    guard(async (req, res) => {
+      const name = String(req.body?.name ?? '');
+      if (name !== 'gemini' && name !== 'govee') {
+        res.status(400).json({error: 'unknown key'});
+        return;
+      }
+      await setKey(name, String(req.body?.value ?? ''));
+      // Never echoed back — the status says whether one is set, not what it is.
+      res.json(await keyStatus());
     }),
   );
 

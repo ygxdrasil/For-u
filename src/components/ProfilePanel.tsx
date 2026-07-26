@@ -1,3 +1,4 @@
+import {Keys} from './Keys';
 import {Lock, Trash2, X} from 'lucide-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import type {
@@ -216,6 +217,10 @@ export function ProfilePanel({
           <p className="text-xs leading-relaxed text-mist/50">
             Clears what was said. What she has learned about you stays.
           </p>
+        </Section>
+
+        <Section title="Keys">
+          <Keys />
         </Section>
 
         {onSignOut && (

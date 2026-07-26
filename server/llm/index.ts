@@ -1,16 +1,27 @@
 import {config} from '../config';
+import {geminiKey} from '../keys';
 import {GeminiProvider} from './gemini';
 import type {LlmProvider} from './types';
 
 let provider: LlmProvider | null = null;
+/** The key the current provider was built with, so a change rebuilds it. */
+let builtWith: string | null = null;
+/** Set by the self-test; a stub must never be replaced by a real provider. */
+let overridden = false;
 
 /**
  * Grace runs on Gemini Flash today because it has the most workable free tier.
  * The provider interface exists so that decision stays reversible.
  */
 export function getProvider(): LlmProvider {
-  if (!provider) {
-    provider = new GeminiProvider(config.apiKey, config.model);
+  if (overridden && provider) return provider;
+
+  const key = geminiKey();
+  // Rebuilt when the key changes, so a newly pasted one takes effect on the
+  // next request rather than the next cold start.
+  if (!provider || builtWith !== key) {
+    provider = new GeminiProvider(key, config.model);
+    builtWith = key;
   }
   return provider;
 }
@@ -21,4 +32,6 @@ export function getProvider(): LlmProvider {
  */
 export function setProvider(next: LlmProvider | null): void {
   provider = next;
+  overridden = next !== null;
+  builtWith = null;
 }

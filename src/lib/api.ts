@@ -171,6 +171,27 @@ export async function speak(
   return {audio: body.audio, mimeType: body.mimeType ?? 'audio/wav'};
 }
 
+export interface KeyStatus {
+  gemini: {set: boolean; pasted: boolean; hint: string | null};
+  govee: {set: boolean; pasted: boolean; hint: string | null};
+}
+
+export async function fetchKeys(): Promise<KeyStatus> {
+  const response = await expectOk(await fetch('/api/keys'));
+  return response.json();
+}
+
+export async function saveKey(name: 'gemini' | 'govee', value: string): Promise<KeyStatus> {
+  const response = await expectOk(
+    await fetch('/api/keys', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, value}),
+    }),
+  );
+  return response.json();
+}
+
 export async function googleStatus(): Promise<GoogleStatus | null> {
   const response = await fetch('/api/google-status');
   if (!response.ok) return null;
