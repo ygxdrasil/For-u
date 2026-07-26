@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
-import {speak, transcribe} from '../lib/api';
+import {speak, transcribe, webCheck} from '../lib/api';
 import {
   acquire,
   diagnostics,
@@ -48,6 +48,7 @@ export function VoiceCheck({onClose, deviceId, onPickDevice}: VoiceCheckProps) {
   const [peak, setPeak] = useState(0);
   const [monitorError, setMonitorError] = useState<string | null>(null);
   const [diagnosis, setDiagnosis] = useState<string | null>(null);
+  const [web, setWeb] = useState<string | null>(null);
 
   const leaseRef = useRef<MicLease | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -352,6 +353,27 @@ export function VoiceCheck({onClose, deviceId, onPickDevice}: VoiceCheckProps) {
             )}
           </div>
         ))}
+      </div>
+
+      {/* Whether she can reach the web, and whether she bothers to. */}
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={() => {
+            setWeb('Asking her to look something up…');
+            void webCheck().then(
+              (result) => setWeb(JSON.stringify(result, null, 2)),
+              (cause: Error) => setWeb(`Failed: ${cause.message}`),
+            );
+          }}
+          className="w-full rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-mist transition hover:border-ice/40 hover:text-ice">
+          Test the web
+        </button>
+        {web && (
+          <pre className="scroll-thin mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-edge/70 bg-black/40 p-2.5 font-mono text-[0.65rem] leading-relaxed text-slate-300">
+            {web}
+          </pre>
+        )}
       </div>
 
       <div className="mb-4">

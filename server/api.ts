@@ -529,6 +529,63 @@ export function createApi(): Express {
     }
   }));
 
+  /**
+   * Does the web actually work, and does she actually reach for it?
+   *
+   * Two different failures look identical from the outside: grounding being
+   * refused, and the model simply never choosing to search. This runs both
+   * halves separately and reports each in the provider's own words, because
+   * guessing between them has already cost days.
+   */
+  api.post(
+    '/web-check',
+    guard(async (_req, res) => {
+      const report: Record<string, unknown> = {model: config.model};
+
+      // Half one: can this key ground at all?
+      try {
+        const answer = await getProvider().complete({
+          system: 'Answer in one short sentence.',
+          turns: [{role: 'user', text: 'What is today\'s date and one news headline?'}],
+          search: true,
+          temperature: 0,
+        });
+        report.grounding = 'ok';
+        report.groundedAnswer = answer.slice(0, 300);
+      } catch (error) {
+        report.grounding = 'failed';
+        report.groundingError = (error as Error).message.slice(0, 500);
+      }
+
+      // Half two: given the tool, does she pick it up?
+      const called: string[] = [];
+      try {
+        let reply = '';
+        for await (const delta of getProvider().stream({
+          system:
+            'You are a helpful assistant with tools. Use them when they apply.',
+          turns: [{role: 'user', text: 'What is the weather in London right now?'}],
+          tools: declarations(),
+          onToolCall: async (name, args) => {
+            called.push(name);
+            return (await runTool({name, args})).result;
+          },
+        })) {
+          reply += delta;
+        }
+        report.toolsOffered = declarations().map((tool) => tool.name);
+        report.toolsCalled = called;
+        report.reachedForTheWeb = called.includes('search_web');
+        report.reply = reply.slice(0, 300);
+      } catch (error) {
+        report.toolCalling = 'failed';
+        report.toolError = (error as Error).message.slice(0, 500);
+      }
+
+      res.json(report);
+    }),
+  );
+
   api.post(
     '/speak',
     guard(async (req, res) => {

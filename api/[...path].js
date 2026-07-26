@@ -1773,6 +1773,48 @@ function createApi() {
     }
   }));
   api.post(
+    "/web-check",
+    guard(async (_req, res) => {
+      const report = { model: config.model };
+      try {
+        const answer = await getProvider().complete({
+          system: "Answer in one short sentence.",
+          turns: [{ role: "user", text: "What is today's date and one news headline?" }],
+          search: true,
+          temperature: 0
+        });
+        report.grounding = "ok";
+        report.groundedAnswer = answer.slice(0, 300);
+      } catch (error) {
+        report.grounding = "failed";
+        report.groundingError = error.message.slice(0, 500);
+      }
+      const called = [];
+      try {
+        let reply = "";
+        for await (const delta of getProvider().stream({
+          system: "You are a helpful assistant with tools. Use them when they apply.",
+          turns: [{ role: "user", text: "What is the weather in London right now?" }],
+          tools: declarations(),
+          onToolCall: async (name, args) => {
+            called.push(name);
+            return (await runTool({ name, args })).result;
+          }
+        })) {
+          reply += delta;
+        }
+        report.toolsOffered = declarations().map((tool) => tool.name);
+        report.toolsCalled = called;
+        report.reachedForTheWeb = called.includes("search_web");
+        report.reply = reply.slice(0, 300);
+      } catch (error) {
+        report.toolCalling = "failed";
+        report.toolError = error.message.slice(0, 500);
+      }
+      res.json(report);
+    })
+  );
+  api.post(
     "/speak",
     guard(async (req, res) => {
       if (!isConfigured()) {

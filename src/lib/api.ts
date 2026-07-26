@@ -171,6 +171,11 @@ export async function speak(
   return {audio: body.audio, mimeType: body.mimeType ?? 'audio/wav'};
 }
 
+export async function webCheck(): Promise<Record<string, unknown>> {
+  const response = await expectOk(await fetch('/api/web-check', {method: 'POST'}));
+  return response.json();
+}
+
 export interface KeyStatus {
   gemini: {set: boolean; pasted: boolean; hint: string | null};
   govee: {set: boolean; pasted: boolean; hint: string | null};
