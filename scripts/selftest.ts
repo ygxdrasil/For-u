@@ -16,6 +16,7 @@ import type {AddressInfo} from 'node:net';
 import type {ChatEvent, ProfileEntry} from '../shared/types';
 import {createApi} from '../server/api';
 import {config} from '../server/config';
+import {GeminiProvider} from '../server/llm/gemini';
 import {setProvider} from '../server/llm/index';
 import type {
   GenerateRequest,
@@ -104,6 +105,9 @@ class MemoryBackend implements Backend {
     void value;
   }
 }
+
+/** Only ever used to inspect the request it would build. */
+const provider = new GeminiProvider('unused', 'gemini-2.5-flash-lite');
 
 const stub = new StubProvider();
 setProvider(stub);
@@ -340,6 +344,35 @@ try {
     'extraction must not ask for search alongside a JSON shape',
   );
   ok('web offered when it could help, withheld when it would only cost time');
+
+  // The bug this guards against cost her the web for days without an error
+  // anywhere: the search tool was attached, deliberation was switched off, and
+  // deciding to call a tool *is* deliberation — so she answered from memory
+  // and then said, quite correctly, that she could not browse.
+  const grounded = provider.params({
+    system: 's',
+    turns: [{role: 'user', text: 'what is the news?'}],
+    fast: true,
+    search: true,
+  });
+  assert.ok(grounded.config.tools, 'the search tool should be attached');
+  assert.equal(
+    grounded.config.thinkingConfig?.thinkingBudget,
+    undefined,
+    'thinking must not be disabled while a tool is attached, or it is never called',
+  );
+
+  const plain = provider.params({
+    system: 's',
+    turns: [{role: 'user', text: 'hello'}],
+    fast: true,
+  });
+  assert.equal(
+    plain.config.thinkingConfig?.thinkingBudget,
+    0,
+    'without a tool, deliberation should still be off for speed',
+  );
+  ok('deliberation stays on whenever a tool is attached');
 
   // ---- attention modes ---------------------------------------------------
   // These are not decoration: the mode has to reach the model, or "Focus" is

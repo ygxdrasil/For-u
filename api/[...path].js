@@ -411,6 +411,7 @@ var GeminiProvider = class {
         "[grace] search unavailable, answering without it:",
         error.message
       );
+      request.onSearchFailed?.(error.message);
     }
     const response = await this.client.models.generateContentStream(
       this.params({ ...request, search: false })
@@ -483,6 +484,10 @@ ${request.text}` }]
       mimeType: "audio/wav"
     };
   }
+  /**
+   * Public so the self-test can assert on the request that goes out, rather
+   * than restating this logic and testing a copy of it.
+   */
   params(request) {
     const config2 = {
       systemInstruction: request.system,
@@ -498,7 +503,7 @@ ${request.text}` }]
     } else if (request.search) {
       config2.tools = [{ googleSearch: {} }];
     }
-    if (request.fast) {
+    if (request.fast && !config2.tools) {
       config2.thinkingConfig = { thinkingBudget: 0 };
     }
     return {
@@ -1295,7 +1300,8 @@ function createApi() {
               grounded = true;
               send({ type: "searched" });
             }
-          }
+          },
+          onSearchFailed: (reason) => send({ type: "search-failed", reason })
         })) {
           reply += delta;
           send({ type: "delta", text: delta });

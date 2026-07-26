@@ -139,6 +139,8 @@ export function useGrace() {
             landed = true;
           } else if (event.type === 'searched') {
             setSearched(true);
+          } else if (event.type === 'search-failed') {
+            setError(`I couldn’t reach the web for that: ${event.reason}`);
           } else if (event.type === 'learned') {
             addLearned(event.entries);
           } else if (event.type === 'error') {

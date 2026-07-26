@@ -290,6 +290,7 @@ export function createApi(): Express {
               send({type: 'searched'});
             }
           },
+          onSearchFailed: (reason) => send({type: 'search-failed', reason}),
         })) {
           reply += delta;
           send({type: 'delta', text: delta});

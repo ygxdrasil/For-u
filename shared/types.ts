@@ -98,4 +98,5 @@ export type ChatEvent =
   | {type: 'done'; message: Message}
   | {type: 'learned'; entries: ProfileEntry[]}
   | {type: 'searched'}
+  | {type: 'search-failed'; reason: string}
   | {type: 'error'; message: string};

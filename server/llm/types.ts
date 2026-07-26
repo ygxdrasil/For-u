@@ -36,6 +36,8 @@ export interface GenerateRequest {
    * so quietly instead.
    */
   onGrounded?: () => void;
+  /** Called when the web was wanted but could not be reached. */
+  onSearchFailed?: (reason: string) => void;
 }
 
 export interface TranscribeRequest {

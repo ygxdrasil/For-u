@@ -94,6 +94,9 @@ export class GeminiProvider implements LlmProvider {
         '[grace] search unavailable, answering without it:',
         (error as Error).message,
       );
+      // Silently dropping to an ungrounded answer is how "she says she cannot
+      // reach the web" goes undiagnosed for days.
+      request.onSearchFailed?.((error as Error).message);
     }
 
     const response = await this.client.models.generateContentStream(
@@ -171,7 +174,11 @@ export class GeminiProvider implements LlmProvider {
     };
   }
 
-  private params(request: GenerateRequest) {
+  /**
+   * Public so the self-test can assert on the request that goes out, rather
+   * than restating this logic and testing a copy of it.
+   */
+  params(request: GenerateRequest) {
     const config: GenerateContentConfig = {
       systemInstruction: request.system,
       temperature: request.temperature ?? 0.7,
@@ -193,7 +200,11 @@ export class GeminiProvider implements LlmProvider {
 
     // Conversation should feel immediate; deliberation costs a beat of silence
     // that is far more noticeable when the reply is spoken aloud.
-    if (request.fast) {
+    //
+    // But never with a tool attached. Deciding to search *is* deliberation, so
+    // zeroing the budget leaves the tool present and unused: she answers from
+    // memory and then says, quite correctly, that she cannot reach the web.
+    if (request.fast && !config.tools) {
       config.thinkingConfig = {thinkingBudget: 0};
     }
 
