@@ -1414,7 +1414,7 @@ async function buildBriefing() {
     "This is live from their Google account, as of now:",
     ...lines,
     "",
-    "Use it when it is relevant and say nothing about it when it is not. Do not recite the whole list unless asked for it. You can read this, and that is all \u2014 you cannot reply, draft, file, or change anything. Say so if asked rather than claiming to have done it."
+    "Use it when it is relevant and say nothing about it when it is not. Never read this list out \u2014 it is what you know, not what you say. If they ask about their mail, answer in a sentence: how many, who from, what they want. This copy is a minute old and read-only; use check_mail or check_diary to go and look properly, and say plainly that you cannot send or delete rather than claiming to have done either."
   ].join("\n");
   cached3 = { text, until: Date.now() + FRESH_FOR_MS };
   return text;
@@ -1996,6 +1996,10 @@ var consoleTools = [
 ];
 
 // server/tools/google.ts
+function sender(from) {
+  const name = from.split("<")[0].trim().replace(/^"|"$/g, "");
+  return name || from.trim();
+}
 function when(iso, allDay) {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return iso;
@@ -2010,7 +2014,7 @@ function when(iso, allDay) {
 var googleTools = [
   {
     name: "check_mail",
-    description: "Look at the user\u2019s inbox. Use this whenever they ask you to check their mail, ask whether anything has arrived, or ask about a message from someone. Returns senders and subjects, not full messages.",
+    description: "Look at the user\u2019s inbox. Use this whenever they ask you to check their mail, ask whether anything has arrived, or ask about a message from someone. Returns senders and subjects only \u2014 never the contents, and never anything to read out.",
     category: "research",
     parameters: {
       query: {
@@ -2021,12 +2025,14 @@ var googleTools = [
     required: [],
     run: async (args) => {
       const query = String(args.query ?? "").trim() || "in:inbox";
-      const messages2 = await recentMail(query, 10);
+      const messages2 = await recentMail(query, 8);
       if (messages2.length === 0) return `Nothing matching "${query}".`;
-      return messages2.map(
-        (message) => `- ${message.unread ? "[unread] " : ""}${message.from} \u2014 ${message.subject}
-  ${message.snippet.slice(0, 140)}`
+      const list = messages2.map(
+        (message) => `- ${message.unread ? "[unread] " : ""}${sender(message.from)}: ${message.subject} (id ${message.id})`
       ).join("\n");
+      return `${list}
+
+That list is for you, not for them. Answer in a sentence or two: how many there are, who the ones that matter are from, and what they want. Never read the list out, never mention an id, and leave out anything automated \u2014 receipts, newsletters, notifications \u2014 unless they asked for it or something in it genuinely needs them. Use read_mail with an id if they want one opened.`;
     }
   },
   {
@@ -2441,6 +2447,7 @@ var BREVITY = `You are answering aloud most of the time, so write the way a pers
 - No emoji.
 - Spell things out as they should be spoken: "half past four", not "4:30pm".
 - If something genuinely needs to be a list, say the two or three items in a sentence.
+- Never reproduce a list a tool handed you. Tool output is working material for you to read, not text to pass on. Nobody asked to have their inbox read to them; they asked what is in it.
 - Only go long when asked for detail outright. Then still lead with the answer.`;
 var JUDGEMENT = `You have opinions and you voice them, but you are not difficult about it.
 
@@ -2477,6 +2484,8 @@ You have no connection to their lights or heating yet. If you are asked for that
 var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
 
 When they ask you to go and look \u2014 "check my mail", "what's on today", "anything from Sam" \u2014 use check_mail or check_diary rather than answering from the summary below, which may be a minute old. You can also write drafts and put things in their diary.
+
+When you report on mail, report \u2014 do not recite. Say how many there are, who the ones that matter are from, and what they want, in a sentence or two. Automated post is noise unless they asked for it or something in it genuinely needs them: receipts, delivery notices, newsletters, security alerts about things they did themselves. "Nine, all of it automatic \u2014 two Govee delivery notices and the rest newsletters" is a good answer. A list of senders and subjects is not an answer, it is the raw material you were given to produce one.
 
 You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 function describeProfile(profile2) {

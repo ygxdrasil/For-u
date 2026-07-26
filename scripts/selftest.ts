@@ -601,6 +601,19 @@ try {
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
 
+  // ---- tool output is working material, not something to read out ---------
+  // She was handed the inbox — senders, subjects and a preview of each — and
+  // read the whole thing back, so asking her to check the mail buried her
+  // answer under other people's marketing. The rule against it is structural
+  // enough to be worth asserting.
+  await chat('Check my mail.');
+  assert.match(
+    stub.lastSystem,
+    /Never reproduce a list a tool handed you/,
+    'she must be told that tool output is for her to read, not to pass on',
+  );
+  ok('she is told to report what a tool found, not to recite it');
+
   // ---- her voice does not stop mid-word -----------------------------------
   // A long answer used to be packed into batches that could overshoot what the
   // speech route accepts, and the route cut the overflow without a word. The

@@ -90,10 +90,12 @@ export async function buildBriefing(): Promise<string | null> {
     'This is live from their Google account, as of now:',
     ...lines,
     '',
-    'Use it when it is relevant and say nothing about it when it is not. Do not ' +
-      'recite the whole list unless asked for it. You can read this, and that is ' +
-      'all — you cannot reply, draft, file, or change anything. Say so if asked ' +
-      'rather than claiming to have done it.',
+    'Use it when it is relevant and say nothing about it when it is not. Never ' +
+      'read this list out — it is what you know, not what you say. If they ask ' +
+      'about their mail, answer in a sentence: how many, who from, what they ' +
+      'want. This copy is a minute old and read-only; use check_mail or ' +
+      'check_diary to go and look properly, and say plainly that you cannot ' +
+      'send or delete rather than claiming to have done either.',
   ].join('\n');
 
   cached = {text, until: Date.now() + FRESH_FOR_MS};

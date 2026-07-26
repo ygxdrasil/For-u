@@ -14,6 +14,17 @@ import type {Tool} from './types';
  * A draft goes to the drafts folder and the user presses send.
  */
 
+/**
+ * "Sam Fisher <sam@example.com>" becomes "Sam Fisher".
+ *
+ * The address adds nothing she would ever say out loud, and it is most of the
+ * length of the line.
+ */
+function sender(from: string): string {
+  const name = from.split('<')[0].trim().replace(/^"|"$/g, '');
+  return name || from.trim();
+}
+
 function when(iso: string, allDay: boolean): string {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return iso;
@@ -34,7 +45,8 @@ export const googleTools: Tool[] = [
     description:
       'Look at the user’s inbox. Use this whenever they ask you to check their ' +
       'mail, ask whether anything has arrived, or ask about a message from ' +
-      'someone. Returns senders and subjects, not full messages.',
+      'someone. Returns senders and subjects only — never the contents, and ' +
+      'never anything to read out.',
     category: 'research',
     parameters: {
       query: {
@@ -47,16 +59,30 @@ export const googleTools: Tool[] = [
     required: [],
     run: async (args) => {
       const query = String(args.query ?? '').trim() || 'in:inbox';
-      const messages = await recentMail(query, 10);
+      const messages = await recentMail(query, 8);
       if (messages.length === 0) return `Nothing matching "${query}".`;
 
-      return messages
+      // Senders and subjects, and nothing else. The preview text used to come
+      // back with every message, which meant a request to check the mail
+      // returned several hundred words of marketing copy — and she read it
+      // out. She cannot summarise what she was not given, so she is given less.
+      const list = messages
         .map(
           (message) =>
-            `- ${message.unread ? '[unread] ' : ''}${message.from} — ${message.subject}` +
-            `\n  ${message.snippet.slice(0, 140)}`,
+            `- ${message.unread ? '[unread] ' : ''}${sender(message.from)}: ` +
+            `${message.subject} (id ${message.id})`,
         )
         .join('\n');
+
+      return (
+        `${list}\n\n` +
+        `That list is for you, not for them. Answer in a sentence or two: how ` +
+        `many there are, who the ones that matter are from, and what they want. ` +
+        `Never read the list out, never mention an id, and leave out anything ` +
+        `automated — receipts, newsletters, notifications — unless they asked ` +
+        `for it or something in it genuinely needs them. Use read_mail with an ` +
+        `id if they want one opened.`
+      );
     },
   },
   {
