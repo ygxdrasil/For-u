@@ -17,7 +17,7 @@
 
 import {spawn} from 'node:child_process';
 import dgram from 'node:dgram';
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {dirname, join} from 'node:path';
 
@@ -61,6 +61,8 @@ function settings() {
     everyMs: Number(process.env.GRACE_BRIDGE_POLL_MS ?? file.pollMs ?? 15_000),
     /** Set this if discovery finds the wrong device, or none. */
     ip: process.env.PS5_IP ?? file.ps5Ip ?? '',
+    /** Where playactor lives, if it is not in the usual place beside this file. */
+    playactor: process.env.PLAYACTOR_CLI ?? file.playactor ?? '',
   };
 }
 
@@ -148,22 +150,52 @@ function discover(timeoutMs = 2000) {
  *
  * Both need a credential the console only hands out during a pairing dance
  * involving a PIN typed on the television, and playactor already implements
- * all of it. Running it as a command rather than importing it keeps this file
- * honest about the boundary: everything above is protocol we speak ourselves,
- * everything here is a program we are asking politely.
+ * all of it. Everything above this line is protocol we speak ourselves;
+ * everything below is a program we are asking politely.
+ *
+ * Where playactor's own entry point is.
+ *
+ * Deliberately never `npx`, and never the `playactor` command. Both of those
+ * are `.cmd` batch files on Windows, and a managed laptop will very often
+ * refuse to run a batch file at all — "this program is blocked by group
+ * policy" — while being perfectly happy to run node.exe. Calling the
+ * JavaScript with the same node that is already running sidesteps the whole
+ * category of problem, and needs no permissions of any kind.
  */
+function findPlayactor() {
+  const candidates = [
+    config.playactor,
+    join(here, 'node_modules', 'playactor', 'dist', 'cli', 'index.js'),
+    join(here, 'playactor', 'node_modules', 'playactor', 'dist', 'cli', 'index.js'),
+  ].filter(Boolean);
+
+  return candidates.find((path) => existsSync(path)) ?? null;
+}
+
 function playactor(command) {
   return new Promise((resolve) => {
+    const cli = findPlayactor();
+    if (!cli) {
+      resolve({
+        ok: false,
+        detail:
+          'playactor is not installed next to this file — see the README, ' +
+          'the "install" step',
+      });
+      return;
+    }
+
     const args = [
-      '--yes',
-      'playactor',
+      cli,
       command,
       '--ps5',
       '--no-open-urls',
       ...(config.ip ? ['--ip', config.ip] : []),
     ];
 
-    const child = spawn('npx', args, {cwd: here, shell: process.platform === 'win32'});
+    // process.execPath is the very node that is running this. No shell, no
+    // batch file, nothing for a policy to object to.
+    const child = spawn(process.execPath, args, {cwd: here});
 
     let output = '';
     child.stdout.on('data', (chunk) => (output += chunk));

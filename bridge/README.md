@@ -37,11 +37,24 @@ check with `node --version`. If you can't install things on that machine, see
 bridge** under *The laptop bridge*. That's the whole thing — one file, no
 dependencies to install.
 
-**2. Pair with the console.** Turn the PS5 on first, then, in the folder you
-saved it to:
+**2. Install playactor**, in the same folder you saved `bridge.mjs` to. This
+is the piece that knows how to pair with a console:
 
 ```
-npx --yes playactor login --ps5
+npm install playactor
+```
+
+If `npm` is blocked — see *When batch files are blocked* below — run it as
+plain JavaScript instead, which is never blocked:
+
+```
+node <your-node-folder>\node_modules\npm\bin\npm-cli.js install playactor
+```
+
+**3. Pair with the console.** Turn the PS5 on first, then:
+
+```
+node node_modules\playactor\dist\cli\index.js login --ps5
 ```
 
 It opens a browser to sign in to PlayStation, then asks for an eight-digit
@@ -49,7 +62,7 @@ code. On the console that's **Settings → System → Remote Play → Link Devic
 Type in the number it shows. This is the same pairing Remote Play uses, and
 you only do it once.
 
-**3. Start it.** In Grace, press **Copy command** — it already has her
+**4. Start it.** In Grace, press **Copy command** — it already has her
 address and your token in it. Paste it into the terminal:
 
 ```
@@ -85,13 +98,35 @@ the console's IP, put it in `config.json` as `ps5Ip` — that skips discovery.
 **"Grace does not recognise this token."** The token in `config.json` doesn't
 match the one in her side panel. Copy it again.
 
-**"node is not recognised".** See below.
+**"node is not recognised".** See *No administrator rights* below.
+
+**"This program is blocked by group policy."** See the next section.
 
 **Waking fails after pairing.** Rest mode has to be allowed to accept it:
 on the console, **Settings → System → Power Saving → Features Available in
 Rest Mode**, and turn on *Stay Connected to the Internet* and *Enable Turning
 On PS5 from Network*. Without those the console genuinely cannot be woken by
 anything, including Sony's own app.
+
+## When batch files are blocked
+
+On a managed laptop you will often find that `node.exe` runs perfectly while
+`npm` and `npx` are refused outright:
+
+    This program is blocked by group policy.
+
+That is not about Node. `npm` and `npx` are `.cmd` batch files, and the policy
+blocks batch files. The programs themselves are ordinary JavaScript, so
+running them through node directly is allowed and does exactly the same thing.
+
+Wherever these instructions say `npm something`, use:
+
+```
+node <your-node-folder>\node_modules\npm\bin\npm-cli.js something
+```
+
+The bridge itself never calls `npm` or `npx` for this reason — it runs
+playactor's JavaScript with the same node that is already running it.
 
 ## No administrator rights
 
