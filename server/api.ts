@@ -37,6 +37,7 @@ import {getProvider} from './llm/index';
 import {playstation, psnConfigured, PsnError, recentlyPlayed} from './ps5';
 import {pulse} from './pulse';
 import {devices, notify, publicKey, subscribe} from './push';
+import {onAsk} from './tools/ask';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {getMode, isMode, setMode} from './modes';
@@ -361,6 +362,11 @@ export function createApi(): Express {
       let grounded = false;
       /** Tool name to the one line the user should see about it. */
       const shown = new Map<string, string>();
+
+      // A question she asks goes out the instant she asks it, rather than
+      // waiting for the reply to finish — the buttons and the sentence that
+      // introduces them should appear together.
+      onAsk((question, choices) => send({type: 'asked', question, choices}));
 
       try {
         for await (const delta of getProvider().stream({

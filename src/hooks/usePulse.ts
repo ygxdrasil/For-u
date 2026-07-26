@@ -16,11 +16,16 @@ import * as api from '../lib/api.ts';
  * the worst case here is a wasted round trip rather than a repeated remark.
  */
 
-/** Slow enough to be free, quick enough that "in twenty minutes" is still true. */
-const EVERY_MS = 4 * 60 * 1000;
+/** Once an hour, which is what the user asked for. */
+const EVERY_MS = 60 * 60 * 1000;
 
-/** Nothing at all for the first stretch after opening. */
-const SETTLE_MS = 45 * 1000;
+/**
+ * Nothing at all for the first stretch after opening.
+ *
+ * Longer than it looks like it needs to be: opening her should not be
+ * immediately followed by her interrupting you.
+ */
+const SETTLE_MS = 90 * 1000;
 
 interface Options {
   enabled: boolean;

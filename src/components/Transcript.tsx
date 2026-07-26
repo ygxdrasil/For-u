@@ -1,6 +1,6 @@
 import {Check} from 'lucide-react';
 import {useEffect, useRef} from 'react';
-import type {Message} from '../../shared/types.ts';
+import type {Choice, Message} from '../../shared/types.ts';
 
 function timeOf(iso: string): string {
   return new Date(iso).toLocaleTimeString([], {
@@ -73,6 +73,9 @@ interface TranscriptProps {
   searched: boolean;
   /** Things she actually did while answering. */
   actions: string[];
+  /** A question she asked, with the answers laid out as buttons. */
+  asked: {question: string; choices: Choice[]} | null;
+  onAnswer?: (label: string) => void;
   heard: string;
   onOpener?: (text: string) => void;
 }
@@ -82,14 +85,16 @@ export function Transcript({
   streaming,
   searched,
   actions,
+  asked,
   heard,
+  onAnswer,
   onOpener,
 }: TranscriptProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({behavior: 'smooth', block: 'end'});
-  }, [messages.length, streaming, heard]);
+  }, [messages.length, streaming, heard, asked]);
 
   if (messages.length === 0 && !streaming && !heard) {
     return (
@@ -154,6 +159,35 @@ export function Transcript({
           </span>
         </div>
       ))}
+
+      {/* Something she needs from you, with the answers already laid out.
+          Asking in prose puts the work back on the person being asked. */}
+      {asked && (
+        <div className="rise flex justify-start">
+          <div className="max-w-[85%] rounded-2xl border border-ice/25 bg-ice/5 px-4 py-3">
+            <p className="text-[0.95rem] leading-relaxed text-slate-200">
+              {asked.question}
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {asked.choices.map((choice) => (
+                <button
+                  key={choice.label}
+                  type="button"
+                  onClick={() => onAnswer?.(choice.label)}
+                  title={choice.detail}
+                  className="rounded-xl border border-ice/40 bg-ice/10 px-3 py-2 text-left transition hover:bg-ice/25">
+                  <span className="block text-xs text-ice">{choice.label}</span>
+                  {choice.detail && (
+                    <span className="mt-0.5 block max-w-[16rem] text-[0.6rem] leading-tight text-mist/60">
+                      {choice.detail}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {streaming && (
         <div className="flex justify-start">

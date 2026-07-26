@@ -1,5 +1,6 @@
 import {requiresConfirmation} from '../actions';
 import {noteDeed} from '../journal';
+import {askTools} from './ask';
 import {consoleTools} from './console';
 import {googleTools} from './google';
 import {playstationTools} from './playstation';
@@ -24,6 +25,7 @@ const TOOLS: Tool[] = [
   ...playstationTools,
   ...consoleTools,
   ...recallTools,
+  ...askTools,
 ];
 
 export function allTools(): Tool[] {
@@ -78,6 +80,7 @@ const LABELS: Record<string, string> = {
   wake_playstation: 'Switched the PlayStation on',
   sleep_playstation: 'Put the PlayStation to sleep',
   search_memory: 'Went back through the record',
+  ask_choice: 'Asked you something',
 };
 
 function label(name: string): string {

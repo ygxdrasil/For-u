@@ -9,8 +9,17 @@
 
 const SENTENCE_END = /(?<=[.!?\u2026])\s+/;
 
-/** Comfortably inside what the speech route accepts in one request. */
-export const CHUNK_TARGET = 1500;
+/**
+ * How much text goes into one request for audio.
+ *
+ * Not the route's limit, which is far higher — the speech model's. It renders
+ * a bounded amount of audio per call and simply stops when it gets there, so
+ * a long passage came back as speech that ends mid-word with no error
+ * attached to it. Small enough that a single request always finishes what it
+ * was given; large enough that an ordinary two or three sentence reply is
+ * still one request.
+ */
+export const CHUNK_TARGET = 450;
 
 /**
  * Break text into pieces that will each survive the trip.

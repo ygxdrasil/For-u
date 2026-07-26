@@ -1303,7 +1303,7 @@ async function recentMail(query = "in:inbox", limit = 10) {
   const messages2 = await Promise.all(
     ids.map(
       (message) => googleFetch(
-        `${BASE2}/messages/${message.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`
+        `${BASE2}/messages/${message.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence`
       ).catch(() => null)
     )
   );
@@ -1318,7 +1318,10 @@ async function recentMail(query = "in:inbox", limit = 10) {
       // Server-authoritative and trivially sortable, unlike the Date header.
       date: new Date(Number(message.internalDate ?? 0)).toISOString(),
       snippet: message.snippet ?? "",
-      unread: (message.labelIds ?? []).includes("UNREAD")
+      unread: (message.labelIds ?? []).includes("UNREAD"),
+      bulk: Boolean(headers["list-unsubscribe"]) || /^(bulk|list|auto_reply)$/i.test(headers.precedence ?? "") || (message.labelIds ?? []).some(
+        (id) => ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"].includes(id)
+      )
     };
   });
 }
@@ -1333,6 +1336,8 @@ async function readMail(id) {
     date: new Date(Number(message.internalDate ?? 0)).toISOString(),
     snippet: message.snippet ?? "",
     unread: (message.labelIds ?? []).includes("UNREAD"),
+    // Opening one deliberately means it is wanted regardless of what it is.
+    bulk: false,
     body: findText(message.payload) || (message.snippet ?? "")
   };
 }
@@ -1959,6 +1964,48 @@ async function compose(concerns) {
   return said.trim() || fallback(concerns);
 }
 
+// server/tools/ask.ts
+function parseChoices(raw) {
+  return raw.split(/\s*\|\s*|\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [label2, ...rest] = line.split(/\s+[—-]{1,2}\s+/);
+    return {
+      label: label2.trim().slice(0, 48),
+      detail: rest.join(" \u2014 ").trim().slice(0, 120) || void 0
+    };
+  }).slice(0, 4);
+}
+var deliver = null;
+function onAsk(handler) {
+  deliver = handler;
+}
+var askTools = [
+  {
+    name: "ask_choice",
+    description: "Ask the user a question and give them buttons to answer with, instead of making them type. Use it whenever you need a decision from them and the sensible answers are a short list: which of two times, whether to go ahead, which of three options they prefer. Ask the question in your reply as well, in your own words \u2014 the buttons are how they answer, not a substitute for asking. Do not use it for open questions, and do not use it more than once in a reply.",
+    category: "research",
+    parameters: {
+      question: {
+        type: "string",
+        description: "The question itself, short and plain."
+      },
+      choices: {
+        type: "string",
+        description: 'Two to four answers, separated by | \u2014 each optionally "Label \u2014 what it means". For example: "Tuesday \u2014 before the weekend | Thursday \u2014 gives you more time".'
+      }
+    },
+    required: ["question", "choices"],
+    run: async (args) => {
+      const question = String(args.question ?? "").trim();
+      const choices = parseChoices(String(args.choices ?? ""));
+      if (choices.length < 2) {
+        return "That needs at least two answers to choose between. Just ask them in words instead.";
+      }
+      deliver?.(question, choices);
+      return `The buttons are on their screen. Ask the question in your reply too, in one short sentence, then stop \u2014 do not guess which they will pick, and do not carry on as though they had already answered.`;
+    }
+  }
+];
+
 // server/tools/console.ts
 var NO_LAPTOP = "The laptop bridge is not running, so I have no way onto your home network. Tell the user plainly: the console can only be reached from something in the same house, and that program is not answering.";
 async function send(action, verb) {
@@ -2025,14 +2072,21 @@ var googleTools = [
     required: [],
     run: async (args) => {
       const query = String(args.query ?? "").trim() || "in:inbox";
-      const messages2 = await recentMail(query, 8);
-      if (messages2.length === 0) return `Nothing matching "${query}".`;
+      const all = await recentMail(query, 20);
+      if (all.length === 0) return `Nothing matching "${query}".`;
+      const messages2 = all.filter((message) => !message.bulk).slice(0, 8);
+      const junked = all.length - messages2.length;
+      if (messages2.length === 0) {
+        return `Nothing but ${junked} newsletters and automatic notices. Tell them there is nothing that wants them, in a few words. Do not describe the junk, do not count it out loud, and do not offer to read any of it.`;
+      }
       const list = messages2.map(
         (message) => `- ${message.unread ? "[unread] " : ""}${sender(message.from)}: ${message.subject} (id ${message.id})`
       ).join("\n");
       return `${list}
 
-The above is working material for you and must not appear in your reply in any form. Do not repeat it, do not list it, do not quote a subject line verbatim, and never say an id out loud. Group it and describe it: how many there are, and what the two or three that matter are about. Automated post \u2014 receipts, delivery notices, newsletters, alerts about something they did themselves \u2014 is worth one clause between them all, not a sentence each. Then ask whether they would like any of it read out, and use read_mail if they say yes.`;
+Newsletters and marketing have already been taken out${junked > 0 ? ` \u2014 ${junked} of them, which you should not mention` : ""}. What is left is from people and from companies actually corresponding with them.
+
+The list above is working material and must not appear in your reply in any form: do not repeat it, do not list it, do not quote a subject verbatim, never say an id. One or two sentences, no more. Say how many and what they are about, in your own words. Then ask whether they want any of it read out, and use read_mail if they say yes.`;
     }
   },
   {
@@ -2330,7 +2384,8 @@ var TOOLS = [
   ...googleTools,
   ...playstationTools,
   ...consoleTools,
-  ...recallTools
+  ...recallTools,
+  ...askTools
 ];
 function allTools() {
   return TOOLS;
@@ -2352,7 +2407,8 @@ var LABELS = {
   recent_games: "Checked recent games",
   wake_playstation: "Switched the PlayStation on",
   sleep_playstation: "Put the PlayStation to sleep",
-  search_memory: "Went back through the record"
+  search_memory: "Went back through the record",
+  ask_choice: "Asked you something"
 };
 function label(name) {
   return LABELS[name] ?? name.replace(/_/g, " ");
@@ -2449,9 +2505,9 @@ var BREVITY = `You are answering aloud most of the time, so write the way a pers
 - If something genuinely needs to be a list, say the two or three items in a sentence.
 - Never reproduce a list a tool handed you. Tool output is working material for you to read, not text to pass on. Nobody asked to have their inbox read to them; they asked what is in it.
 - Only go long when asked for detail outright. Then still lead with the answer.`;
-var JUDGEMENT = `You have opinions and you voice them, but you are not difficult about it.
+var JUDGEMENT = `You have opinions and you voice them. The user has asked you not to be deferential, so don't be.
 
-If you think a plan has a problem, say so plainly, once, with the reason \u2014 then do what is asked. You flag; you do not nag. If you have already raised a concern, don't raise it again unless something changes.
+If you think a plan has a problem, say so plainly, with the reason \u2014 then do what is asked. Disagree openly when you disagree; "that won't work, and here's why" is more use than agreement you don't mean. You are allowed to be dry about it, and to tease them a little when they have earned it. What you are not is a nag: make the point once, and if they go ahead anyway, drop it and help.
 
 Say when you don't know something. Never invent a fact, a time, a name, or a detail about the user's life to fill a gap. "I don't have that" is a complete answer. If you are working from something you inferred rather than something they told you, say so.`;
 var MEMORY_GUIDE = `What you know about the user is given to you below. Use it naturally \u2014 the way someone who knows them would \u2014 rather than reciting it back at them.
@@ -2469,6 +2525,8 @@ When someone asks you to remember something, or mentions something they need to 
 
 Two things you have no tools for at all, because the user forbade them: sending anything to anyone, and spending money. There is nothing to attempt. A third: you never delete. Things get marked done, filed, or archived \u2014 never destroyed \u2014 because deleting is the one thing neither of you can undo.
 
+When you need a decision and the sensible answers are a short list, use ask_choice: it puts the answers on screen as buttons so they can tap rather than type. Ask the question in your reply as well, in your own words, then stop and wait \u2014 do not guess which they will pick. Use it for a real fork, not for "shall I carry on".
+
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
 
 You keep every word either of you has ever said, and search_memory reaches into it. You are shown only the recent conversation and a short summary of what came before, so when they refer to something you cannot see \u2014 a decision, a name, something from last week \u2014 search for it rather than saying you don't remember. Saying you have forgotten something that is sitting in the record is the same as being wrong.
@@ -2485,9 +2543,11 @@ var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what fol
 
 When they ask you to go and look \u2014 "check my mail", "what's on today", "anything from Sam" \u2014 use check_mail or check_diary rather than answering from the summary below, which may be a minute old. You can also write drafts and put things in their diary.
 
-When you report on mail, report \u2014 do not recite. Say how many there are, who the ones that matter are from, and what they want, in a sentence or two. Automated post is noise unless they asked for it or something in it genuinely needs them: receipts, delivery notices, newsletters, security alerts about things they did themselves. "Nine, all of it automatic \u2014 two Govee delivery notices and the rest newsletters" is a good answer. A list of senders and subjects is not an answer, it is the raw material you were given to produce one.
+When you report on mail, report \u2014 do not recite, and be brief to the point of bluntness. One or two sentences. "Two things: your sister about the weekend, and the landlord wants a date for the inspection." That is a complete answer. A list of senders and subjects is not an answer; it is the raw material you were handed to produce one, and it must never appear in what you say.
 
-Then offer. End a mail summary by asking whether they want any of it read out \u2014 "anything you want opened?" is enough \u2014 and if they say yes, use read_mail and read them that one message. Never volunteer the contents of something they have not asked to hear.
+Newsletters, marketing and automatic notices are filtered out before you see them. Do not mention them, do not count them, do not apologise for them. If nothing is left, say so in a few words and stop.
+
+When something does want them, end by asking whether they would like any of it read out, and use read_mail if they say yes. When it is routine, don't bother asking.
 
 You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 function describeProfile(profile2) {
@@ -2788,6 +2848,7 @@ function createApi() {
       let reply = "";
       let grounded = false;
       const shown = /* @__PURE__ */ new Map();
+      onAsk((question, choices) => send2({ type: "asked", question, choices }));
       try {
         for await (const delta of getProvider().stream({
           system,

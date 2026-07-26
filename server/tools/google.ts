@@ -59,8 +59,21 @@ export const googleTools: Tool[] = [
     required: [],
     run: async (args) => {
       const query = String(args.query ?? '').trim() || 'in:inbox';
-      const messages = await recentMail(query, 8);
-      if (messages.length === 0) return `Nothing matching "${query}".`;
+      // Fetched wide, shown narrow: the bulk ones still have to be counted.
+      const all = await recentMail(query, 20);
+      if (all.length === 0) return `Nothing matching "${query}".`;
+
+      const messages = all.filter((message) => !message.bulk).slice(0, 8);
+      const junked = all.length - messages.length;
+
+      if (messages.length === 0) {
+        return (
+          `Nothing but ${junked} newsletters and automatic notices. Tell them ` +
+          `there is nothing that wants them, in a few words. Do not describe ` +
+          `the junk, do not count it out loud, and do not offer to read any ` +
+          `of it.`
+        );
+      }
 
       // Senders and subjects, and nothing else. The preview text used to come
       // back with every message, which meant a request to check the mail
@@ -76,14 +89,15 @@ export const googleTools: Tool[] = [
 
       return (
         `${list}\n\n` +
-        `The above is working material for you and must not appear in your ` +
-        `reply in any form. Do not repeat it, do not list it, do not quote a ` +
-        `subject line verbatim, and never say an id out loud. Group it and ` +
-        `describe it: how many there are, and what the two or three that ` +
-        `matter are about. Automated post — receipts, delivery notices, ` +
-        `newsletters, alerts about something they did themselves — is worth ` +
-        `one clause between them all, not a sentence each. Then ask whether ` +
-        `they would like any of it read out, and use read_mail if they say yes.`
+        `Newsletters and marketing have already been taken out${
+          junked > 0 ? ` — ${junked} of them, which you should not mention` : ''
+        }. What is left is from people and from companies actually corresponding ` +
+        `with them.\n\n` +
+        `The list above is working material and must not appear in your reply ` +
+        `in any form: do not repeat it, do not list it, do not quote a subject ` +
+        `verbatim, never say an id. One or two sentences, no more. Say how many ` +
+        `and what they are about, in your own words. Then ask whether they want ` +
+        `any of it read out, and use read_mail if they say yes.`
       );
     },
   },

@@ -171,6 +171,12 @@ export interface DayView {
   playstation: PlayStationPresence | null;
 }
 
+/** One tappable answer to something she asked. */
+export interface Choice {
+  label: string;
+  detail?: string;
+}
+
 /** Server-sent events streamed from POST /api/chat. */
 export type ChatEvent =
   | {type: 'delta'; text: string}
@@ -179,4 +185,5 @@ export type ChatEvent =
   | {type: 'searched'}
   | {type: 'search-failed'; reason: string}
   | {type: 'acted'; name: string; summary: string}
+  | {type: 'asked'; question: string; choices: Choice[]}
   | {type: 'error'; message: string};

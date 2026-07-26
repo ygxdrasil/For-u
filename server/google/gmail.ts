@@ -10,6 +10,16 @@ export interface MailSummary {
   date: string;
   snippet: string;
   unread: boolean;
+  /**
+   * Bulk mail: newsletters, marketing, automated notices.
+   *
+   * Worked out from the List-Unsubscribe header, which every legitimate bulk
+   * sender is obliged to set and no person writing to you ever does. That is a
+   * far better signal than guessing from the address — plenty of real
+   * correspondence comes from a company, and "noreply@" catches some of the
+   * junk and none of the rest.
+   */
+  bulk: boolean;
 }
 
 interface Part {
@@ -72,7 +82,8 @@ export async function recentMail(query = 'in:inbox', limit = 10): Promise<MailSu
     ids.map((message) =>
       googleFetch(
         `${BASE}/messages/${message.id}?format=metadata` +
-          '&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date',
+          '&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date' +
+          '&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence',
       ).catch(() => null),
     ),
   );
@@ -96,6 +107,12 @@ export async function recentMail(query = 'in:inbox', limit = 10): Promise<MailSu
       date: new Date(Number(message.internalDate ?? 0)).toISOString(),
       snippet: message.snippet ?? '',
       unread: (message.labelIds ?? []).includes('UNREAD'),
+      bulk:
+        Boolean(headers['list-unsubscribe']) ||
+        /^(bulk|list|auto_reply)$/i.test(headers.precedence ?? '') ||
+        (message.labelIds ?? []).some((id) =>
+          ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS'].includes(id),
+        ),
     };
   });
 }
@@ -119,6 +136,8 @@ export async function readMail(id: string): Promise<MailSummary & {body: string}
     date: new Date(Number(message.internalDate ?? 0)).toISOString(),
     snippet: message.snippet ?? '',
     unread: (message.labelIds ?? []).includes('UNREAD'),
+    // Opening one deliberately means it is wanted regardless of what it is.
+    bulk: false,
     body: findText(message.payload) || (message.snippet ?? ''),
   };
 }

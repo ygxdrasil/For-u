@@ -34,7 +34,7 @@ import {
   getSummary,
   recentTurns,
 } from '../server/memory';
-import {chunkForSpeech} from '../shared/speech';
+import {CHUNK_TARGET, chunkForSpeech} from '../shared/speech';
 import {recentDeeds} from '../server/journal';
 import {setMode} from '../server/modes';
 import {pulse} from '../server/pulse';
@@ -613,6 +613,30 @@ try {
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
 
+  // ---- she can ask, with the answers laid out ------------------------------
+  stub.nextToolCall = {
+    name: 'ask_choice',
+    args: {question: 'Tuesday or Thursday?', choices: 'Tuesday — sooner | Thursday'},
+  };
+  const question = await chat('Book the inspection.');
+  const put = question.find((event) => event.type === 'asked');
+  assert.ok(put && put.type === 'asked', 'the question should reach the interface');
+  assert.equal(put.question, 'Tuesday or Thursday?');
+  // Note the second has no detail at all rather than an empty one: it travels
+  // as JSON, and an absent key is what arrives.
+  assert.deepEqual(put.choices, [
+    {label: 'Tuesday', detail: 'sooner'},
+    {label: 'Thursday'},
+  ]);
+
+  // One button is not a choice, and must not render as though it were.
+  const tooFew = await runTool({
+    name: 'ask_choice',
+    args: {question: 'Shall I?', choices: 'Yes'},
+  });
+  assert.match(tooFew.result, /at least two/i);
+  ok('she can put a question on screen with the answers as buttons');
+
   // ---- what an action looks like on screen --------------------------------
   // The provider hands onToolUsed whatever onToolCall returned — the raw
   // result — so however carefully the tool layer worded its short summary, the
@@ -664,7 +688,7 @@ try {
   assert.ok(pieces.length > 1, 'a long answer should be broken up');
   for (const piece of pieces) {
     assert.ok(
-      piece.length <= 1500,
+      piece.length <= CHUNK_TARGET,
       `every piece must fit what the route accepts, got ${piece.length}`,
     );
   }

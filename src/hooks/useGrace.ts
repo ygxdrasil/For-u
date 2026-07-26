@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {
   AttentionMode,
+  Choice,
   GoogleStatus,
   GraceState,
   InputMode,
@@ -28,6 +29,8 @@ export function useGrace() {
   const [searched, setSearched] = useState(false);
   /** What she actually did while answering, so no action is invisible. */
   const [actions, setActions] = useState<string[]>([]);
+  /** A question she has put to you, waiting on a tap. */
+  const [asked, setAsked] = useState<{question: string; choices: Choice[]} | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [micOn, setMicOn] = useState(false);
@@ -109,6 +112,7 @@ export function useGrace() {
       setStreaming('');
       setSearched(false);
       setActions([]);
+      setAsked(null);
       speech.cancel();
 
       setMessages((current) => [
@@ -124,10 +128,11 @@ export function useGrace() {
 
       const controller = new AbortController();
       abortRef.current = controller;
-      // She speaks whenever her voice is on. This used to require that the
-      // message had been spoken too, which meant that anyone typing to her
-      // never heard a word — she looked mute rather than set to silent.
-      const speakIt = voiceOn;
+      // She answers the way she was addressed. Speak to her and she speaks
+      // back; type and she stays quiet. On a phone in public that is the
+      // difference between an assistant and an embarrassment, and it is what
+      // a person would do.
+      const speakIt = voiceOn && via === 'voice';
       speech.unlock();
       let landed = false;
 
@@ -144,6 +149,8 @@ export function useGrace() {
             landed = true;
           } else if (event.type === 'searched') {
             setSearched(true);
+          } else if (event.type === 'asked') {
+            setAsked({question: event.question, choices: event.choices});
           } else if (event.type === 'acted') {
             setActions((current) => [...current, event.summary]);
           } else if (event.type === 'search-failed') {
@@ -335,6 +342,7 @@ export function useGrace() {
     streaming,
     searched,
     actions,
+    asked,
     error,
     mode,
     micOn,
