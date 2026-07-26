@@ -65,9 +65,11 @@ const PHASE_NOTE = `You can search the web with the search_web tool, and you sho
 You have no connection to their home yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
 
 /** Swapped in once Google is connected, since the limits are then different. */
-const CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current. You can read it and talk about it.
+const CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
 
-You cannot yet act on either of them — you cannot write a draft, and you cannot add or move anything in their diary. Say so plainly if you are asked, and do not claim to have done something you have not. You have never been able to send mail and never will: that is their standing instruction.`;
+When they ask you to go and look — "check my mail", "what's on today", "anything from Sam" — use check_mail or check_diary rather than answering from the summary below, which may be a minute old. You can also write drafts and put things in their diary.
+
+You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 
 function describeProfile(profile: Profile): string {
   if (profile.entries.length === 0) {

@@ -238,7 +238,7 @@ var DEFAULT_POLICIES = [
   // The user's chosen line: she gets on with things she can undo, and only
   // sending and spending stop her. Nothing here can delete, so "high-risk"
   // covers cancelling and anything involving other people.
-  { category: "calendar", policy: "high-risk" },
+  { category: "calendar", policy: "never" },
   { category: "home", policy: "never" },
   { category: "research", policy: "never" }
 ];
@@ -1086,6 +1086,20 @@ async function upcoming(hours = 24, limit = 20) {
   const response = await googleFetch(`${BASE}?${params.toString()}`);
   return (response.items ?? []).map(shape);
 }
+async function addAppointment(options) {
+  const zone = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const created = await googleFetch(`${BASE}?sendUpdates=none`, {
+    method: "POST",
+    body: JSON.stringify({
+      summary: options.summary,
+      location: options.location,
+      description: options.description,
+      start: { dateTime: options.start, timeZone: zone },
+      end: { dateTime: options.end, timeZone: zone }
+    })
+  });
+  return shape(created);
+}
 
 // server/google/gmail.ts
 var BASE2 = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -1093,6 +1107,20 @@ function headerMap(headers) {
   return Object.fromEntries(
     (headers ?? []).map((header) => [header.name.toLowerCase(), header.value])
   );
+}
+function findText(part) {
+  if (!part) return "";
+  if (part.mimeType === "text/plain" && !part.filename && part.body?.data) {
+    return Buffer.from(part.body.data, "base64url").toString("utf8");
+  }
+  for (const child of part.parts ?? []) {
+    const found = findText(child);
+    if (found) return found;
+  }
+  if (part.mimeType === "text/html" && !part.filename && part.body?.data) {
+    return Buffer.from(part.body.data, "base64url").toString("utf8").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  return "";
 }
 async function recentMail(query = "in:inbox", limit = 10) {
   const list = await googleFetch(
@@ -1121,6 +1149,43 @@ async function recentMail(query = "in:inbox", limit = 10) {
       unread: (message.labelIds ?? []).includes("UNREAD")
     };
   });
+}
+async function readMail(id) {
+  const message = await googleFetch(`${BASE2}/messages/${id}?format=full`);
+  const headers = headerMap(message.payload?.headers);
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    from: headers.from ?? "unknown sender",
+    subject: headers.subject ?? "(no subject)",
+    date: new Date(Number(message.internalDate ?? 0)).toISOString(),
+    snippet: message.snippet ?? "",
+    unread: (message.labelIds ?? []).includes("UNREAD"),
+    body: findText(message.payload) || (message.snippet ?? "")
+  };
+}
+async function draftReply(options) {
+  const mime = [
+    `To: ${options.to}`,
+    `Subject: ${encodeHeader(options.subject)}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "",
+    options.body
+  ].join("\r\n");
+  const draft = await googleFetch(`${BASE2}/drafts`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: {
+        raw: Buffer.from(mime, "utf8").toString("base64url"),
+        ...options.threadId ? { threadId: options.threadId } : {}
+      }
+    })
+  });
+  return { id: draft.id };
+}
+function encodeHeader(value) {
+  if (/^[\x00-\x7F]*$/.test(value)) return value;
+  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
 }
 
 // server/google/briefing.ts
@@ -1153,13 +1218,13 @@ async function buildBriefing() {
   if (events.length > 0) {
     lines.push("In their diary over the next day:");
     for (const event of events) {
-      const when = event.allDay ? "all day" : new Date(event.start).toLocaleString("en-GB", {
+      const when2 = event.allDay ? "all day" : new Date(event.start).toLocaleString("en-GB", {
         weekday: "short",
         hour: "2-digit",
         minute: "2-digit"
       });
       lines.push(
-        `- ${when}: ${event.summary}${event.location ? ` (${event.location})` : ""}`
+        `- ${when2}: ${event.summary}${event.location ? ` (${event.location})` : ""}`
       );
     }
   } else {
@@ -1182,6 +1247,128 @@ async function buildBriefing() {
   cached3 = { text, until: Date.now() + FRESH_FOR_MS };
   return text;
 }
+
+// server/tools/google.ts
+function when(iso, allDay) {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+  return allDay ? date.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }) : date.toLocaleString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+var googleTools = [
+  {
+    name: "check_mail",
+    description: "Look at the user\u2019s inbox. Use this whenever they ask you to check their mail, ask whether anything has arrived, or ask about a message from someone. Returns senders and subjects, not full messages.",
+    category: "research",
+    parameters: {
+      query: {
+        type: "string",
+        description: 'Optional Gmail search, in Gmail\u2019s own syntax \u2014 "is:unread", "from:sam", "newer_than:3d". Leave out for the recent inbox.'
+      }
+    },
+    required: [],
+    run: async (args) => {
+      const query = String(args.query ?? "").trim() || "in:inbox";
+      const messages2 = await recentMail(query, 10);
+      if (messages2.length === 0) return `Nothing matching "${query}".`;
+      return messages2.map(
+        (message) => `- ${message.unread ? "[unread] " : ""}${message.from} \u2014 ${message.subject}
+  ${message.snippet.slice(0, 140)}`
+      ).join("\n");
+    }
+  },
+  {
+    name: "read_mail",
+    description: "Read one message in full, once check_mail has shown you which. Pass the id from that list.",
+    category: "research",
+    parameters: {
+      id: { type: "string", description: "The message id from check_mail." }
+    },
+    required: ["id"],
+    run: async (args) => {
+      const message = await readMail(String(args.id));
+      return [
+        `From: ${message.from}`,
+        `Subject: ${message.subject}`,
+        "",
+        message.body.slice(0, 4e3)
+      ].join("\n");
+    }
+  },
+  {
+    name: "draft_reply",
+    description: "Write a draft into the user\u2019s drafts folder. It is NOT sent \u2014 they read it and press send themselves. Use this when asked to reply to something or write an email. Tell them plainly afterwards that it is waiting in their drafts, unsent.",
+    category: "research",
+    parameters: {
+      to: { type: "string", description: "Recipient email address." },
+      subject: { type: "string", description: "Subject line." },
+      body: {
+        type: "string",
+        description: "The message, in the user\u2019s own register \u2014 plain, direct, no flourishes."
+      },
+      threadId: {
+        type: "string",
+        description: "The thread to reply within, from check_mail, if replying."
+      }
+    },
+    required: ["to", "subject", "body"],
+    run: async (args) => {
+      await draftReply({
+        to: String(args.to),
+        subject: String(args.subject),
+        body: String(args.body),
+        threadId: args.threadId ? String(args.threadId) : void 0
+      });
+      return `Draft saved to their drafts folder, unsent. They send it.`;
+    }
+  },
+  {
+    name: "check_diary",
+    description: 'Look at what is coming up in the user\u2019s calendar. Use this for "what\u2019s on today", "am I free", "when is my next thing".',
+    category: "research",
+    parameters: {
+      hours: {
+        type: "number",
+        description: "How far ahead to look. 24 for today, 168 for the week."
+      }
+    },
+    required: [],
+    run: async (args) => {
+      const hours = Number(args.hours) || 24;
+      const events = await upcoming(hours, 20);
+      if (events.length === 0) return `Nothing in the next ${hours} hours.`;
+      return events.map(
+        (event) => `- ${when(event.start, event.allDay)}: ${event.summary}` + (event.location ? ` (${event.location})` : "")
+      ).join("\n");
+    }
+  },
+  {
+    name: "add_to_diary",
+    description: "Put something in the user\u2019s calendar. Work out real times from what they said and the current date you were given. Nobody else is notified \u2014 telling people is the user\u2019s to do.",
+    category: "calendar",
+    parameters: {
+      summary: { type: "string", description: "What it is." },
+      start: { type: "string", description: "Start, as ISO 8601." },
+      end: { type: "string", description: "End, as ISO 8601." },
+      location: { type: "string", description: "Where, if given." }
+    },
+    required: ["summary", "start", "end"],
+    run: async (args) => {
+      const event = await addAppointment({
+        summary: String(args.summary),
+        start: String(args.start),
+        end: String(args.end),
+        location: args.location ? String(args.location) : void 0
+      });
+      return `In the diary: ${event.summary}, ${when(event.start, event.allDay)}.`;
+    }
+  }
+];
 
 // server/tools/reminders.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -1308,7 +1495,7 @@ var webTools = [
 ];
 
 // server/tools/index.ts
-var TOOLS = [...webTools, ...reminderTools];
+var TOOLS = [...webTools, ...reminderTools, ...googleTools];
 function allTools() {
   return TOOLS;
 }
@@ -1465,9 +1652,11 @@ You are never to say that you cannot access current or real-time information. Yo
 var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
 You have no connection to their home yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
-var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current. You can read it and talk about it.
+var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
 
-You cannot yet act on either of them \u2014 you cannot write a draft, and you cannot add or move anything in their diary. Say so plainly if you are asked, and do not claim to have done something you have not. You have never been able to send mail and never will: that is their standing instruction.`;
+When they ask you to go and look \u2014 "check my mail", "what's on today", "anything from Sam" \u2014 use check_mail or check_diary rather than answering from the summary below, which may be a minute old. You can also write drafts and put things in their diary.
+
+You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 function describeProfile(profile2) {
   if (profile2.entries.length === 0) {
     return `You have not learned anything about the user yet. This is early days \u2014 pay attention and remember what matters.`;

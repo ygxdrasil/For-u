@@ -1,4 +1,5 @@
 import {requiresConfirmation} from '../actions';
+import {googleTools} from './google';
 import {reminderTools} from './reminders';
 import {webTools} from './web';
 import type {Tool, ToolCall, ToolOutcome} from './types';
@@ -12,7 +13,7 @@ import type {Tool, ToolCall, ToolOutcome} from './types';
  * it deletes: her instruction is that things are marked, filed, or archived,
  * never destroyed, because deletion is the one action that cannot be undone.
  */
-const TOOLS: Tool[] = [...webTools, ...reminderTools];
+const TOOLS: Tool[] = [...webTools, ...reminderTools, ...googleTools];
 
 export function allTools(): Tool[] {
   return TOOLS;

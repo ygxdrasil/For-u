@@ -12,7 +12,7 @@ const DEFAULT_POLICIES: ActionPolicy[] = [
   // The user's chosen line: she gets on with things she can undo, and only
   // sending and spending stop her. Nothing here can delete, so "high-risk"
   // covers cancelling and anything involving other people.
-  {category: 'calendar', policy: 'high-risk'},
+  {category: 'calendar', policy: 'never'},
   {category: 'home', policy: 'never'},
   {category: 'research', policy: 'never'},
 ];

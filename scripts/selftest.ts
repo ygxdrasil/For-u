@@ -35,7 +35,7 @@ import {
   recentTurns,
 } from '../server/memory';
 import {setBackend} from '../server/store/index';
-import {auditTools, declarations, runTool} from '../server/tools/index';
+import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
 import {allReminders, outstanding} from '../server/tools/reminders';
 import type {Backend} from '../server/store/types';
 
@@ -536,6 +536,19 @@ try {
   // there is nothing to be talked past.
   assert.deepEqual(auditTools(), [], 'no tool may send, spend, or destroy');
   ok('no tool exists that could send, spend, or destroy anything');
+
+  // She can act on mail and diary now, and the shape of that matters: a tool
+  // that drafts is fine, a tool that sends is not, and the difference must be
+  // visible in the list rather than trusted to the model.
+  const names = allTools().map((tool) => tool.name);
+  for (const expected of ['check_mail', 'read_mail', 'draft_reply', 'check_diary']) {
+    assert.ok(names.includes(expected), `${expected} should exist`);
+  }
+  assert.ok(
+    !names.some((name) => /send|delete|remove|trash/i.test(name)),
+    'no tool may be named for sending or destroying',
+  );
+  ok('mail and diary tools exist, and none of them sends or destroys');
 
   // ---- she cannot send mail, as a matter of code -------------------------
   // Google publishes no draft-only scope, so gmail.compose carries the ability
