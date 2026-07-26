@@ -20,8 +20,15 @@ const SPEECH_LEVEL = 0.01;
 /** Time spent measuring the room before any of it counts as speech. */
 const CALIBRATION_MS = 350;
 
-/** Silence this long after speech means the sentence is finished. */
-const TRAILING_SILENCE_MS = 1400;
+/**
+ * Silence this long after speech means the sentence is finished.
+ *
+ * Every millisecond here is dead air the user sits through before anything
+ * starts happening, so it is as short as it can be without cutting people off
+ * mid-thought. Below about seven hundred it starts clipping the natural pause
+ * in front of a second clause.
+ */
+const TRAILING_SILENCE_MS = 850;
 
 /** How long to wait for someone to start before giving up. */
 const OPENING_PATIENCE_MS = 9000;

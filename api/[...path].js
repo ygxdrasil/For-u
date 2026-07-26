@@ -335,9 +335,18 @@ import { Type } from "@google/genai";
 
 // server/llm/gemini.ts
 import { GoogleGenAI } from "@google/genai";
-var TRANSCRIBE_PROMPT = `Write out exactly what is said in this recording.
+var TRANSCRIBE_PROMPT = `Write out what is said in this recording.
 
-Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio. If the recording contains no speech, return nothing at all.`;
+The speaker may have a strong accent, may not be a native English speaker, and may hesitate, restart, or use imperfect grammar. Transcribe them accurately and charitably:
+
+- Write the words they meant, not a phonetic imitation of how they came out. If someone says "I go yesterday to the shop", write that \u2014 do not correct their grammar, but do not mangle it further either.
+- Keep their own words and word order. You are transcribing, not translating and not rewriting.
+- Drop pure disfluencies \u2014 "um", "uh", false starts abandoned mid-word \u2014 since they add nothing when read back.
+- Proper nouns matter most and are the hardest to hear. Use the context below to recognise names of people, places, and things rather than guessing at similar-sounding words.
+- If a stretch is genuinely unintelligible, leave it out rather than inventing something plausible. A short accurate transcript beats a complete invented one.
+- If the speaker uses another language entirely, transcribe it in that language.
+
+Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio, no notes about audio quality. If there is no speech at all, return nothing.`;
 var SPEAK_DIRECTION = "Read the following aloud in a calm, warm, unhurried voice, the way a composed personal assistant would speak to someone they know well. Read only the text itself:";
 function sampleRateOf(mimeType) {
   const rate = Number(/rate=(\d+)/.exec(mimeType ?? "")?.[1]);
@@ -408,7 +417,12 @@ var GeminiProvider = class {
           role: "user",
           parts: [
             { inlineData: { mimeType: request.mimeType, data: request.audio } },
-            { text: TRANSCRIBE_PROMPT }
+            {
+              text: request.context ? `${TRANSCRIBE_PROMPT}
+
+Context for recognising names and topics:
+${request.context}` : TRANSCRIBE_PROMPT
+            }
           ]
         }
       ],
@@ -792,8 +806,8 @@ async function accessToken() {
   const saved = await store2.read();
   if (!saved) throw new GoogleError("Google is not connected yet.", true);
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
-  const cached = accessTokens.get(saved.refreshToken);
-  if (cached && cached.expiresAt > Date.now() + 6e4) return cached.token;
+  const cached2 = accessTokens.get(saved.refreshToken);
+  if (cached2 && cached2.expiresAt > Date.now() + 6e4) return cached2.token;
   const token = await postToken({
     client_id: process.env.GOOGLE_CLIENT_ID ?? "",
     client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
@@ -901,7 +915,9 @@ async function recentMail(query = "in:inbox", limit = 10) {
 }
 
 // server/google/briefing.ts
-var PATIENCE_MS = 3500;
+var PATIENCE_MS = 2500;
+var FRESH_FOR_MS = 9e4;
+var cached = null;
 function timeboxed(work, fallback) {
   let timer;
   return Promise.race([
@@ -914,8 +930,12 @@ function timeboxed(work, fallback) {
   ]).finally(() => clearTimeout(timer));
 }
 async function buildBriefing() {
+  if (cached && cached.until > Date.now()) return cached.text;
   const saved = await connection().catch(() => null);
-  if (!saved || saved.brokenReason) return null;
+  if (!saved || saved.brokenReason) {
+    cached = { text: null, until: Date.now() + FRESH_FOR_MS };
+    return null;
+  }
   const [events, mail] = await Promise.all([
     timeboxed(upcoming(24, 8), []),
     timeboxed(recentMail("in:inbox is:unread newer_than:2d", 6), [])
@@ -944,12 +964,14 @@ async function buildBriefing() {
   } else {
     lines.push("", "No unread mail in the last two days.");
   }
-  return [
+  const text = [
     "This is live from their Google account, as of now:",
     ...lines,
     "",
-    "Use it when it is relevant and say nothing about it when it is not. Do not recite the whole list unless asked for it. You may draft a reply to any of this mail, but you never send it \u2014 the draft goes to their drafts folder and they press send."
+    "Use it when it is relevant and say nothing about it when it is not. Do not recite the whole list unless asked for it. You can read this, and that is all \u2014 you cannot reply, draft, file, or change anything. Say so if asked rather than claiming to have done it."
   ].join("\n");
+  cached = { text, until: Date.now() + FRESH_FOR_MS };
+  return text;
 }
 
 // server/modes.ts
@@ -1068,7 +1090,14 @@ function buildSystemPrompt(context) {
     hour: "2-digit",
     minute: "2-digit"
   })}. Use it rather than guessing at the date.`;
-  const channel = via === "voice" ? `This message was spoken aloud and your reply will be read aloud. Keep it short and easy to listen to. The transcription may contain small errors \u2014 read through obvious mishearings rather than querying them, but ask if the meaning is genuinely unclear.` : `This message was typed. You may be slightly more detailed than when speaking, but stay concise and still avoid markdown.`;
+  const channel = via === "voice" ? `This message was spoken aloud and your reply will be read aloud. Keep it short and easy to listen to.
+
+It reached you through transcription, so treat the exact wording as approximate. The speaker may have a strong accent, may not be a native English speaker, and may use broken grammar or the wrong word for what they mean. None of that is your concern: work out what they meant and answer that.
+
+- Read straight through mishearings, grammatical errors, and missing words. Do not comment on them, do not correct them, and never repeat their phrasing back at them in a way that draws attention to it.
+- If a word looks like a mangled version of something in context \u2014 a name, a place, something discussed a moment ago \u2014 assume it is that.
+- Ask only when the meaning is genuinely unrecoverable, and then ask about the meaning, not the words. "Which Tuesday?" rather than "I didn't understand that."
+- Reply in plain, simple English yourself. Short sentences, ordinary words.` : `This message was typed. You may be slightly more detailed than when speaking, but stay concise and still avoid markdown.`;
   const recall = summary ? `Where you left off in earlier conversations:
 ${summary}` : null;
   return [
@@ -1100,6 +1129,20 @@ function guard(handler) {
       else if (!res.writableEnded) res.end();
     });
   };
+}
+var contextCache = null;
+async function listeningContext() {
+  if (contextCache && contextCache.until > Date.now()) return contextCache.text;
+  const [profile2, turns] = await Promise.all([getProfile(), recentTurns()]);
+  const known = profile2.entries.slice(-25).map((entry) => entry.text).join("; ");
+  const recent = turns.slice(-4).map((turn) => `${turn.role === "assistant" ? "Grace" : "They"}: ${turn.text}`).join("\n");
+  const text = [
+    known && `Things known about the speaker: ${known}`,
+    recent && `The conversation so far:
+${recent}`
+  ].filter(Boolean).join("\n\n").slice(0, 4e3);
+  contextCache = { text, until: Date.now() + 3e4 };
+  return text;
 }
 var NO_KEY_MESSAGE = "No Gemini API key is configured, so I have no voice to think with. Add GEMINI_API_KEY and restart me.";
 function createApi() {
@@ -1247,6 +1290,7 @@ function createApi() {
         return;
       }
       send({ type: "done", message: await record("grace", reply, via) });
+      contextCache = null;
       res.end();
     })
   );
@@ -1279,7 +1323,11 @@ function createApi() {
         return;
       }
       try {
-        const text = await getProvider().transcribe({ audio, mimeType });
+        const text = await getProvider().transcribe({
+          audio,
+          mimeType,
+          context: await listeningContext()
+        });
         res.json({ text });
       } catch (error) {
         const detail = error.message ?? "unknown error";

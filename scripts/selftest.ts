@@ -263,6 +263,22 @@ try {
   assert.equal(stub.lastAudio?.mimeType, 'audio/wav', 'audio reaches the model');
   ok('recorded speech is transcribed server-side');
 
+  // Recognising a name is the difference between "tell Yusuf I'll be late" and
+  // "tell you soon I'll be late", so what she already knows has to reach the
+  // transcriber. Without this the hint could quietly stop being sent and only
+  // show up as her mishearing people slightly more often.
+  assert.match(
+    stub.lastAudio?.context ?? '',
+    new RegExp(LEARNED_FACT),
+    'what she knows about the speaker must reach the transcriber',
+  );
+  assert.match(
+    stub.lastAudio?.context ?? '',
+    /The conversation so far:[\s\S]*Grace: /,
+    'and so must the most recent turns, labelled by who said them',
+  );
+  ok('transcription is given names and topic to recognise');
+
   const noAudio = await call('/transcribe', {
     method: 'POST',
     body: JSON.stringify({mimeType: 'audio/wav'}),

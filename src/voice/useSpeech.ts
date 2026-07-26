@@ -77,6 +77,8 @@ export function useSpeech(enabled: boolean) {
   const settleRef = useRef<(() => void) | null>(null);
   /** Which run the live pump belongs to. */
   const pumpRunRef = useRef(-1);
+  /** Whether this reply's opening sentence has already been sent to be said. */
+  const openedRef = useRef(false);
 
   const hasSynth = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
@@ -284,12 +286,31 @@ export function useSpeech(enabled: boolean) {
     (delta: string) => {
       if (!enabled) return;
       bufferRef.current += delta;
+
+      // Her first sentence goes out the moment it is complete, rather than
+      // waiting for the whole reply to arrive and then a round trip to make
+      // the audio. That is the difference between answering and appearing to
+      // think about it. Everything after it is batched, so a reply still costs
+      // two requests rather than one per sentence.
+      if (openedRef.current) return;
+
+      const parts = bufferRef.current.split(SENTENCE_END);
+      if (parts.length < 2) return;
+
+      const opener = parts.shift() as string;
+      // Too short to be worth its own request, and clipped-sounding besides.
+      if (opener.trim().length < 12) return;
+
+      openedRef.current = true;
+      bufferRef.current = parts.join(' ');
+      enqueue(opener);
     },
-    [enabled],
+    [enabled, enqueue],
   );
 
-  /** The reply is complete. Say it. */
+  /** The reply is complete. Say whatever is left. */
   const flush = useCallback(() => {
+    openedRef.current = false;
     if (!enabled) return;
     const whole = bufferRef.current.trim();
     bufferRef.current = '';
@@ -327,6 +348,7 @@ export function useSpeech(enabled: boolean) {
     settleRef.current?.();
     settleRef.current = null;
     pumpingRef.current = false;
+    openedRef.current = false;
     bufferRef.current = '';
     queueRef.current = [];
     pumpingRef.current = false;

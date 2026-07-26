@@ -60,6 +60,44 @@ function guard(handler: (req: Request, res: Response) => Promise<void>) {
   };
 }
 
+/**
+ * What she already knows, condensed into a hint for the transcriber.
+ *
+ * Recognising a name is the difference between "tell Yusuf I'll be late" and
+ * "tell you soon I'll be late", and a model that has seen the name once gets
+ * it right. Rebuilt at most every half minute, so it costs nothing per
+ * recording.
+ */
+let contextCache: {text: string; until: number} | null = null;
+
+async function listeningContext(): Promise<string> {
+  if (contextCache && contextCache.until > Date.now()) return contextCache.text;
+
+  const [profile, turns] = await Promise.all([getProfile(), recentTurns()]);
+
+  const known = profile.entries
+    .slice(-25)
+    .map((entry) => entry.text)
+    .join('; ');
+
+  // The last few turns carry the names and topic currently in play.
+  const recent = turns
+    .slice(-4)
+    .map((turn) => `${turn.role === 'assistant' ? 'Grace' : 'They'}: ${turn.text}`)
+    .join('\n');
+
+  const text = [
+    known && `Things known about the speaker: ${known}`,
+    recent && `The conversation so far:\n${recent}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 4000);
+
+  contextCache = {text, until: Date.now() + 30_000};
+  return text;
+}
+
 const NO_KEY_MESSAGE =
   'No Gemini API key is configured, so I have no voice to think with. ' +
   'Add GEMINI_API_KEY and restart me.';
@@ -252,6 +290,9 @@ export function createApi(): Express {
       }
 
       send({type: 'done', message: await record('grace', reply, via)});
+      // The conversation has moved on, so the hint the transcriber works from
+      // has to move with it — a stale one misses the name just mentioned.
+      contextCache = null;
       res.end();
     }),
   );
@@ -312,7 +353,11 @@ export function createApi(): Express {
       }
 
       try {
-        const text = await getProvider().transcribe({audio, mimeType});
+        const text = await getProvider().transcribe({
+          audio,
+          mimeType,
+          context: await listeningContext(),
+        });
         res.json({text});
       } catch (error) {
         // Providers return a wall of JSON. Keep it in the log and say

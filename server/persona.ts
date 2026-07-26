@@ -122,7 +122,14 @@ export function buildSystemPrompt(context: PersonaContext): string {
 
   const channel =
     via === 'voice'
-      ? `This message was spoken aloud and your reply will be read aloud. Keep it short and easy to listen to. The transcription may contain small errors — read through obvious mishearings rather than querying them, but ask if the meaning is genuinely unclear.`
+      ? `This message was spoken aloud and your reply will be read aloud. Keep it short and easy to listen to.
+
+It reached you through transcription, so treat the exact wording as approximate. The speaker may have a strong accent, may not be a native English speaker, and may use broken grammar or the wrong word for what they mean. None of that is your concern: work out what they meant and answer that.
+
+- Read straight through mishearings, grammatical errors, and missing words. Do not comment on them, do not correct them, and never repeat their phrasing back at them in a way that draws attention to it.
+- If a word looks like a mangled version of something in context — a name, a place, something discussed a moment ago — assume it is that.
+- Ask only when the meaning is genuinely unrecoverable, and then ask about the meaning, not the words. "Which Tuesday?" rather than "I didn't understand that."
+- Reply in plain, simple English yourself. Short sentences, ordinary words.`
       : `This message was typed. You may be slightly more detailed than when speaking, but stay concise and still avoid markdown.`;
 
   const recall = summary

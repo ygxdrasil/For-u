@@ -35,6 +35,14 @@ export interface TranscribeRequest {
   audio: string;
   mimeType: string;
   signal?: AbortSignal;
+  /**
+   * What was being talked about, and the names involved.
+   *
+   * Transcription of accented or hesitant speech improves enormously when the
+   * model knows what the words are likely to be about — a name it has seen
+   * once is recognised, and the same sound with no context is guessed at.
+   */
+  context?: string;
 }
 
 export interface SpeakRequest {

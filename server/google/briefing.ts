@@ -13,7 +13,23 @@ import {connection} from './oauth';
  */
 
 /** Google is not allowed to hold up a reply. */
-const PATIENCE_MS = 3500;
+const PATIENCE_MS = 2500;
+
+/**
+ * How long a briefing stays good for.
+ *
+ * Diaries and inboxes do not change second to second, and paying two Google
+ * round trips in front of every single reply is a delay the user feels on
+ * every turn for information that was identical a minute ago.
+ */
+const FRESH_FOR_MS = 90_000;
+
+let cached: {text: string | null; until: number} | null = null;
+
+/** Called when something happens that would make the cached view wrong. */
+export function forgetBriefing(): void {
+  cached = null;
+}
 
 function timeboxed<T>(work: Promise<T>, fallback: T): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -28,8 +44,13 @@ function timeboxed<T>(work: Promise<T>, fallback: T): Promise<T> {
 }
 
 export async function buildBriefing(): Promise<string | null> {
+  if (cached && cached.until > Date.now()) return cached.text;
+
   const saved = await connection().catch(() => null);
-  if (!saved || saved.brokenReason) return null;
+  if (!saved || saved.brokenReason) {
+    cached = {text: null, until: Date.now() + FRESH_FOR_MS};
+    return null;
+  }
 
   const [events, mail] = await Promise.all([
     timeboxed(upcoming(24, 8), []),
@@ -65,13 +86,16 @@ export async function buildBriefing(): Promise<string | null> {
     lines.push('', 'No unread mail in the last two days.');
   }
 
-  return [
+  const text = [
     'This is live from their Google account, as of now:',
     ...lines,
     '',
     'Use it when it is relevant and say nothing about it when it is not. Do not ' +
-      'recite the whole list unless asked for it. You may draft a reply to any of ' +
-      'this mail, but you never send it — the draft goes to their drafts folder and ' +
-      'they press send.',
+      'recite the whole list unless asked for it. You can read this, and that is ' +
+      'all — you cannot reply, draft, file, or change anything. Say so if asked ' +
+      'rather than claiming to have done it.',
   ].join('\n');
+
+  cached = {text, until: Date.now() + FRESH_FOR_MS};
+  return text;
 }

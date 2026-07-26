@@ -9,9 +9,18 @@ import type {
   TranscribeRequest,
 } from './types';
 
-const TRANSCRIBE_PROMPT = `Write out exactly what is said in this recording.
+const TRANSCRIBE_PROMPT = `Write out what is said in this recording.
 
-Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio. If the recording contains no speech, return nothing at all.`;
+The speaker may have a strong accent, may not be a native English speaker, and may hesitate, restart, or use imperfect grammar. Transcribe them accurately and charitably:
+
+- Write the words they meant, not a phonetic imitation of how they came out. If someone says "I go yesterday to the shop", write that — do not correct their grammar, but do not mangle it further either.
+- Keep their own words and word order. You are transcribing, not translating and not rewriting.
+- Drop pure disfluencies — "um", "uh", false starts abandoned mid-word — since they add nothing when read back.
+- Proper nouns matter most and are the hardest to hear. Use the context below to recognise names of people, places, and things rather than guessing at similar-sounding words.
+- If a stretch is genuinely unintelligible, leave it out rather than inventing something plausible. A short accurate transcript beats a complete invented one.
+- If the speaker uses another language entirely, transcribe it in that language.
+
+Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio, no notes about audio quality. If there is no speech at all, return nothing.`;
 
 const SPEAK_DIRECTION =
   'Read the following aloud in a calm, warm, unhurried voice, the way a ' +
@@ -109,7 +118,11 @@ export class GeminiProvider implements LlmProvider {
           role: 'user',
           parts: [
             {inlineData: {mimeType: request.mimeType, data: request.audio}},
-            {text: TRANSCRIBE_PROMPT},
+            {
+              text: request.context
+                ? `${TRANSCRIBE_PROMPT}\n\nContext for recognising names and topics:\n${request.context}`
+                : TRANSCRIBE_PROMPT,
+            },
           ],
         },
       ],
