@@ -16,13 +16,16 @@ var config = {
   /**
    * The model she thinks with.
    *
-   * Flash-Lite rather than Flash: conversation is the one place latency is
-   * felt directly, and it answers noticeably sooner. It is also one of only
-   * two models with free web grounding — the 3.x line has grounding marked
-   * "not available" on this tier, so moving up a generation would cost her
-   * the web.
+   * Flash, not Flash-Lite. Lite was chosen for speed before she had any
+   * tools, and it turned out not to call them — it answered "I am a large
+   * language model and cannot access real-time information" while holding a
+   * working search tool. Deciding to use a tool is the thing small models are
+   * worst at, and a fast wrong answer is not cheaper than a slower right one.
+   *
+   * Still the 2.5 line: grounding is marked "not available" on the free tier
+   * for 3.x, so moving up a generation would cost her the web.
    */
-  model: process.env.GRACE_MODEL ?? "gemini-2.5-flash-lite",
+  model: process.env.GRACE_MODEL ?? "gemini-2.5-flash",
   /**
    * The model that listens. Deliberately not the fast one.
    *
@@ -358,22 +361,78 @@ function checkPassword(candidate) {
   return config.password.length > 0 && matches(candidate, config.password);
 }
 
-// server/keys.ts
-var store2 = new Document("keys", () => ({}));
+// server/budget.ts
+var RATES = {
+  "gemini-2.5-flash": { in: 0.3, out: 2.5 },
+  "gemini-2.5-flash-lite": { in: 0.1, out: 0.4 },
+  "gemini-2.5-flash-preview-tts": { in: 0.5, out: 10 }
+};
+var FALLBACK = { in: 1, out: 20 };
+var store2 = new Document("spend", () => ({
+  month: currentMonth(),
+  dollars: 0,
+  requests: 0,
+  stoppedAt: null
+}));
+function currentMonth() {
+  return (/* @__PURE__ */ new Date()).toISOString().slice(0, 7);
+}
+function monthlyCap() {
+  const set = Number(process.env.GRACE_MONTHLY_CAP);
+  return Number.isFinite(set) && set > 0 ? set : 10;
+}
 var cached = null;
-async function loadKeys() {
+async function spend() {
   if (!cached) cached = await store2.read();
+  if (cached.month !== currentMonth()) {
+    cached = { month: currentMonth(), dollars: 0, requests: 0, stoppedAt: null };
+    await store2.write(cached);
+  }
   return cached;
 }
+var OverBudget = class extends Error {
+  constructor(dollars) {
+    super(
+      `I have spent about $${dollars.toFixed(2)} this month, which is the limit you set. I will start again next month, or you can raise the cap.`
+    );
+    this.dollars = dollars;
+    this.name = "OverBudget";
+  }
+};
+async function requireBudget() {
+  const current = await spend();
+  if (current.dollars >= monthlyCap()) throw new OverBudget(current.dollars);
+}
+async function record(model, inputTokens, outputTokens) {
+  const rate = RATES[model] ?? FALLBACK;
+  const cost = (inputTokens * rate.in + outputTokens * rate.out) / 1e6;
+  const current = await spend();
+  const next = {
+    ...current,
+    dollars: current.dollars + cost,
+    requests: current.requests + 1,
+    stoppedAt: current.dollars + cost >= monthlyCap() ? current.stoppedAt ?? (/* @__PURE__ */ new Date()).toISOString() : current.stoppedAt
+  };
+  cached = next;
+  await store2.write(next);
+}
+
+// server/keys.ts
+var store3 = new Document("keys", () => ({}));
+var cached2 = null;
+async function loadKeys() {
+  if (!cached2) cached2 = await store3.read();
+  return cached2;
+}
 async function setKey(name, value) {
-  const current = await store2.read();
+  const current = await store3.read();
   const trimmed = value.trim();
   const next = { ...current, [name]: trimmed || void 0 };
-  await store2.write(next);
-  cached = next;
+  await store3.write(next);
+  cached2 = next;
 }
 function geminiKey() {
-  return cached?.gemini || config.apiKey;
+  return cached2?.gemini || config.apiKey;
 }
 function tail(value) {
   if (!value) return null;
@@ -413,6 +472,11 @@ The speaker may have a strong accent, may not be a native English speaker, and m
 
 Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio, no notes about audio quality. If there is no speech at all, return nothing.`;
 var MAX_TOOL_ROUNDS = 5;
+function meter(model, usage) {
+  if (!usage) return;
+  void record(model, usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0).catch(() => {
+  });
+}
 var SPEAK_DIRECTION = "Read the following aloud in a calm, warm, unhurried voice, the way a composed personal assistant would speak to someone they know well. Read only the text itself:";
 function sampleRateOf(mimeType) {
   const rate = Number(/rate=(\d+)/.exec(mimeType ?? "")?.[1]);
@@ -443,6 +507,7 @@ var GeminiProvider = class {
     this.client = new GoogleGenAI({ apiKey });
   }
   async *stream(request) {
+    await requireBudget();
     let spoken = false;
     try {
       const history = request.turns.map((turn) => ({
@@ -457,6 +522,7 @@ var GeminiProvider = class {
         const calls = [];
         for await (const chunk of response2) {
           if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
+          meter(this.model, chunk.usageMetadata);
           for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
             if (part.functionCall?.name) {
               calls.push({
@@ -504,12 +570,15 @@ var GeminiProvider = class {
     }
   }
   async complete(request) {
+    await requireBudget();
     const response = await this.client.models.generateContent(
       this.params(request)
     );
+    meter(this.model, response.usageMetadata);
     return response.text ?? "";
   }
   async transcribe(request) {
+    await requireBudget();
     const response = await this.client.models.generateContent({
       model: config.transcribeModel,
       contents: [
@@ -534,9 +603,11 @@ ${request.context}` : TRANSCRIBE_PROMPT
         thinkingConfig: { thinkingBudget: 0 }
       }
     });
+    meter(config.transcribeModel, response.usageMetadata);
     return (response.text ?? "").trim();
   }
   async speak(request) {
+    await requireBudget();
     const response = await this.client.models.generateContent({
       model: config.speechModel,
       // The instruction rides along with the words. The model reads the
@@ -557,6 +628,7 @@ ${request.text}` }]
         }
       }
     });
+    meter(config.speechModel, response.usageMetadata);
     const part = response.candidates?.[0]?.content?.parts?.find(
       (candidate) => candidate.inlineData?.data
     );
@@ -637,7 +709,7 @@ function getProfile() {
 async function getSummary() {
   return (await meta.read()).summary;
 }
-async function record(speaker, text, via) {
+async function record2(speaker, text, via) {
   const message = {
     id: randomUUID(),
     speaker,
@@ -822,7 +894,7 @@ var SCOPES = [
   "openid",
   "email"
 ];
-var store3 = new Document("google", () => null);
+var store4 = new Document("google", () => null);
 var accessTokens = /* @__PURE__ */ new Map();
 function googleConfigured() {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
@@ -898,7 +970,7 @@ async function completeSignIn(code, state) {
       `This is Grace's owner's account only. Signed in as ${email}, expected ${owner}.`
     );
   }
-  await store3.write({
+  await store4.write({
     refreshToken: token.refresh_token,
     email,
     scopes: (token.scope ?? "").split(" ").filter(Boolean),
@@ -907,18 +979,18 @@ async function completeSignIn(code, state) {
   return { email };
 }
 async function connection() {
-  return store3.read();
+  return store4.read();
 }
 async function disconnect() {
   accessTokens.clear();
-  await store3.write(null);
+  await store4.write(null);
 }
 async function accessToken() {
-  const saved = await store3.read();
+  const saved = await store4.read();
   if (!saved) throw new GoogleError("Google is not connected yet.", true);
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
-  const cached3 = accessTokens.get(saved.refreshToken);
-  if (cached3 && cached3.expiresAt > Date.now() + 6e4) return cached3.token;
+  const cached4 = accessTokens.get(saved.refreshToken);
+  if (cached4 && cached4.expiresAt > Date.now() + 6e4) return cached4.token;
   const token = await postToken({
     client_id: process.env.GOOGLE_CLIENT_ID ?? "",
     client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
@@ -927,7 +999,7 @@ async function accessToken() {
   });
   if (token.error === "invalid_grant") {
     const reason = "Google has disconnected Grace \u2014 usually a changed password or a revoked permission. Reconnect to put it back.";
-    await store3.write({ ...saved, brokenReason: reason });
+    await store4.write({ ...saved, brokenReason: reason });
     throw new GoogleError(reason, true);
   }
   if (token.error || !token.access_token) {
@@ -1028,7 +1100,7 @@ async function recentMail(query = "in:inbox", limit = 10) {
 // server/google/briefing.ts
 var PATIENCE_MS = 2500;
 var FRESH_FOR_MS = 9e4;
-var cached2 = null;
+var cached3 = null;
 function timeboxed(work, fallback) {
   let timer;
   return Promise.race([
@@ -1041,10 +1113,10 @@ function timeboxed(work, fallback) {
   ]).finally(() => clearTimeout(timer));
 }
 async function buildBriefing() {
-  if (cached2 && cached2.until > Date.now()) return cached2.text;
+  if (cached3 && cached3.until > Date.now()) return cached3.text;
   const saved = await connection().catch(() => null);
   if (!saved || saved.brokenReason) {
-    cached2 = { text: null, until: Date.now() + FRESH_FOR_MS };
+    cached3 = { text: null, until: Date.now() + FRESH_FOR_MS };
     return null;
   }
   const [events, mail] = await Promise.all([
@@ -1081,15 +1153,15 @@ async function buildBriefing() {
     "",
     "Use it when it is relevant and say nothing about it when it is not. Do not recite the whole list unless asked for it. You can read this, and that is all \u2014 you cannot reply, draft, file, or change anything. Say so if asked rather than claiming to have done it."
   ].join("\n");
-  cached2 = { text, until: Date.now() + FRESH_FOR_MS };
+  cached3 = { text, until: Date.now() + FRESH_FOR_MS };
   return text;
 }
 
 // server/tools/reminders.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-var store4 = new Document("reminders", () => []);
+var store5 = new Document("reminders", () => []);
 async function outstanding() {
-  const all = await store4.read();
+  const all = await store5.read();
   return all.filter((reminder) => !reminder.doneAt).sort((left, right) => {
     if (!left.due) return 1;
     if (!right.due) return -1;
@@ -1135,7 +1207,7 @@ var reminderTools = [
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         doneAt: null
       };
-      await store4.update((current) => [...current, reminder]);
+      await store5.update((current) => [...current, reminder]);
       return `Noted: ${describe(reminder)}`;
     }
   },
@@ -1172,7 +1244,7 @@ ${open.map((item) => `- ${describe(item)}`).join("\n")}`;
       if (matches2.length > 1) {
         return `More than one matches: ${matches2.map((item) => item.text).join("; ")}. Ask which one they mean.`;
       }
-      await store4.update(
+      await store5.update(
         (current) => current.map(
           (item) => item.id === matches2[0].id ? { ...item, doneAt: (/* @__PURE__ */ new Date()).toISOString() } : item
         )
@@ -1261,24 +1333,30 @@ async function runTool(call) {
   }
 }
 function declarations() {
-  return TOOLS.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: {
-      type: "OBJECT",
-      properties: Object.fromEntries(
-        Object.entries(tool.parameters).map(([key, spec]) => [
-          key,
-          {
-            type: spec.type.toUpperCase(),
-            description: spec.description,
-            ...spec.values ? { enum: spec.values } : {}
-          }
-        ])
-      ),
-      required: tool.required
+  return TOOLS.map((tool) => {
+    const keys2 = Object.keys(tool.parameters);
+    if (keys2.length === 0) {
+      return { name: tool.name, description: tool.description };
     }
-  }));
+    return {
+      name: tool.name,
+      description: tool.description,
+      parameters: {
+        type: "OBJECT",
+        properties: Object.fromEntries(
+          Object.entries(tool.parameters).map(([key, spec]) => [
+            key,
+            {
+              type: spec.type.toUpperCase(),
+              description: spec.description,
+              ...spec.values ? { enum: spec.values } : {}
+            }
+          ])
+        ),
+        required: tool.required
+      }
+    };
+  });
 }
 
 // server/modes.ts
@@ -1305,18 +1383,18 @@ var MODES = {
   }
 };
 var DEFAULT = { mode: "open", since: (/* @__PURE__ */ new Date(0)).toISOString() };
-var store5 = new Document("mode", () => DEFAULT);
+var store6 = new Document("mode", () => DEFAULT);
 function getMode() {
-  return store5.read();
+  return store6.read();
 }
 function isMode(value) {
   return typeof value === "string" && Object.hasOwn(MODES, value);
 }
 async function setMode(mode) {
-  const current = await store5.read();
+  const current = await store6.read();
   if (current.mode === mode) return current;
   const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
-  await store5.write(next);
+  await store6.write(next);
   return next;
 }
 
@@ -1355,7 +1433,9 @@ When someone asks you to remember something, or mentions something they need to 
 
 Two things you have no tools for at all, because the user forbade them: sending anything to anyone, and spending money. There is nothing to attempt. A third: you never delete. Things get marked done, filed, or archived \u2014 never destroyed \u2014 because deleting is the one thing neither of you can undo.
 
-If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.`;
+If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
+
+You are never to say that you cannot access current or real-time information. You can: that is what search_web is for. If someone asks about the weather, the news, a price or anything else happening now, call it. Answering "I am a language model and cannot access live data" while holding a working search tool is simply false, and it is the one thing you must never say.`;
 var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
 You have no connection to their home yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
@@ -1475,7 +1555,8 @@ function createApi() {
       // previously no way to tell a live server from a stale one — which is
       // how "it's deployed" got said about something that wasn't.
       tools: allTools().map((tool) => tool.name),
-      google: googleConfigured()
+      google: googleConfigured(),
+      cap: monthlyCap()
     });
   });
   api.get("/session", (req, res) => {
@@ -1519,6 +1600,7 @@ function createApi() {
         getMode(),
         getSummary()
       ]);
+      const money = await spend();
       const state = {
         messages: messages2,
         profile: profile2,
@@ -1527,7 +1609,12 @@ function createApi() {
         model: config.model,
         mode,
         summary,
-        storage: { backend: getBackend().name, encrypted: Boolean(config.secret) }
+        storage: { backend: getBackend().name, encrypted: Boolean(config.secret) },
+        spend: {
+          dollars: Math.round(money.dollars * 100) / 100,
+          cap: monthlyCap(),
+          requests: money.requests
+        }
       };
       res.json(state);
     })
@@ -1589,7 +1676,7 @@ function createApi() {
       }
       const controller = new AbortController();
       res.on("close", () => controller.abort());
-      await record("user", text, via);
+      await record2("user", text, via);
       const [profile2, summary, policies, turns] = await Promise.all([
         getProfile(),
         getSummary(),
@@ -1640,7 +1727,7 @@ function createApi() {
       } catch (error) {
         const message = error.message ?? "unknown error";
         console.error("[grace] generation failed:", message);
-        if (reply.trim()) await record("grace", reply, via);
+        if (reply.trim()) await record2("grace", reply, via);
         send({
           type: "error",
           message: `I couldn't finish that thought \u2014 ${message}`
@@ -1653,7 +1740,7 @@ function createApi() {
         res.end();
         return;
       }
-      send({ type: "done", message: await record("grace", reply, via) });
+      send({ type: "done", message: await record2("grace", reply, via) });
       contextCache = null;
       res.end();
     })

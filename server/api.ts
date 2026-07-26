@@ -15,6 +15,7 @@ import {
   pauseAfterFailure,
   requireAuth,
 } from './auth';
+import {monthlyCap, spend} from './budget';
 import {config, isConfigured} from './config';
 import {keyStatus, loadKeys, setKey} from './keys';
 import {learnFrom} from './learn';
@@ -139,6 +140,7 @@ export function createApi(): Express {
       // how "it's deployed" got said about something that wasn't.
       tools: allTools().map((tool) => tool.name),
       google: googleConfigured(),
+      cap: monthlyCap(),
     });
   });
 
@@ -196,6 +198,7 @@ export function createApi(): Express {
         getSummary(),
       ]);
 
+      const money = await spend();
       const state: GraceState = {
         messages,
         profile,
@@ -205,6 +208,11 @@ export function createApi(): Express {
         mode,
         summary,
         storage: {backend: getBackend().name, encrypted: Boolean(config.secret)},
+        spend: {
+          dollars: Math.round(money.dollars * 100) / 100,
+          cap: monthlyCap(),
+          requests: money.requests,
+        },
       };
       res.json(state);
     }),

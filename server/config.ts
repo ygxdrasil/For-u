@@ -11,13 +11,16 @@ export const config = {
   /**
    * The model she thinks with.
    *
-   * Flash-Lite rather than Flash: conversation is the one place latency is
-   * felt directly, and it answers noticeably sooner. It is also one of only
-   * two models with free web grounding — the 3.x line has grounding marked
-   * "not available" on this tier, so moving up a generation would cost her
-   * the web.
+   * Flash, not Flash-Lite. Lite was chosen for speed before she had any
+   * tools, and it turned out not to call them — it answered "I am a large
+   * language model and cannot access real-time information" while holding a
+   * working search tool. Deciding to use a tool is the thing small models are
+   * worst at, and a fast wrong answer is not cheaper than a slower right one.
+   *
+   * Still the 2.5 line: grounding is marked "not available" on the free tier
+   * for 3.x, so moving up a generation would cost her the web.
    */
-  model: process.env.GRACE_MODEL ?? 'gemini-2.5-flash-lite',
+  model: process.env.GRACE_MODEL ?? 'gemini-2.5-flash',
 
   /**
    * The model that listens. Deliberately not the fast one.

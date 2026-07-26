@@ -418,6 +418,32 @@ try {
   await call('/keys', {method: 'POST', body: JSON.stringify({name: 'gemini', value: ''})});
   ok('unknown key names refused');
 
+  // ---- spending ----------------------------------------------------------
+  // A cap that only tells you afterwards is not a cap, so it is checked before
+  // the request goes out. Charged from reported token usage, not guessed.
+  const {monthlyCap, record: bill, requireBudget, spend} = await import(
+    '../server/budget'
+  );
+  const startingSpend = (await spend()).dollars;
+  await bill('gemini-2.5-flash', 1_000_000, 1_000_000);
+  const after = await spend();
+  assert.ok(after.dollars > startingSpend, 'usage must be counted');
+  assert.equal(
+    Math.round((after.dollars - startingSpend) * 100) / 100,
+    2.8,
+    'charged at the published rate for that model',
+  );
+  ok('spending is counted from real token usage');
+
+  await bill('gemini-2.5-flash', 20_000_000, 20_000_000);
+  await assert.rejects(
+    requireBudget(),
+    /limit you set/,
+    'past the cap, she must refuse before spending more',
+  );
+  assert.ok(monthlyCap() > 0);
+  ok('she stops when the monthly cap is reached');
+
   // ---- attention modes ---------------------------------------------------
   // These are not decoration: the mode has to reach the model, or "Focus" is
   // a button that changes a colour and nothing else.

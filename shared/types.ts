@@ -90,6 +90,8 @@ export interface GraceState {
   summary: string | null;
   /** Where memory is kept, and whether it is encrypted at rest. */
   storage: {backend: string; encrypted: boolean};
+  /** What she has spent this month against her cap, in dollars. */
+  spend: {dollars: number; cap: number; requests: number};
 }
 
 /** Server-sent events streamed from POST /api/chat. */

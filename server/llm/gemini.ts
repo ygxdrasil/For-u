@@ -1,5 +1,6 @@
 import {GoogleGenAI} from '@google/genai';
 import type {Content, GenerateContentConfig} from '@google/genai';
+import * as budget from '../budget';
 import {config} from '../config';
 import type {
   GenerateRequest,
@@ -29,6 +30,19 @@ Return only the words spoken, with ordinary punctuation. No preamble, no quotes,
  * model stuck in a loop stops rather than running until the request times out.
  */
 const MAX_TOOL_ROUNDS = 5;
+
+/**
+ * Bills a response against the monthly cap.
+ *
+ * Fire-and-forget: what she spent is worth knowing, but a failure to write it
+ * down must never cost the user their answer.
+ */
+function meter(model: string, usage: {promptTokenCount?: number; candidatesTokenCount?: number} | undefined): void {
+  if (!usage) return;
+  void budget
+    .record(model, usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0)
+    .catch(() => {});
+}
 
 const SPEAK_DIRECTION =
   'Read the following aloud in a calm, warm, unhurried voice, the way a ' +
@@ -78,6 +92,7 @@ export class GeminiProvider implements LlmProvider {
   }
 
   async *stream(request: GenerateRequest): AsyncIterable<string> {
+    await budget.requireBudget();
     let spoken = false;
 
     try {
@@ -99,6 +114,7 @@ export class GeminiProvider implements LlmProvider {
 
         for await (const chunk of response) {
           if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
+          meter(this.model, chunk.usageMetadata);
 
           for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
             if (part.functionCall?.name) {
@@ -161,13 +177,16 @@ export class GeminiProvider implements LlmProvider {
   }
 
   async complete(request: GenerateRequest): Promise<string> {
+    await budget.requireBudget();
     const response = await this.client.models.generateContent(
       this.params(request),
     );
+    meter(this.model, response.usageMetadata);
     return response.text ?? '';
   }
 
   async transcribe(request: TranscribeRequest): Promise<string> {
+    await budget.requireBudget();
     const response = await this.client.models.generateContent({
       model: config.transcribeModel,
       contents: [
@@ -192,10 +211,12 @@ export class GeminiProvider implements LlmProvider {
       },
     });
 
+    meter(config.transcribeModel, response.usageMetadata);
     return (response.text ?? '').trim();
   }
 
   async speak(request: SpeakRequest): Promise<SpokenAudio> {
+    await budget.requireBudget();
     const response = await this.client.models.generateContent({
       model: config.speechModel,
       // The instruction rides along with the words. The model reads the
@@ -214,6 +235,8 @@ export class GeminiProvider implements LlmProvider {
         },
       },
     });
+
+    meter(config.speechModel, response.usageMetadata);
 
     const part = response.candidates?.[0]?.content?.parts?.find(
       (candidate) => candidate.inlineData?.data,

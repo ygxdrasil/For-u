@@ -7,6 +7,7 @@ import {
   Mail,
   ShieldCheck,
   Volume2,
+  Wallet,
 } from 'lucide-react';
 import {useEffect, useMemo, useState, type ReactNode} from 'react';
 import type {
@@ -314,6 +315,12 @@ export function Dashboard({
           label="At rest"
           value={state.storage.encrypted ? 'Encrypted' : 'Plain'}
           tone={state.storage.encrypted ? 'good' : 'bad'}
+        />
+        <Readout
+          icon={<Wallet size={11} />}
+          label="This month"
+          value={`$${state.spend.dollars.toFixed(2)} of $${state.spend.cap}`}
+          tone={state.spend.dollars >= state.spend.cap ? 'bad' : 'normal'}
         />
       </div>
 

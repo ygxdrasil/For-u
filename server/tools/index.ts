@@ -109,22 +109,31 @@ export async function runTool(call: ToolCall): Promise<ToolOutcome> {
 
 /** The shape Gemini wants for a function declaration. */
 export function declarations() {
-  return TOOLS.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: {
-      type: 'OBJECT' as const,
-      properties: Object.fromEntries(
-        Object.entries(tool.parameters).map(([key, spec]) => [
-          key,
-          {
-            type: spec.type.toUpperCase(),
-            description: spec.description,
-            ...(spec.values ? {enum: spec.values} : {}),
-          },
-        ]),
-      ),
-      required: tool.required,
-    },
-  }));
+  return TOOLS.map((tool) => {
+    const keys = Object.keys(tool.parameters);
+    // A declaration with an empty properties object is malformed, and a
+    // malformed declaration can take the whole tool list down with it.
+    if (keys.length === 0) {
+      return {name: tool.name, description: tool.description};
+    }
+
+    return {
+      name: tool.name,
+      description: tool.description,
+      parameters: {
+        type: 'OBJECT' as const,
+        properties: Object.fromEntries(
+          Object.entries(tool.parameters).map(([key, spec]) => [
+            key,
+            {
+              type: spec.type.toUpperCase(),
+              description: spec.description,
+              ...(spec.values ? {enum: spec.values} : {}),
+            },
+          ]),
+        ),
+        required: tool.required,
+      },
+    };
+  });
 }
