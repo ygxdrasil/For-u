@@ -127,22 +127,30 @@ export function createApi(): Express {
 
   // ---- open endpoints ----------------------------------------------------
 
-  api.get('/health', (_req, res) => {
-    res.json({
-      ok: true,
-      configured: isConfigured(),
-      model: config.model,
-      storage: getBackend().name,
-      encrypted: Boolean(config.secret),
-      // Named here so a server-side deploy can actually be verified. A change
-      // behind the API leaves the frontend bundle identical, so there was
-      // previously no way to tell a live server from a stale one — which is
-      // how "it's deployed" got said about something that wasn't.
-      tools: allTools().map((tool) => tool.name),
-      google: googleConfigured(),
-      cap: monthlyCap(),
-    });
-  });
+  api.get(
+    '/health',
+    guard(async (_req, res) => {
+      // Keys are loaded here explicitly. This route sits in front of the
+      // middleware that loads them, so it was reporting whatever the instance
+      // happened to have cached — which made it report "no Google credentials"
+      // about credentials that were stored and working.
+      await loadKeys().catch(() => {});
+      res.json({
+        ok: true,
+        configured: isConfigured(),
+        model: config.model,
+        storage: getBackend().name,
+        encrypted: Boolean(config.secret),
+        // Named here so a server-side deploy can actually be verified. A change
+        // behind the API leaves the frontend bundle identical, so there was
+        // previously no way to tell a live server from a stale one — which is
+        // how "it's deployed" got said about something that wasn't.
+        tools: allTools().map((tool) => tool.name),
+        google: googleConfigured(),
+        cap: monthlyCap(),
+      });
+    }),
+  );
 
   api.get('/session', (req, res) => {
     res.json({status: authStatus(req)});
