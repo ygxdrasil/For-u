@@ -783,9 +783,19 @@ export function createApi(): Express {
         return;
       }
 
-      // Long enough for a paragraph, short enough that a runaway reply can't
-      // spend the day's speech allowance in one go.
-      const text = String(req.body?.text ?? '').slice(0, 2000).trim();
+      // A ceiling on one request, so a runaway reply cannot spend the day's
+      // speech allowance in one go. The client splits a long answer into
+      // pieces that fit; this used to cut silently at two thousand characters,
+      // which is how she came to stop mid-word with no error anywhere. It now
+      // says so when it has to cut, so the same bug can be found by reading.
+      const asked = String(req.body?.text ?? '').trim();
+      const text = asked.slice(0, 5000);
+      if (text.length < asked.length) {
+        console.error(
+          `[grace] speech text was ${asked.length} characters and had to be cut. ` +
+            'The client should have split it.',
+        );
+      }
       if (!text) {
         res.status(400).json({error: 'nothing to say'});
         return;

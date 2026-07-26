@@ -34,6 +34,7 @@ import {
   getSummary,
   recentTurns,
 } from '../server/memory';
+import {chunkForSpeech} from '../shared/speech';
 import {recentDeeds} from '../server/journal';
 import {setMode} from '../server/modes';
 import {pulse} from '../server/pulse';
@@ -599,6 +600,46 @@ try {
     'with no token she must say it is not connected',
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
+
+  // ---- her voice does not stop mid-word -----------------------------------
+  // A long answer used to be packed into batches that could overshoot what the
+  // speech route accepts, and the route cut the overflow without a word. The
+  // only symptom was her trailing off, which no test could see.
+  const longWinded =
+    'She had a great deal to say about it. '.repeat(60) +
+    `And then one sentence with no full stop in it at all that simply keeps ${'going on '.repeat(200)}`;
+
+  const pieces = chunkForSpeech(longWinded);
+  assert.ok(pieces.length > 1, 'a long answer should be broken up');
+  for (const piece of pieces) {
+    assert.ok(
+      piece.length <= 1500,
+      `every piece must fit what the route accepts, got ${piece.length}`,
+    );
+  }
+
+  // Nothing may be dropped. Whitespace is renormalised, the words are not.
+  const words = (text: string) => text.split(/\s+/).filter(Boolean);
+  assert.deepEqual(
+    words(pieces.join(' ')),
+    words(longWinded),
+    'every word must come out the other side — this is the whole point',
+  );
+  ok('a long reply is split without losing a word, and never cut mid-sentence');
+
+  // ---- what the interface shows about an action ---------------------------
+  // Checking the mail hands the model every subject line in the inbox. Showing
+  // that to the user buried her actual reply under other people's email.
+  const inbox = await runTool({name: 'check_mail', args: {}});
+  assert.ok(
+    inbox.summary.length < 70,
+    `what the user sees must stay short, got ${inbox.summary.length} characters`,
+  );
+  assert.ok(
+    !inbox.summary.includes('\n'),
+    'and must be one line, not a list pasted under her reply',
+  );
+  ok('an action shows as a short line, not the tool’s whole output');
 
   // ---- the laptop bridge --------------------------------------------------
   // Grace hands out the bridge program herself, so getting it onto a locked-

@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import * as api from '../lib/api';
+import {chunkForSpeech} from '../../shared/speech';
 
 /**
  * Grace's voice.
@@ -323,22 +324,14 @@ export function useSpeech(enabled: boolean) {
       return;
     }
 
-    let batch = '';
-    for (const sentence of whole.split(SENTENCE_END)) {
-      if (batch && batch.length + sentence.length > CHUNK_TARGET) {
-        enqueue(batch);
-        batch = '';
-      }
-      batch += `${sentence} `;
-    }
-    enqueue(batch);
+    for (const piece of chunkForSpeech(whole)) enqueue(piece);
   }, [enabled, enqueue]);
 
   /** Say one thing right now, outside any stream. */
   const say = useCallback(
     (text: string) => {
       unlock();
-      enqueue(text);
+      for (const piece of chunkForSpeech(text)) enqueue(piece);
     },
     [enqueue, unlock],
   );

@@ -2351,6 +2351,10 @@ var LABELS = {
 function label(name) {
   return LABELS[name] ?? name.replace(/_/g, " ");
 }
+function describe2(name, result) {
+  const short = result.trim().split("\n")[0];
+  return short.length > 0 && short.length <= 60 && !short.includes("  ") ? `${label(name)} \u2014 ${short}` : label(name);
+}
 async function runTool(call) {
   const tool = findTool(call.name);
   if (!tool) {
@@ -2382,9 +2386,9 @@ async function runTool(call) {
   }
   try {
     const result = await tool.run(call.args);
-    await noteDeed("acted", `${label(tool.name)} \u2014 ${result}`).catch(() => {
+    await noteDeed("acted", describe2(tool.name, result)).catch(() => {
     });
-    return { name: tool.name, ok: true, result, summary: result };
+    return { name: tool.name, ok: true, result, summary: describe2(tool.name, result) };
   } catch (error) {
     const detail = error.message;
     console.error(`[grace] tool ${tool.name} failed:`, detail);
@@ -3074,7 +3078,13 @@ function createApi() {
         res.status(503).json({ error: "No Gemini API key is configured." });
         return;
       }
-      const text = String(req.body?.text ?? "").slice(0, 2e3).trim();
+      const asked = String(req.body?.text ?? "").trim();
+      const text = asked.slice(0, 5e3);
+      if (text.length < asked.length) {
+        console.error(
+          `[grace] speech text was ${asked.length} characters and had to be cut. The client should have split it.`
+        );
+      }
       if (!text) {
         res.status(400).json({ error: "nothing to say" });
         return;

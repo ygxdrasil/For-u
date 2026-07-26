@@ -1,4 +1,4 @@
-import {Check, Globe} from 'lucide-react';
+import {Check} from 'lucide-react';
 import {useEffect, useRef} from 'react';
 import type {Message} from '../../shared/types.ts';
 
@@ -61,7 +61,15 @@ const OPENERS: {group: string; items: string[]}[] = [
 interface TranscriptProps {
   messages: Message[];
   streaming: string;
-  /** She went to the web for the reply currently streaming in. */
+  /**
+   * She went to the web for this reply.
+   *
+   * Deliberately not shown any more. Searching is how she answers a question
+   * about today's weather, not an event in its own right, and announcing it
+   * every time made the conversation read like a status log. It is still
+   * reported to the client, so the Faculties panel can tell a working
+   * connection from a broken one without it being in your face.
+   */
   searched: boolean;
   /** Things she actually did while answering. */
   actions: string[];
@@ -134,17 +142,6 @@ export function Transcript({
           <div className="max-w-[85%] rounded-2xl border border-dashed border-ice/20 px-4 py-2.5 text-[0.95rem] italic text-mist/70">
             {heard}
           </div>
-        </div>
-      )}
-
-      {/* She is told not to narrate her searching, which is right — but that
-          left no way to tell a working connection from a broken one. */}
-      {searched && (
-        <div className="flex justify-start">
-          <span className="rise inline-flex items-center gap-1.5 rounded-full border border-ice/25 bg-ice/10 px-2.5 py-1 text-[0.65rem] text-ice/90">
-            <Globe size={11} />
-            Checked the web
-          </span>
         </div>
       )}
 

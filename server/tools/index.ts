@@ -85,6 +85,24 @@ function label(name: string): string {
 }
 
 /**
+ * What the interface shows about an action.
+ *
+ * Emphatically not the tool's output. Checking the mail returns every subject
+ * line in the inbox because the model needs to read them — putting that on
+ * screen underneath her reply buried the reply itself under a wall of other
+ * people's email. The user should see that she looked, not what she read.
+ *
+ * A short result is worth keeping, though: "Noted: ring the dentist" says more
+ * than "Added to the list" and costs a line either way.
+ */
+function describe(name: string, result: string): string {
+  const short = result.trim().split('\n')[0];
+  return short.length > 0 && short.length <= 60 && !short.includes('  ')
+    ? `${label(name)} — ${short}`
+    : label(name);
+}
+
+/**
  * Run one call the model asked for.
  *
  * Everything that could go wrong here is returned as a readable sentence
@@ -131,8 +149,10 @@ export async function runTool(call: ToolCall): Promise<ToolOutcome> {
     // Everything she does goes on the record. An assistant who acts for you
     // and leaves no trace is asking to be taken on trust, and she shouldn't
     // have to be: the interface shows this list.
-    await noteDeed('acted', `${label(tool.name)} — ${result}`).catch(() => {});
-    return {name: tool.name, ok: true, result, summary: result};
+    await noteDeed('acted', describe(tool.name, result)).catch(() => {});
+    // `result` is what the model reads; `summary` is what the user sees. They
+    // used to be the same string, which is how an inbox ended up on screen.
+    return {name: tool.name, ok: true, result, summary: describe(tool.name, result)};
   } catch (error) {
     const detail = (error as Error).message;
     console.error(`[grace] tool ${tool.name} failed:`, detail);
