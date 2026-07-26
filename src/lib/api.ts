@@ -2,6 +2,7 @@ import type {
   ActionCategory,
   AttentionMode,
   ChatEvent,
+  DayView,
   GoogleStatus,
   ModeState,
   ConfirmationPolicy,
@@ -9,6 +10,7 @@ import type {
   InputMode,
   Profile,
   ProfileEntry,
+  PulseResult,
 } from '../../shared/types.ts';
 
 export type SessionStatus = 'open' | 'ok' | 'required' | 'misconfigured';
@@ -176,12 +178,31 @@ export async function webCheck(): Promise<Record<string, unknown>> {
   return response.json();
 }
 
+/**
+ * One unprompted look around.
+ *
+ * Costs nothing when nothing has changed, which is why the client can afford
+ * to ask every few minutes for as long as it is open.
+ */
+export async function pulse(): Promise<PulseResult> {
+  const response = await fetch('/api/pulse', {method: 'POST'});
+  if (!response.ok) return {concerns: [], say: null, held: null};
+  return response.json();
+}
+
+export async function fetchDay(): Promise<DayView | null> {
+  const response = await fetch('/api/day');
+  if (!response.ok) return null;
+  return response.json();
+}
+
 export type KeyName =
   | 'gemini'
   | 'govee'
   | 'googleClientId'
   | 'googleClientSecret'
-  | 'ownerEmail';
+  | 'ownerEmail'
+  | 'psn';
 
 export type KeyStatus = Record<
   KeyName,

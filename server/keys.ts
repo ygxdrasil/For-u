@@ -22,6 +22,8 @@ export interface StoredKeys {
   googleClientSecret?: string;
   /** Only this Google account may connect. */
   ownerEmail?: string;
+  /** PlayStation's NPSSO cookie. Read-only access to PSN, nothing more. */
+  psn?: string;
 }
 
 export type KeyName = keyof StoredKeys;
@@ -60,6 +62,10 @@ export function geminiKey(): string {
 
 export function goveeKey(): string {
   return cached?.govee ?? '';
+}
+
+export function psnToken(): string {
+  return cached?.psn || process.env.PSN_NPSSO || '';
 }
 
 export function googleClient(): {id: string; secret: string; owner: string} {
@@ -107,6 +113,11 @@ export async function keyStatus() {
       set: Boolean(keys.govee),
       pasted: Boolean(keys.govee),
       hint: tail(keys.govee),
+    },
+    psn: {
+      set: Boolean(psnToken()),
+      pasted: Boolean(keys.psn),
+      hint: tail(keys.psn) ?? (process.env.PSN_NPSSO ? 'from the environment' : null),
     },
   };
 }

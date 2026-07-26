@@ -12,11 +12,13 @@ import {
 import {useEffect, useMemo, useState, type ReactNode} from 'react';
 import type {
   AttentionMode,
+  Concern,
   GoogleStatus,
   GraceState,
   Message,
 } from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
+import {Day} from './Day';
 import {Faculties, type Faculty} from './Faculties';
 import {Orb} from './Orb';
 
@@ -94,6 +96,10 @@ interface DashboardProps {
   voiceSource: 'grace' | 'browser';
   voiceOn: boolean;
   google: GoogleStatus | null;
+  /** What she has noticed on her own, and why she may be holding it back. */
+  concerns: Concern[];
+  held: string | null;
+  lastLookedAt: number | null;
   onSetAttention: (mode: AttentionMode) => void;
   onTalk: () => void;
   onOpenSoundCheck: () => void;
@@ -118,13 +124,16 @@ export function Dashboard({
   voiceSource,
   voiceOn,
   google,
+  concerns,
+  held,
+  lastLookedAt,
   onSetAttention,
   onTalk,
   onOpenSoundCheck,
 }: DashboardProps) {
   const now = useClock();
   const attention = state.mode.mode;
-  const held = sinceLabel(state.mode.since);
+  const heldFor = sinceLabel(state.mode.since);
 
   const spokenTurns = messages.filter((message) => message.via === 'voice').length;
   const latest = [...state.profile.entries].slice(-3).reverse();
@@ -215,6 +224,8 @@ export function Dashboard({
         </p>
       </div>
 
+      <Day refreshKey={lastLookedAt} concerns={concerns} held={held} />
+
       <div>
         <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
           Faculties
@@ -266,7 +277,7 @@ export function Dashboard({
 
       <div>
         <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
-          Attention {held && <span className="text-mist/35">· {held}</span>}
+          Attention {heldFor && <span className="text-mist/35">· {heldFor}</span>}
         </h3>
         <div className="grid grid-cols-2 gap-1.5">
           {MODES.map((option) => (

@@ -32,6 +32,14 @@ const FIELDS: {name: KeyName; label: string; blurb: string; secret: boolean}[] =
     blurb: 'Her lights. From the Govee app: Settings → Apply for API Key.',
     secret: true,
   },
+  {
+    name: 'psn',
+    label: 'PlayStation',
+    blurb:
+      'Sign in to PlayStation in a browser, open ca.account.sony.com/api/v1/ssocookie, ' +
+      'and paste the npsso value. She can see the console — never operate it.',
+    secret: true,
+  },
 ];
 
 /**

@@ -31,7 +31,11 @@ import {
   redirectUri,
   type GoogleError,
 } from './google/oauth';
+import {recentDeeds} from './journal';
 import {getProvider} from './llm/index';
+import {playstation, psnConfigured, PsnError, recentlyPlayed} from './ps5';
+import {pulse} from './pulse';
+import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {getMode, isMode, setMode} from './modes';
 import {
@@ -147,6 +151,7 @@ export function createApi(): Express {
         // how "it's deployed" got said about something that wasn't.
         tools: allTools().map((tool) => tool.name),
         google: googleConfigured(),
+        playstation: psnConfigured(),
         cap: monthlyCap(),
       });
     }),
@@ -242,6 +247,7 @@ export function createApi(): Express {
         'googleClientId',
         'googleClientSecret',
         'ownerEmail',
+        'psn',
       ] as const;
       const name = String(req.body?.name ?? '') as (typeof allowed)[number];
       if (!allowed.includes(name)) {
@@ -551,6 +557,94 @@ export function createApi(): Express {
       res.status(failure.needsReconnect ? 409 : 502).json({error: failure.message});
     }
   }));
+
+  // ---- the PlayStation ---------------------------------------------------
+
+  /**
+   * What the console is doing.
+   *
+   * Reading only, and not by choice: Sony's app API shows the console, it does
+   * not operate it. Switching a PS5 on happens over the local network, which
+   * is somewhere a server in a data centre cannot reach.
+   */
+  api.get(
+    '/ps5',
+    guard(async (_req, res) => {
+      if (!psnConfigured()) {
+        res.json({configured: false});
+        return;
+      }
+      try {
+        const [state, games] = await Promise.all([
+          playstation(),
+          recentlyPlayed(5).catch(() => []),
+        ]);
+        res.json({configured: true, ...state, recent: games});
+      } catch (error) {
+        const failure = error as PsnError;
+        res.status(failure.needsToken ? 409 : 502).json({
+          configured: true,
+          error: failure.message,
+        });
+      }
+    }),
+  );
+
+  // ---- her own initiative ------------------------------------------------
+
+  /**
+   * One look around, unprompted.
+   *
+   * The client calls this every few minutes while it is open. It costs nothing
+   * when nothing has changed — the language model is only reached for when
+   * there is genuinely something new to say — so it can run all day on a
+   * ten-dollar budget.
+   */
+  api.post(
+    '/pulse',
+    guard(async (_req, res) => {
+      if (!isConfigured()) {
+        res.json({concerns: [], say: null, held: null});
+        return;
+      }
+      res.json(await pulse());
+    }),
+  );
+
+  /**
+   * The three questions the dashboard exists to answer: what does my day look
+   * like, what needs me, and what has she been doing.
+   */
+  api.get(
+    '/day',
+    guard(async (_req, res) => {
+      const google = await connection().catch(() => null);
+      const connected = Boolean(google && !google.brokenReason);
+
+      const [events, mail, list, deeds, console_] = await Promise.all([
+        connected ? upcoming(24, 8).catch(() => []) : Promise.resolve([]),
+        connected
+          ? recentMail('in:inbox is:unread category:primary newer_than:2d', 6).catch(
+              () => [],
+            )
+          : Promise.resolve([]),
+        outstanding().catch(() => []),
+        recentDeeds(20).catch(() => []),
+        psnConfigured() ? playstation().catch(() => null) : Promise.resolve(null),
+      ]);
+
+      res.json({
+        google: connected,
+        events,
+        mail,
+        // Only what is actually wanted soon. A list of everything outstanding
+        // is a list; the point of this panel is the shortlist.
+        reminders: list.slice(0, 8),
+        deeds,
+        playstation: console_?.presence ?? null,
+      });
+    }),
+  );
 
   /**
    * Does the web actually work, and does she actually reach for it?

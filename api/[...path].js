@@ -159,9 +159,9 @@ var FileBackend = class {
 // server/store/redis.ts
 import { Redis } from "@upstash/redis";
 var RedisBackend = class {
-  constructor(url, token) {
+  constructor(url, token2) {
     this.name = "Redis";
-    this.client = new Redis({ url, token });
+    this.client = new Redis({ url, token: token2 });
   }
   keyFor(key) {
     return `grace:${key}`;
@@ -181,8 +181,8 @@ var RedisBackend = class {
 };
 function redisCredentials() {
   const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? { url, token } : null;
+  const token2 = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+  return url && token2 ? { url, token: token2 } : null;
 }
 
 // server/store/index.ts
@@ -195,9 +195,9 @@ function getBackend() {
   return backend;
 }
 var Document = class {
-  constructor(key, fallback) {
+  constructor(key, fallback2) {
     this.key = key;
-    this.fallback = fallback;
+    this.fallback = fallback2;
     /** Reused across writes so the scrypt key stays derived. */
     this.salt = null;
   }
@@ -291,8 +291,8 @@ function issueNonce(purpose, validForMs = 10 * 6e4) {
   const payload = `${purpose}.${expires}`;
   return `${expires}.${sign(payload)}`;
 }
-function checkNonce(purpose, token) {
-  const [expires, signature] = token.split(".");
+function checkNonce(purpose, token2) {
+  const [expires, signature] = token2.split(".");
   if (!expires || !signature) return false;
   if (Number(expires) < Date.now()) return false;
   const expected = sign(`${purpose}.${expires}`);
@@ -309,9 +309,9 @@ function readCookie(req) {
   }
   return null;
 }
-function valid(token) {
-  if (!token) return false;
-  const [payload, signature] = token.split(".");
+function valid(token2) {
+  if (!token2) return false;
+  const [payload, signature] = token2.split(".");
   if (!payload || !signature) return false;
   if (!matches(signature, sign(payload))) return false;
   const expires = Number(payload);
@@ -319,9 +319,9 @@ function valid(token) {
 }
 function issueSession(res) {
   const expires = Date.now() + SESSION_DAYS * 864e5;
-  const token = `${expires}.${sign(String(expires))}`;
+  const token2 = `${expires}.${sign(String(expires))}`;
   const attributes = [
-    `${COOKIE}=${encodeURIComponent(token)}`,
+    `${COOKIE}=${encodeURIComponent(token2)}`,
     "HttpOnly",
     "Path=/",
     "SameSite=Lax",
@@ -434,6 +434,9 @@ async function setKey(name, value) {
 function geminiKey() {
   return cached2?.gemini || config.apiKey;
 }
+function psnToken() {
+  return cached2?.psn || process.env.PSN_NPSSO || "";
+}
 function googleClient() {
   return {
     id: cached2?.googleClientId || process.env.GOOGLE_CLIENT_ID || "",
@@ -475,6 +478,11 @@ async function keyStatus() {
       set: Boolean(keys2.govee),
       pasted: Boolean(keys2.govee),
       hint: tail(keys2.govee)
+    },
+    psn: {
+      set: Boolean(psnToken()),
+      pasted: Boolean(keys2.psn),
+      hint: tail(keys2.psn) ?? (process.env.PSN_NPSSO ? "from the environment" : null)
     }
   };
 }
@@ -1053,19 +1061,19 @@ async function completeSignIn(code, state) {
   if (!checkNonce("google-oauth", state)) {
     throw new GoogleError("That sign-in link had expired. Start again.");
   }
-  const token = await postToken({
+  const token2 = await postToken({
     code,
     client_id: googleClient().id,
     client_secret: googleClient().secret,
     redirect_uri: redirectUri(),
     grant_type: "authorization_code"
   });
-  if (token.error || !token.refresh_token) {
+  if (token2.error || !token2.refresh_token) {
     throw new GoogleError(
-      token.error_description ?? token.error ?? "Google returned no refresh token. Remove Grace at myaccount.google.com/permissions and try again."
+      token2.error_description ?? token2.error ?? "Google returned no refresh token. Remove Grace at myaccount.google.com/permissions and try again."
     );
   }
-  const email = emailFromIdToken(token.id_token);
+  const email = emailFromIdToken(token2.id_token);
   const owner = googleClient().owner;
   if (owner && email && email.toLowerCase() !== owner.toLowerCase()) {
     throw new GoogleError(
@@ -1073,9 +1081,9 @@ async function completeSignIn(code, state) {
     );
   }
   await store4.write({
-    refreshToken: token.refresh_token,
+    refreshToken: token2.refresh_token,
     email,
-    scopes: (token.scope ?? "").split(" ").filter(Boolean),
+    scopes: (token2.scope ?? "").split(" ").filter(Boolean),
     connectedAt: (/* @__PURE__ */ new Date()).toISOString()
   });
   return { email };
@@ -1093,33 +1101,33 @@ async function accessToken() {
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
   const cached4 = accessTokens.get(saved.refreshToken);
   if (cached4 && cached4.expiresAt > Date.now() + 6e4) return cached4.token;
-  const token = await postToken({
+  const token2 = await postToken({
     client_id: googleClient().id,
     client_secret: googleClient().secret,
     refresh_token: saved.refreshToken,
     grant_type: "refresh_token"
   });
-  if (token.error === "invalid_grant") {
+  if (token2.error === "invalid_grant") {
     const reason = "Google has disconnected Grace \u2014 usually a changed password or a revoked permission. Reconnect to put it back.";
     await store4.write({ ...saved, brokenReason: reason });
     throw new GoogleError(reason, true);
   }
-  if (token.error || !token.access_token) {
-    throw new GoogleError(token.error_description ?? "Google refused the token.");
+  if (token2.error || !token2.access_token) {
+    throw new GoogleError(token2.error_description ?? "Google refused the token.");
   }
   accessTokens.set(saved.refreshToken, {
-    token: token.access_token,
-    expiresAt: Date.now() + (token.expires_in ?? 3600) * 1e3
+    token: token2.access_token,
+    expiresAt: Date.now() + (token2.expires_in ?? 3600) * 1e3
   });
-  return token.access_token;
+  return token2.access_token;
 }
 async function googleFetch(url, init = {}) {
-  const token = await accessToken();
+  const token2 = await accessToken();
   const response = await fetch(url, {
     ...init,
     headers: {
       ...init.headers ?? {},
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${token2}`,
       "Content-Type": "application/json"
     }
   });
@@ -1268,12 +1276,12 @@ function encodeHeader(value) {
 var PATIENCE_MS = 2500;
 var FRESH_FOR_MS = 9e4;
 var cached3 = null;
-function timeboxed(work, fallback) {
+function timeboxed(work, fallback2) {
   let timer;
   return Promise.race([
-    work.catch(() => fallback),
+    work.catch(() => fallback2),
     new Promise((resolve) => {
-      timer = setTimeout(() => resolve(fallback), PATIENCE_MS);
+      timer = setTimeout(() => resolve(fallback2), PATIENCE_MS);
     })
     // Clearing it matters: two of these run per reply, and a serverless
     // invocation is kept alive by a pending timer.
@@ -1294,13 +1302,13 @@ async function buildBriefing() {
   if (events.length > 0) {
     lines.push("In their diary over the next day:");
     for (const event of events) {
-      const when2 = event.allDay ? "all day" : new Date(event.start).toLocaleString("en-GB", {
+      const when3 = event.allDay ? "all day" : new Date(event.start).toLocaleString("en-GB", {
         weekday: "short",
         hour: "2-digit",
         minute: "2-digit"
       });
       lines.push(
-        `- ${when2}: ${event.summary}${event.location ? ` (${event.location})` : ""}`
+        `- ${when3}: ${event.summary}${event.location ? ` (${event.location})` : ""}`
       );
     }
   } else {
@@ -1322,6 +1330,468 @@ async function buildBriefing() {
   ].join("\n");
   cached3 = { text, until: Date.now() + FRESH_FOR_MS };
   return text;
+}
+
+// server/journal.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+var LIMIT = 120;
+var store5 = new Document("journal", () => []);
+async function recentDeeds(limit = 25) {
+  const all = await store5.read();
+  return all.slice(-limit).reverse();
+}
+async function noteDeed(kind, text, unprompted = false) {
+  const clean = text.trim().slice(0, 300);
+  if (!clean) return;
+  const entry = {
+    id: randomUUID2(),
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    kind,
+    text: clean,
+    ...unprompted ? { unprompted: true } : {}
+  };
+  await store5.update((current) => [...current, entry].slice(-LIMIT));
+}
+
+// server/ps5.ts
+var AUTH = "https://ca.account.sony.com/api/authz/v3/oauth";
+var PROFILE = "https://m.np.playstation.com/api/userProfile/v1/internal/users";
+var TROPHY = "https://m.np.playstation.com/api/trophy/v1/users";
+var GRAPH = "https://web.np.playstation.com/api/graphql/v1/op";
+var CLIENT_AUTH = "Basic MDk1MTUxNTktNzIzNy00MzcwLTliNDAtMzgwNmU2N2MwODkxOnVjUGprYTV0bnRCMktxc1A=";
+var CLIENT_ID = "09515159-7237-4370-9b40-3806e67c0891";
+var REDIRECT = "com.scee.psxandroid.scecompcall://redirect";
+var SCOPE = "psn:mobile.v2.core psn:clientapp";
+var session = new Document("psn", () => null);
+var PsnError = class extends Error {
+  constructor(message, needsToken = false) {
+    super(message);
+    this.needsToken = needsToken;
+  }
+};
+function psnConfigured() {
+  return Boolean(psnToken());
+}
+async function tokensFromNpsso(npsso) {
+  const query = new URLSearchParams({
+    access_type: "offline",
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT,
+    response_type: "code",
+    scope: SCOPE
+  });
+  const handshake = await fetch(`${AUTH}/authorize?${query}`, {
+    headers: { Cookie: `npsso=${npsso}` },
+    redirect: "manual"
+  });
+  const location = handshake.headers.get("location") ?? "";
+  if (!location.includes("?code=")) {
+    throw new PsnError(
+      "PlayStation would not accept that sign-in code. They expire after a couple of months \u2014 fetch a fresh one and paste it in again.",
+      true
+    );
+  }
+  const code = new URLSearchParams(location.split("redirect/")[1] ?? "").get("code");
+  if (!code) throw new PsnError("PlayStation sent back no sign-in code.", true);
+  return exchange({
+    code,
+    redirect_uri: REDIRECT,
+    grant_type: "authorization_code",
+    token_format: "jwt"
+  });
+}
+async function exchange(body) {
+  const response = await fetch(`${AUTH}/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: CLIENT_AUTH
+    },
+    body: new URLSearchParams(body).toString()
+  });
+  const data = await response.json().catch(() => ({}));
+  const accessToken2 = typeof data.access_token === "string" ? data.access_token : "";
+  if (!accessToken2) {
+    throw new PsnError(
+      `PlayStation refused the sign-in (${String(data.error_description ?? response.status)}).`,
+      true
+    );
+  }
+  const now = Date.now();
+  return {
+    accessToken: accessToken2,
+    // A minute of margin, so a token never expires mid-request.
+    expiresAt: now + (Number(data.expires_in) || 3600) * 1e3 - 6e4,
+    refreshToken: String(data.refresh_token ?? ""),
+    refreshExpiresAt: now + (Number(data.refresh_token_expires_in) || 0) * 1e3
+  };
+}
+async function token() {
+  const npsso = psnToken();
+  if (!npsso) {
+    throw new PsnError(
+      "The PlayStation is not connected. Paste an NPSSO code into her keys.",
+      true
+    );
+  }
+  const saved = await session.read();
+  const now = Date.now();
+  if (saved && saved.expiresAt > now) return saved.accessToken;
+  if (saved?.refreshToken && saved.refreshExpiresAt > now) {
+    try {
+      const refreshed = await exchange({
+        refresh_token: saved.refreshToken,
+        grant_type: "refresh_token",
+        token_format: "jwt",
+        scope: SCOPE
+      });
+      await session.write(refreshed);
+      return refreshed.accessToken;
+    } catch {
+    }
+  }
+  const fresh = await tokensFromNpsso(npsso);
+  await session.write(fresh);
+  return fresh.accessToken;
+}
+async function read(url) {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${await token()}`,
+      "Content-Type": "application/json"
+    }
+  });
+  if (response.status === 401 || response.status === 403) {
+    throw new PsnError(
+      "PlayStation stopped accepting the connection. The code needs pasting again.",
+      true
+    );
+  }
+  const data = await response.json().catch(() => null);
+  if (!data) throw new PsnError("PlayStation sent back nothing readable.");
+  return data;
+}
+async function presence() {
+  const data = await read(`${PROFILE}/me/basicPresences?type=primary`);
+  const basic = data.basicPresence ?? {};
+  const platformInfo = basic.primaryPlatformInfo ?? {};
+  const game = basic.gameTitleInfoList?.[0];
+  const online = platformInfo.onlineStatus === "online";
+  return {
+    online,
+    status: game?.titleName ? "playing" : online ? "online" : "offline",
+    playing: game?.titleName ?? null,
+    platform: game?.format ?? platformInfo.platform ?? null,
+    lastOnline: platformInfo.lastOnlineDate ?? null
+  };
+}
+async function player() {
+  const data = await read(`${PROFILE}/me/profiles`);
+  return {
+    onlineId: data.onlineId ?? "unknown",
+    level: data.trophySummary?.level ?? null,
+    plus: Boolean(data.isPsPlus)
+  };
+}
+async function trophies() {
+  const data = await read(`${TROPHY}/me/trophySummary`);
+  const earned = data.earnedTrophies ?? {};
+  return {
+    level: Number(data.trophyLevel ?? 0),
+    progress: Number(data.progress ?? 0),
+    platinum: earned.platinum ?? 0,
+    gold: earned.gold ?? 0,
+    silver: earned.silver ?? 0,
+    bronze: earned.bronze ?? 0
+  };
+}
+async function recentlyPlayed(limit = 10) {
+  const url = new URL(GRAPH);
+  url.searchParams.set("operationName", "getUserGameList");
+  url.searchParams.set(
+    "variables",
+    JSON.stringify({ limit, categories: "ps4_game,ps5_native_game" })
+  );
+  url.searchParams.set(
+    "extensions",
+    JSON.stringify({
+      persistedQuery: {
+        version: 1,
+        sha256Hash: "e780a6d8b921ef0c59ec01ea5c5255671272ca0d819edb61320914cf7a78b3ae"
+      }
+    })
+  );
+  const data = await read(url.toString());
+  const games = data.data?.gameLibraryTitlesRetrieve?.games ?? [];
+  return games.map((game) => ({
+    name: game.name ?? "an unnamed game",
+    platform: game.platform ?? null,
+    lastPlayed: game.lastPlayedDateTime ?? null
+  }));
+}
+async function playstation() {
+  const [now, who, cabinet] = await Promise.all([
+    presence(),
+    player().catch(() => null),
+    trophies().catch(() => null)
+  ]);
+  return { presence: now, player: who, trophies: cabinet };
+}
+
+// server/modes.ts
+var MODES = {
+  open: {
+    label: "Open",
+    blurb: "Normal. She speaks up when it\u2019s worth it.",
+    guidance: "No special constraints. Answer as you normally would, and raise anything genuinely worth raising."
+  },
+  work: {
+    label: "Work",
+    blurb: "Brisk and on-task. Personal matters wait.",
+    guidance: "The user is working. Be brisk and concrete \u2014 lead with the answer, cut the preamble entirely. Keep replies to a sentence or two unless asked for more. Hold anything personal or non-urgent until they are out of Work mode, and say you are holding it rather than dropping it."
+  },
+  focus: {
+    label: "Focus",
+    blurb: "Answers only. Nothing volunteered.",
+    guidance: "The user is concentrating and every word costs them. Answer exactly what was asked, in as few words as will do \u2014 often a fragment rather than a sentence. Volunteer nothing at all: no observations, no suggestions, no follow-up questions. If something is genuinely urgent, say only that it is urgent and what it is, in under ten words."
+  },
+  away: {
+    label: "Away",
+    blurb: "She takes messages and holds them.",
+    guidance: "The user is away from their desk and may be listening rather than reading. Assume everything is being spoken aloud: short sentences, no detail they cannot hold in their head. Take note of anything that arrives and tell them it is waiting rather than working through it now."
+  }
+};
+var DEFAULT = { mode: "open", since: (/* @__PURE__ */ new Date(0)).toISOString() };
+var store6 = new Document("mode", () => DEFAULT);
+function getMode() {
+  return store6.read();
+}
+function isMode(value) {
+  return typeof value === "string" && Object.hasOwn(MODES, value);
+}
+async function setMode(mode) {
+  const current = await store6.read();
+  if (current.mode === mode) return current;
+  const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
+  await store6.write(next);
+  return next;
+}
+
+// server/tools/reminders.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+var store7 = new Document("reminders", () => []);
+async function outstanding() {
+  const all = await store7.read();
+  return all.filter((reminder) => !reminder.doneAt).sort((left, right) => {
+    if (!left.due) return 1;
+    if (!right.due) return -1;
+    return left.due.localeCompare(right.due);
+  });
+}
+function describe(reminder) {
+  if (!reminder.due) return reminder.text;
+  return `${reminder.text} (${new Date(reminder.due).toLocaleString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  })})`;
+}
+var reminderTools = [
+  {
+    name: "add_reminder",
+    description: "Add something to the user\u2019s list of things to remember or do. Use this whenever they ask to be reminded of something, or mention something they need to do later.",
+    category: "calendar",
+    parameters: {
+      text: {
+        type: "string",
+        description: "What to remember, in the user\u2019s own words where possible."
+      },
+      due: {
+        type: "string",
+        description: 'When it is wanted, as a full ISO 8601 timestamp. Omit entirely if no particular time was given. Work out real dates from phrases like "tomorrow morning" using the current date you were given.'
+      }
+    },
+    required: ["text"],
+    run: async (args) => {
+      const text = String(args.text ?? "").trim();
+      if (!text) return "Nothing was given to remember.";
+      const raw = args.due ? String(args.due) : "";
+      const parsed = raw ? new Date(raw) : null;
+      const valid2 = parsed && Number.isFinite(parsed.getTime()) ? parsed : null;
+      const reminder = {
+        id: randomUUID3(),
+        text,
+        due: valid2 ? valid2.toISOString() : null,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        doneAt: null
+      };
+      await store7.update((current) => [...current, reminder]);
+      return `Noted: ${describe(reminder)}`;
+    }
+  },
+  {
+    name: "list_reminders",
+    description: "List what the user still has outstanding. Use it when they ask what is on their list, what is outstanding, or what they have forgotten.",
+    category: "research",
+    parameters: {},
+    required: [],
+    run: async () => {
+      const open = await outstanding();
+      if (open.length === 0) return "Their list is empty.";
+      return `Outstanding:
+${open.map((item) => `- ${describe(item)}`).join("\n")}`;
+    }
+  },
+  {
+    name: "complete_reminder",
+    description: "Mark something on the list as done. Match on the wording the user used; if more than one thing could be meant, ask which rather than guessing.",
+    category: "calendar",
+    parameters: {
+      text: {
+        type: "string",
+        description: "Enough of the reminder\u2019s wording to identify it."
+      }
+    },
+    required: ["text"],
+    run: async (args) => {
+      const needle = String(args.text ?? "").trim().toLowerCase();
+      if (!needle) return "Which one?";
+      const open = await outstanding();
+      const matches2 = open.filter((item) => item.text.toLowerCase().includes(needle));
+      if (matches2.length === 0) return `Nothing on the list matches "${needle}".`;
+      if (matches2.length > 1) {
+        return `More than one matches: ${matches2.map((item) => item.text).join("; ")}. Ask which one they mean.`;
+      }
+      await store7.update(
+        (current) => current.map(
+          (item) => item.id === matches2[0].id ? { ...item, doneAt: (/* @__PURE__ */ new Date()).toISOString() } : item
+        )
+      );
+      return `Marked done: ${matches2[0].text}`;
+    }
+  }
+];
+
+// server/pulse.ts
+var seen = new Document("pulse", () => ({ raised: {} }));
+var IMMINENT_MINUTES = 45;
+var FORGET_AFTER_MS = 36 * 60 * 60 * 1e3;
+function minutesUntil(iso) {
+  return Math.round((new Date(iso).getTime() - Date.now()) / 6e4);
+}
+async function gather(now = /* @__PURE__ */ new Date()) {
+  const concerns = [];
+  const overdue = await outstanding().catch(() => []);
+  for (const reminder of overdue) {
+    if (!reminder.due) continue;
+    const minutes = minutesUntil(reminder.due);
+    if (minutes > IMMINENT_MINUTES) continue;
+    concerns.push({
+      id: `reminder:${reminder.id}`,
+      kind: "reminder",
+      text: minutes < 0 ? `${reminder.text} \u2014 that was due ${Math.abs(minutes)} minutes ago` : `${reminder.text} \u2014 due in ${minutes} minutes`,
+      urgency: minutes < 15 ? "now" : "soon",
+      at: reminder.due
+    });
+  }
+  const google = await connection().catch(() => null);
+  if (google && !google.brokenReason) {
+    const [events, mail] = await Promise.all([
+      upcoming(2, 5).catch(() => []),
+      recentMail("in:inbox is:unread category:primary newer_than:1d", 5).catch(() => [])
+    ]);
+    for (const event of events) {
+      if (event.allDay) continue;
+      const minutes = minutesUntil(event.start);
+      if (minutes < 0 || minutes > IMMINENT_MINUTES) continue;
+      concerns.push({
+        id: `diary:${event.id}`,
+        kind: "diary",
+        text: `${event.summary} starts in ${minutes} minutes${event.location ? `, at ${event.location}` : ""}`,
+        urgency: minutes <= 15 ? "now" : "soon",
+        at: event.start
+      });
+    }
+    if (mail.length > 0) {
+      const senders = [...new Set(mail.map((message) => message.from.split("<")[0].trim()))];
+      concerns.push({
+        // Keyed on the newest message, so the same batch is one concern and a
+        // genuinely new arrival is a new one.
+        id: `mail:${mail[0].id}`,
+        kind: "mail",
+        text: mail.length === 1 ? `New mail from ${senders[0]}: ${mail[0].subject}` : `${mail.length} new emails, from ${senders.slice(0, 3).join(", ")}`,
+        urgency: "whenever"
+      });
+    }
+  }
+  void now;
+  return concerns;
+}
+async function unraised(concerns) {
+  const record3 = await seen.read();
+  const cutoff = Date.now() - FORGET_AFTER_MS;
+  const kept = {};
+  for (const [id, at] of Object.entries(record3.raised)) {
+    if (new Date(at).getTime() > cutoff) kept[id] = at;
+  }
+  const fresh = concerns.filter((concern) => !kept[concern.id]);
+  if (fresh.length === 0) {
+    if (Object.keys(kept).length !== Object.keys(record3.raised).length) {
+      await seen.write({ raised: kept });
+    }
+    return [];
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  for (const concern of fresh) kept[concern.id] = now;
+  await seen.write({ raised: kept });
+  return fresh;
+}
+function mayInterrupt(mode, urgency) {
+  if (mode === "away") return false;
+  if (mode === "focus") return urgency === "now";
+  if (mode === "work") return urgency !== "whenever";
+  return true;
+}
+var RANK = { now: 0, soon: 1, whenever: 2 };
+async function pulse() {
+  const fresh = await unraised(await gather());
+  if (fresh.length === 0) return { concerns: [], say: null, held: null };
+  for (const concern of fresh) {
+    await noteDeed("noticed", concern.text, true);
+  }
+  const { mode } = await getMode();
+  const sorted = [...fresh].sort((left, right) => RANK[left.urgency] - RANK[right.urgency]);
+  const speakable = sorted.filter((concern) => mayInterrupt(mode, concern.urgency));
+  if (speakable.length === 0) {
+    return {
+      concerns: sorted,
+      say: null,
+      held: mode === "away" ? "Holding this until you are back." : "Not interrupting while you are heads-down."
+    };
+  }
+  const say = await compose(speakable).catch(() => fallback(speakable));
+  await noteDeed("spoke", say, true);
+  return { concerns: sorted, say, held: null, message: await record2("grace", say, "voice") };
+}
+function fallback(concerns) {
+  return concerns.map((concern) => concern.text).join(". ") + ".";
+}
+async function compose(concerns) {
+  const said = await getProvider().complete({
+    system: 'You are Grace, a composed personal assistant, interrupting the person you work for because something wants their attention. Say it in one short spoken sentence \u2014 two at the very most, and only if there are genuinely two things. No preamble, no "just letting you know", no markdown, no lists. Plain speech, understated. Do not add anything you were not given.',
+    turns: [
+      {
+        role: "user",
+        text: concerns.map((concern) => `- ${concern.text}`).join("\n")
+      }
+    ],
+    temperature: 0.4,
+    maxOutputTokens: 120,
+    fast: true
+  });
+  return said.trim() || fallback(concerns);
 }
 
 // server/tools/google.ts
@@ -1446,99 +1916,54 @@ var googleTools = [
   }
 ];
 
-// server/tools/reminders.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-var store5 = new Document("reminders", () => []);
-async function outstanding() {
-  const all = await store5.read();
-  return all.filter((reminder) => !reminder.doneAt).sort((left, right) => {
-    if (!left.due) return 1;
-    if (!right.due) return -1;
-    return left.due.localeCompare(right.due);
-  });
+// server/tools/playstation.ts
+function when2(iso) {
+  if (!iso) return "at some point";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "at some point";
+  const minutes = Math.round((Date.now() - then) / 6e4);
+  if (minutes < 2) return "just now";
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
-function describe(reminder) {
-  if (!reminder.due) return reminder.text;
-  return `${reminder.text} (${new Date(reminder.due).toLocaleString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit"
-  })})`;
-}
-var reminderTools = [
+var playstationTools = [
   {
-    name: "add_reminder",
-    description: "Add something to the user\u2019s list of things to remember or do. Use this whenever they ask to be reminded of something, or mention something they need to do later.",
-    category: "calendar",
-    parameters: {
-      text: {
-        type: "string",
-        description: "What to remember, in the user\u2019s own words where possible."
-      },
-      due: {
-        type: "string",
-        description: 'When it is wanted, as a full ISO 8601 timestamp. Omit entirely if no particular time was given. Work out real dates from phrases like "tomorrow morning" using the current date you were given.'
-      }
-    },
-    required: ["text"],
-    run: async (args) => {
-      const text = String(args.text ?? "").trim();
-      if (!text) return "Nothing was given to remember.";
-      const raw = args.due ? String(args.due) : "";
-      const parsed = raw ? new Date(raw) : null;
-      const valid2 = parsed && Number.isFinite(parsed.getTime()) ? parsed : null;
-      const reminder = {
-        id: randomUUID2(),
-        text,
-        due: valid2 ? valid2.toISOString() : null,
-        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-        doneAt: null
-      };
-      await store5.update((current) => [...current, reminder]);
-      return `Noted: ${describe(reminder)}`;
-    }
-  },
-  {
-    name: "list_reminders",
-    description: "List what the user still has outstanding. Use it when they ask what is on their list, what is outstanding, or what they have forgotten.",
-    category: "research",
+    name: "check_playstation",
+    description: "Look at the PlayStation: whether it is on, whether the user is signed in, and what game is running right now. Use this for anything about the console, the PS5, or what they are playing. It only looks \u2014 there is no way to turn the console on or start a game from here.",
+    category: "home",
     parameters: {},
     required: [],
     run: async () => {
-      const open = await outstanding();
-      if (open.length === 0) return "Their list is empty.";
-      return `Outstanding:
-${open.map((item) => `- ${describe(item)}`).join("\n")}`;
+      try {
+        const { presence: now, player: player2, trophies: trophies2 } = await playstation();
+        const who = player2 ? `Signed in as ${player2.onlineId}` : "Signed in";
+        const state = now.playing ? `${who}, playing ${now.playing}${now.platform ? ` on ${now.platform}` : ""} right now.` : now.online ? `${who} and online, but no game is running.` : `${who}. The console is off or signed out \u2014 last seen online ${when2(now.lastOnline)}.`;
+        const cabinet = trophies2 ? ` Trophy level ${trophies2.level}, with ${trophies2.platinum} platinums.` : "";
+        return state + cabinet;
+      } catch (error) {
+        if (error instanceof PsnError) return error.message;
+        throw error;
+      }
     }
   },
   {
-    name: "complete_reminder",
-    description: "Mark something on the list as done. Match on the wording the user used; if more than one thing could be meant, ask which rather than guessing.",
-    category: "calendar",
-    parameters: {
-      text: {
-        type: "string",
-        description: "Enough of the reminder\u2019s wording to identify it."
+    name: "recent_games",
+    description: "What the user has been playing lately on PlayStation, most recent first. Use it when they ask what they have been playing, when they last played something, or how a game fits into their week.",
+    category: "home",
+    parameters: {},
+    required: [],
+    run: async () => {
+      try {
+        const games = await recentlyPlayed(8);
+        if (games.length === 0) return "Nothing has been played recently.";
+        return games.map((game) => `${game.name} \u2014 last played ${when2(game.lastPlayed)}`).join("\n");
+      } catch (error) {
+        if (error instanceof PsnError) return error.message;
+        throw error;
       }
-    },
-    required: ["text"],
-    run: async (args) => {
-      const needle = String(args.text ?? "").trim().toLowerCase();
-      if (!needle) return "Which one?";
-      const open = await outstanding();
-      const matches2 = open.filter((item) => item.text.toLowerCase().includes(needle));
-      if (matches2.length === 0) return `Nothing on the list matches "${needle}".`;
-      if (matches2.length > 1) {
-        return `More than one matches: ${matches2.map((item) => item.text).join("; ")}. Ask which one they mean.`;
-      }
-      await store5.update(
-        (current) => current.map(
-          (item) => item.id === matches2[0].id ? { ...item, doneAt: (/* @__PURE__ */ new Date()).toISOString() } : item
-        )
-      );
-      return `Marked done: ${matches2[0].text}`;
     }
   }
 ];
@@ -1571,12 +1996,33 @@ var webTools = [
 ];
 
 // server/tools/index.ts
-var TOOLS = [...webTools, ...reminderTools, ...googleTools];
+var TOOLS = [
+  ...webTools,
+  ...reminderTools,
+  ...googleTools,
+  ...playstationTools
+];
 function allTools() {
   return TOOLS;
 }
 function findTool(name) {
   return TOOLS.find((tool) => tool.name === name);
+}
+var LABELS = {
+  search_web: "Searched the web",
+  add_reminder: "Added to the list",
+  list_reminders: "Checked the list",
+  complete_reminder: "Marked something done",
+  check_mail: "Checked the mail",
+  read_mail: "Read an email",
+  draft_reply: "Wrote a draft",
+  check_diary: "Checked the diary",
+  add_to_diary: "Added to the diary",
+  check_playstation: "Looked at the PlayStation",
+  recent_games: "Checked recent games"
+};
+function label(name) {
+  return LABELS[name] ?? name.replace(/_/g, " ");
 }
 async function runTool(call) {
   const tool = findTool(call.name);
@@ -1609,6 +2055,8 @@ async function runTool(call) {
   }
   try {
     const result = await tool.run(call.args);
+    await noteDeed("acted", `${label(tool.name)} \u2014 ${result}`).catch(() => {
+    });
     return { name: tool.name, ok: true, result, summary: result };
   } catch (error) {
     const detail = error.message;
@@ -1646,45 +2094,6 @@ function declarations() {
       }
     };
   });
-}
-
-// server/modes.ts
-var MODES = {
-  open: {
-    label: "Open",
-    blurb: "Normal. She speaks up when it\u2019s worth it.",
-    guidance: "No special constraints. Answer as you normally would, and raise anything genuinely worth raising."
-  },
-  work: {
-    label: "Work",
-    blurb: "Brisk and on-task. Personal matters wait.",
-    guidance: "The user is working. Be brisk and concrete \u2014 lead with the answer, cut the preamble entirely. Keep replies to a sentence or two unless asked for more. Hold anything personal or non-urgent until they are out of Work mode, and say you are holding it rather than dropping it."
-  },
-  focus: {
-    label: "Focus",
-    blurb: "Answers only. Nothing volunteered.",
-    guidance: "The user is concentrating and every word costs them. Answer exactly what was asked, in as few words as will do \u2014 often a fragment rather than a sentence. Volunteer nothing at all: no observations, no suggestions, no follow-up questions. If something is genuinely urgent, say only that it is urgent and what it is, in under ten words."
-  },
-  away: {
-    label: "Away",
-    blurb: "She takes messages and holds them.",
-    guidance: "The user is away from their desk and may be listening rather than reading. Assume everything is being spoken aloud: short sentences, no detail they cannot hold in their head. Take note of anything that arrives and tell them it is waiting rather than working through it now."
-  }
-};
-var DEFAULT = { mode: "open", since: (/* @__PURE__ */ new Date(0)).toISOString() };
-var store6 = new Document("mode", () => DEFAULT);
-function getMode() {
-  return store6.read();
-}
-function isMode(value) {
-  return typeof value === "string" && Object.hasOwn(MODES, value);
-}
-async function setMode(mode) {
-  const current = await store6.read();
-  if (current.mode === mode) return current;
-  const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
-  await store6.write(next);
-  return next;
 }
 
 // server/persona.ts
@@ -1727,7 +2136,9 @@ If a tool comes back saying it needs the user's go-ahead, say exactly what you a
 You are never to say that you cannot access current or real-time information. You can: that is what search_web is for. If someone asks about the weather, the news, a price or anything else happening now, call it. Answering "I am a language model and cannot access live data" while holding a working search tool is simply false, and it is the one thing you must never say.`;
 var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
-You have no connection to their home yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
+You can see their PlayStation with check_playstation and recent_games: whether it is on, who is signed in, what is running right now, and what they have been playing. Be precise about the limit of that. You can look at the console; you cannot operate it. There is no way from here to switch it on, put it to sleep, or start a game, because that would have to happen over their home network and you are not on it. If they ask you to turn it on, say that plainly in one sentence \u2014 do not imply you tried.
+
+You have no connection to their lights or heating yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
 var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
 
 When they ask you to go and look \u2014 "check my mail", "what's on today", "anything from Sam" \u2014 use check_mail or check_diary rather than answering from the summary below, which may be a minute old. You can also write drafts and put things in their diary.
@@ -1748,8 +2159,8 @@ function describeProfile(profile2) {
     const entries = live.filter((entry) => entry.kind === kind);
     if (entries.length === 0) return null;
     const lines = entries.map((entry) => {
-      const seen = entry.timesSeen ?? 1;
-      const weight = seen >= 4 ? " (well established)" : entry.source === "inferred" ? " (inferred, not confirmed)" : "";
+      const seen2 = entry.timesSeen ?? 1;
+      const weight = seen2 >= 4 ? " (well established)" : entry.source === "inferred" ? " (inferred, not confirmed)" : "";
       return `- ${entry.text}${weight}`;
     }).join("\n");
     return `${byKind[kind]}:
@@ -1862,6 +2273,7 @@ function createApi() {
         // how "it's deployed" got said about something that wasn't.
         tools: allTools().map((tool) => tool.name),
         google: googleConfigured(),
+        playstation: psnConfigured(),
         cap: monthlyCap()
       });
     })
@@ -1940,7 +2352,8 @@ function createApi() {
         "govee",
         "googleClientId",
         "googleClientSecret",
-        "ownerEmail"
+        "ownerEmail",
+        "psn"
       ];
       const name = String(req.body?.name ?? "");
       if (!allowed.includes(name)) {
@@ -2173,6 +2586,64 @@ function createApi() {
       res.status(failure.needsReconnect ? 409 : 502).json({ error: failure.message });
     }
   }));
+  api.get(
+    "/ps5",
+    guard(async (_req, res) => {
+      if (!psnConfigured()) {
+        res.json({ configured: false });
+        return;
+      }
+      try {
+        const [state, games] = await Promise.all([
+          playstation(),
+          recentlyPlayed(5).catch(() => [])
+        ]);
+        res.json({ configured: true, ...state, recent: games });
+      } catch (error) {
+        const failure = error;
+        res.status(failure.needsToken ? 409 : 502).json({
+          configured: true,
+          error: failure.message
+        });
+      }
+    })
+  );
+  api.post(
+    "/pulse",
+    guard(async (_req, res) => {
+      if (!isConfigured()) {
+        res.json({ concerns: [], say: null, held: null });
+        return;
+      }
+      res.json(await pulse());
+    })
+  );
+  api.get(
+    "/day",
+    guard(async (_req, res) => {
+      const google = await connection().catch(() => null);
+      const connected = Boolean(google && !google.brokenReason);
+      const [events, mail, list, deeds, console_] = await Promise.all([
+        connected ? upcoming(24, 8).catch(() => []) : Promise.resolve([]),
+        connected ? recentMail("in:inbox is:unread category:primary newer_than:2d", 6).catch(
+          () => []
+        ) : Promise.resolve([]),
+        outstanding().catch(() => []),
+        recentDeeds(20).catch(() => []),
+        psnConfigured() ? playstation().catch(() => null) : Promise.resolve(null)
+      ]);
+      res.json({
+        google: connected,
+        events,
+        mail,
+        // Only what is actually wanted soon. A list of everything outstanding
+        // is a list; the point of this panel is the shortlist.
+        reminders: list.slice(0, 8),
+        deeds,
+        playstation: console_?.presence ?? null
+      });
+    })
+  );
   api.post(
     "/web-check",
     guard(async (_req, res) => {

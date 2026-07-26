@@ -1,5 +1,7 @@
 import {requiresConfirmation} from '../actions';
+import {noteDeed} from '../journal';
 import {googleTools} from './google';
+import {playstationTools} from './playstation';
 import {reminderTools} from './reminders';
 import {webTools} from './web';
 import type {Tool, ToolCall, ToolOutcome} from './types';
@@ -13,7 +15,12 @@ import type {Tool, ToolCall, ToolOutcome} from './types';
  * it deletes: her instruction is that things are marked, filed, or archived,
  * never destroyed, because deletion is the one action that cannot be undone.
  */
-const TOOLS: Tool[] = [...webTools, ...reminderTools, ...googleTools];
+const TOOLS: Tool[] = [
+  ...webTools,
+  ...reminderTools,
+  ...googleTools,
+  ...playstationTools,
+];
 
 export function allTools(): Tool[] {
   return TOOLS;
@@ -49,6 +56,25 @@ export function auditTools(): string[] {
   }
 
   return problems;
+}
+
+/** Tool names read like function calls; the journal is read by a person. */
+const LABELS: Record<string, string> = {
+  search_web: 'Searched the web',
+  add_reminder: 'Added to the list',
+  list_reminders: 'Checked the list',
+  complete_reminder: 'Marked something done',
+  check_mail: 'Checked the mail',
+  read_mail: 'Read an email',
+  draft_reply: 'Wrote a draft',
+  check_diary: 'Checked the diary',
+  add_to_diary: 'Added to the diary',
+  check_playstation: 'Looked at the PlayStation',
+  recent_games: 'Checked recent games',
+};
+
+function label(name: string): string {
+  return LABELS[name] ?? name.replace(/_/g, ' ');
 }
 
 /**
@@ -95,6 +121,10 @@ export async function runTool(call: ToolCall): Promise<ToolOutcome> {
 
   try {
     const result = await tool.run(call.args);
+    // Everything she does goes on the record. An assistant who acts for you
+    // and leaves no trace is asking to be taken on trust, and she shouldn't
+    // have to be: the interface shows this list.
+    await noteDeed('acted', `${label(tool.name)} — ${result}`).catch(() => {});
     return {name: tool.name, ok: true, result, summary: result};
   } catch (error) {
     const detail = (error as Error).message;

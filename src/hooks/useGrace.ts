@@ -10,6 +10,7 @@ import type {
 } from '../../shared/types.ts';
 import * as api from '../lib/api.ts';
 import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
+import {usePulse} from './usePulse.ts';
 import {useAmbient} from '../voice/useAmbient.ts';
 import {useRecorder} from '../voice/useRecorder.ts';
 import {useSpeech} from '../voice/useSpeech.ts';
@@ -190,6 +191,31 @@ export function useGrace() {
     onCaptured: (audio) => void handleRecordingRef.current(audio),
   });
 
+  /**
+   * Whether someone is mid-sentence in the room.
+   *
+   * A ref rather than the value itself: the pulse is a long-lived loop, and
+   * threading a state value through it would rebuild the timer on every word
+   * anyone says near the microphone.
+   */
+  const ambientAwakeRef = useRef(false);
+
+  // Her own initiative. Only once she is signed in and actually working, and
+  // never over the top of anything she or the user is in the middle of.
+  const pulse = usePulse({
+    enabled: (session === 'ok' || session === 'open') && Boolean(state?.ready),
+    busy:
+      busy ||
+      speech.speaking ||
+      recorder.state !== 'idle' ||
+      transcribing ||
+      ambientAwakeRef.current,
+    onSpeak: (text) => {
+      if (voiceOn) speech.say(text);
+    },
+    onSaid: (message) => setMessages((current) => [...current, message]),
+  });
+
   const ambient = useAmbient({
     enabled: micOn,
     deviceId,
@@ -198,6 +224,8 @@ export function useGrace() {
     paused: busy || speech.speaking || recorder.state !== 'idle' || transcribing,
     onRequest: handleRequest,
   });
+
+  ambientAwakeRef.current = ambient.awake || ambient.state === 'hearing';
 
   // Only worth holding the machine awake while she is actually listening.
   useWakeLock(micOn);
@@ -313,6 +341,7 @@ export function useGrace() {
     voiceOn,
     ambient,
     recorder,
+    pulse,
     transcribing,
     misheard,
     deviceId,

@@ -100,6 +100,9 @@ export default function App() {
       voiceSource={grace.speech.source}
       voiceOn={grace.voiceOn}
       google={grace.google}
+      concerns={grace.pulse.concerns}
+      held={grace.pulse.held}
+      lastLookedAt={grace.pulse.lastLookedAt}
       onSetAttention={(next) => void grace.setAttention(next)}
       onTalk={talk}
       onOpenSoundCheck={() => setSoundCheckOpen(true)}

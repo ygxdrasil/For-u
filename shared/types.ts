@@ -119,6 +119,58 @@ export interface GraceState {
   spend: {dollars: number; cap: number; requests: number};
 }
 
+/** Something Grace noticed that may want the user. */
+export interface Concern {
+  id: string;
+  kind: 'diary' | 'mail' | 'reminder';
+  text: string;
+  urgency: 'now' | 'soon' | 'whenever';
+  at?: string;
+}
+
+export interface PulseResult {
+  concerns: Concern[];
+  /** What she would say aloud, or null if she is holding it. */
+  say: string | null;
+  held: string | null;
+  /** What she said, recorded in the conversation so the next reply follows on. */
+  message?: Message;
+}
+
+/** One thing she did, for the record. */
+export interface JournalEntry {
+  id: string;
+  at: string;
+  kind: 'acted' | 'noticed' | 'learned' | 'spoke';
+  text: string;
+  unprompted?: boolean;
+}
+
+export interface PlayStationPresence {
+  online: boolean;
+  status: string;
+  playing: string | null;
+  platform: string | null;
+  lastOnline: string | null;
+}
+
+/** Everything the dashboard's three panels are built from. */
+export interface DayView {
+  google: boolean;
+  events: {
+    id: string;
+    summary: string;
+    location: string;
+    start: string;
+    end: string;
+    allDay: boolean;
+  }[];
+  mail: {id: string; from: string; subject: string; date: string}[];
+  reminders: {id: string; text: string; due: string | null}[];
+  deeds: JournalEntry[];
+  playstation: PlayStationPresence | null;
+}
+
 /** Server-sent events streamed from POST /api/chat. */
 export type ChatEvent =
   | {type: 'delta'; text: string}

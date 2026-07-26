@@ -34,6 +34,9 @@ import {
   getSummary,
   recentTurns,
 } from '../server/memory';
+import {recentDeeds} from '../server/journal';
+import {setMode} from '../server/modes';
+import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
 import {allReminders, outstanding} from '../server/tools/reminders';
@@ -571,6 +574,77 @@ try {
   // there is nothing to be talked past.
   assert.deepEqual(auditTools(), [], 'no tool may send, spend, or destroy');
   ok('no tool exists that could send, spend, or destroy anything');
+
+  // ---- everything she does is on the record ------------------------------
+  const deeds = await recentDeeds(50);
+  assert.ok(
+    deeds.some((deed) => /added to the list/i.test(deed.text)),
+    'adding a reminder should appear in the journal',
+  );
+  assert.equal(deeds[0].at >= deeds[deeds.length - 1].at, true, 'newest first');
+  ok('every action she takes lands in a record the user can read');
+
+  // ---- the PlayStation, and the limit of it ------------------------------
+  const console_ = allTools().find((tool) => tool.name === 'check_playstation');
+  assert.ok(console_, 'she should be able to look at the console');
+  assert.equal(console_.category, 'home');
+  // Read-only is not a matter of intent here: there is no write to be had.
+  // What matters is that she says so rather than implying she pressed
+  // something, and that a missing credential is an explanation, not a crash.
+  const looked = await runTool({name: 'check_playstation', args: {}});
+  assert.ok(looked.ok, 'a missing PlayStation token must not throw');
+  assert.match(
+    looked.result,
+    /not connected|paste/i,
+    'with no token she must say it is not connected',
+  );
+  assert.ok(
+    !allTools().some((tool) => /turn on|power|launch|start_game/i.test(tool.name)),
+    'nothing may claim to operate the console — she cannot reach it',
+  );
+  ok('she can see the PlayStation and says plainly that she cannot operate it');
+
+  // ---- her own initiative ------------------------------------------------
+  // Something due in the past, which is the plainest thing that wants a person.
+  await runTool({
+    name: 'add_reminder',
+    args: {text: 'ring the landlord', due: new Date(Date.now() - 60_000).toISOString()},
+  });
+
+  const first = await pulse();
+  assert.ok(
+    first.concerns.some((concern) => /landlord/.test(concern.text)),
+    'an overdue reminder should be noticed',
+  );
+  assert.ok(first.say, 'and she should have something to say about it');
+  assert.ok(
+    (await getMessages()).some((message) => message.text === first.say),
+    'what she says unprompted must be in the conversation, or the next reply is lost',
+  );
+  ok('she notices what is overdue and says so without being asked');
+
+  const second = await pulse();
+  assert.deepEqual(
+    second.concerns,
+    [],
+    'the same concern must never be raised twice — that is what makes it bearable',
+  );
+  assert.equal(second.say, null, 'and nothing is spent looking at nothing');
+  ok('nothing is raised twice, and an uneventful look costs nothing');
+
+  // Focus mode exists to be obeyed. An assistant who honours it except when
+  // she has something interesting is one nobody leaves running.
+  await setMode('focus');
+  await runTool({
+    name: 'add_reminder',
+    args: {text: 'water the plants', due: new Date(Date.now() + 30 * 60_000).toISOString()},
+  });
+  const quiet = await pulse();
+  assert.ok(quiet.concerns.length > 0, 'she still notices while you are heads-down');
+  assert.equal(quiet.say, null, 'she simply does not interrupt with it');
+  assert.ok(quiet.held, 'and says why she is holding it');
+  await setMode('open');
+  ok('in Focus she notices but holds her tongue');
 
   // She can act on mail and diary now, and the shape of that matters: a tool
   // that drafts is fine, a tool that sends is not, and the difference must be
