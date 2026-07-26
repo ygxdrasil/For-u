@@ -35,6 +35,7 @@ import {recentDeeds} from './journal';
 import {getProvider} from './llm/index';
 import {playstation, psnConfigured, PsnError, recentlyPlayed} from './ps5';
 import {pulse} from './pulse';
+import {devices, notify, publicKey, subscribe} from './push';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {getMode, isMode, setMode} from './modes';
@@ -587,6 +588,36 @@ export function createApi(): Express {
           error: failure.message,
         });
       }
+    }),
+  );
+
+  // ---- reaching the phone ------------------------------------------------
+
+  api.get(
+    '/push-key',
+    guard(async (_req, res) => {
+      res.json({key: await publicKey(), devices: await devices()});
+    }),
+  );
+
+  api.post(
+    '/push-subscribe',
+    guard(async (req, res) => {
+      const result = await subscribe(req.body?.subscription);
+      if (!result.ok) {
+        res.status(400).json(result);
+        return;
+      }
+      res.json({ok: true, devices: await devices()});
+    }),
+  );
+
+  /** Proves the whole chain, which is the only way anyone trusts it. */
+  api.post(
+    '/push-test',
+    guard(async (_req, res) => {
+      const sent = await notify('Grace', 'That reached you. Everything is working.');
+      res.json({sent});
     }),
   );
 

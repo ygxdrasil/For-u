@@ -6,6 +6,7 @@ import {connection} from './google/oauth';
 import {noteDeed} from './journal';
 import {getProvider} from './llm/index';
 import {getMode} from './modes';
+import {notify} from './push';
 import {outstanding} from './tools/reminders';
 import {Document} from './store/index';
 
@@ -199,6 +200,16 @@ export async function pulse(): Promise<PulseResult> {
   const {mode} = await getMode();
   const sorted = [...fresh].sort((left, right) => RANK[left.urgency] - RANK[right.urgency]);
   const speakable = sorted.filter((concern) => mayInterrupt(mode, concern.urgency));
+
+  // The phone is the other half of this. Speaking aloud reaches someone in the
+  // room; a notification reaches them when they are not, which is exactly the
+  // case where holding her tongue would otherwise mean saying nothing at all.
+  const worthABuzz = sorted.filter((concern) => concern.urgency !== 'whenever');
+  if (worthABuzz.length > 0) {
+    await notify('Grace', worthABuzz.map((concern) => concern.text).join(' · ')).catch(
+      () => 0,
+    );
+  }
 
   if (speakable.length === 0) {
     return {

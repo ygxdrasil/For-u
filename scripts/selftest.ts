@@ -604,6 +604,48 @@ try {
   );
   ok('she can see the PlayStation and says plainly that she cannot operate it');
 
+  // ---- reaching the phone ------------------------------------------------
+  const keyed = (await (await call('/push-key')).json()) as {
+    key: string;
+    devices: number;
+  };
+  assert.ok(keyed.key.length > 20, 'a signing key should be generated on first ask');
+  assert.equal(keyed.devices, 0, 'and no device is subscribed yet');
+  assert.equal(
+    ((await (await call('/push-key')).json()) as {key: string}).key,
+    keyed.key,
+    'the key must be stable — a new one on every request unsubscribes every phone',
+  );
+
+  const rubbish = await call('/push-subscribe', {
+    method: 'POST',
+    body: JSON.stringify({subscription: {endpoint: 'https://example.test/x'}}),
+  });
+  assert.equal(rubbish.status, 400, 'a subscription with no keys must be refused');
+
+  const device = {
+    endpoint: 'https://push.example.test/device-one',
+    keys: {p256dh: 'BJxxxxx', auth: 'aaaa'},
+  };
+  const subscribed = (await (
+    await call('/push-subscribe', {
+      method: 'POST',
+      body: JSON.stringify({subscription: device}),
+    })
+  ).json()) as {devices: number};
+  assert.equal(subscribed.devices, 1);
+
+  // Browsers rotate endpoints and re-subscribe constantly. Piling them up is
+  // how one phone ends up buzzing six times for one reminder.
+  const again = (await (
+    await call('/push-subscribe', {
+      method: 'POST',
+      body: JSON.stringify({subscription: device}),
+    })
+  ).json()) as {devices: number};
+  assert.equal(again.devices, 1, 're-subscribing the same device must not duplicate it');
+  ok('a phone can be subscribed once, and re-subscribing does not double it');
+
   // ---- her own initiative ------------------------------------------------
   // Something due in the past, which is the plainest thing that wants a person.
   await runTool({

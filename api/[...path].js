@@ -449,40 +449,40 @@ function tail(value) {
   return value.length <= 4 ? "\u2022\u2022\u2022\u2022" : `\u2022\u2022\u2022\u2022${value.slice(-4)}`;
 }
 async function keyStatus() {
-  const keys2 = await loadKeys();
+  const keys3 = await loadKeys();
   const google = googleClient();
   return {
     googleClientId: {
       set: Boolean(google.id),
-      pasted: Boolean(keys2.googleClientId),
-      hint: tail(keys2.googleClientId) ?? (google.id ? "from the environment" : null)
+      pasted: Boolean(keys3.googleClientId),
+      hint: tail(keys3.googleClientId) ?? (google.id ? "from the environment" : null)
     },
     googleClientSecret: {
       set: Boolean(google.secret),
-      pasted: Boolean(keys2.googleClientSecret),
-      hint: tail(keys2.googleClientSecret) ?? (google.secret ? "from the environment" : null)
+      pasted: Boolean(keys3.googleClientSecret),
+      hint: tail(keys3.googleClientSecret) ?? (google.secret ? "from the environment" : null)
     },
     ownerEmail: {
       set: Boolean(google.owner),
-      pasted: Boolean(keys2.ownerEmail),
+      pasted: Boolean(keys3.ownerEmail),
       // Not a secret, so it is worth showing in full — it is the thing most
       // likely to be typed wrong.
       hint: google.owner || null
     },
     gemini: {
-      set: Boolean(keys2.gemini || config.apiKey),
-      pasted: Boolean(keys2.gemini),
-      hint: tail(keys2.gemini) ?? (config.apiKey ? "from the environment" : null)
+      set: Boolean(keys3.gemini || config.apiKey),
+      pasted: Boolean(keys3.gemini),
+      hint: tail(keys3.gemini) ?? (config.apiKey ? "from the environment" : null)
     },
     govee: {
-      set: Boolean(keys2.govee),
-      pasted: Boolean(keys2.govee),
-      hint: tail(keys2.govee)
+      set: Boolean(keys3.govee),
+      pasted: Boolean(keys3.govee),
+      hint: tail(keys3.govee)
     },
     psn: {
       set: Boolean(psnToken()),
-      pasted: Boolean(keys2.psn),
-      hint: tail(keys2.psn) ?? (process.env.PSN_NPSSO ? "from the environment" : null)
+      pasted: Boolean(keys3.psn),
+      hint: tail(keys3.psn) ?? (process.env.PSN_NPSSO ? "from the environment" : null)
     }
   };
 }
@@ -1577,6 +1577,77 @@ async function setMode(mode) {
   return next;
 }
 
+// server/push.ts
+import webpush from "web-push";
+var keyStore = new Document("push-keys", () => null);
+var subscriptions = new Document("push-subs", () => []);
+var CONTACT = "mailto:grace@localhost";
+async function keys2() {
+  const saved = await keyStore.read();
+  if (saved) return saved;
+  const fresh = webpush.generateVAPIDKeys();
+  await keyStore.write(fresh);
+  return fresh;
+}
+async function publicKey() {
+  return (await keys2()).publicKey;
+}
+async function subscribe(raw) {
+  const candidate = raw;
+  const endpoint = candidate?.endpoint;
+  const p256dh = candidate?.keys?.p256dh;
+  const auth = candidate?.keys?.auth;
+  if (typeof endpoint !== "string" || !p256dh || !auth) {
+    return { ok: false, error: "that is not a usable subscription" };
+  }
+  await subscriptions.update((current) => {
+    const others = current.filter((entry) => entry.endpoint !== endpoint);
+    return [
+      ...others,
+      { endpoint, keys: { p256dh, auth }, addedAt: (/* @__PURE__ */ new Date()).toISOString() }
+    ];
+  });
+  return { ok: true };
+}
+async function devices() {
+  return (await subscriptions.read()).filter((entry) => !entry.goneAt).length;
+}
+async function notify(title, body) {
+  const all = await subscriptions.read();
+  const live = all.filter((entry) => !entry.goneAt);
+  if (live.length === 0) return 0;
+  const { publicKey: pub, privateKey } = await keys2();
+  webpush.setVapidDetails(CONTACT, pub, privateKey);
+  const payload = JSON.stringify({ title, body });
+  const gone = [];
+  let sent = 0;
+  await Promise.all(
+    live.map(async (entry) => {
+      try {
+        await webpush.sendNotification(
+          { endpoint: entry.endpoint, keys: entry.keys },
+          payload,
+          { TTL: 900 }
+        );
+        sent += 1;
+      } catch (error) {
+        const status = error.statusCode;
+        if (status === 404 || status === 410) gone.push(entry.endpoint);
+        else console.error("[grace] push failed:", error.message);
+      }
+    })
+  );
+  if (gone.length > 0) {
+    const at = (/* @__PURE__ */ new Date()).toISOString();
+    await subscriptions.update(
+      (current) => current.map(
+        (entry) => gone.includes(entry.endpoint) ? { ...entry, goneAt: at } : entry
+      )
+    );
+  }
+  return sent;
+}
+
 // server/tools/reminders.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
 var store7 = new Document("reminders", () => []);
@@ -1764,6 +1835,12 @@ async function pulse() {
   const { mode } = await getMode();
   const sorted = [...fresh].sort((left, right) => RANK[left.urgency] - RANK[right.urgency]);
   const speakable = sorted.filter((concern) => mayInterrupt(mode, concern.urgency));
+  const worthABuzz = sorted.filter((concern) => concern.urgency !== "whenever");
+  if (worthABuzz.length > 0) {
+    await notify("Grace", worthABuzz.map((concern) => concern.text).join(" \xB7 ")).catch(
+      () => 0
+    );
+  }
   if (speakable.length === 0) {
     return {
       concerns: sorted,
@@ -2071,8 +2148,8 @@ async function runTool(call) {
 }
 function declarations() {
   return TOOLS.map((tool) => {
-    const keys2 = Object.keys(tool.parameters);
-    if (keys2.length === 0) {
+    const keys3 = Object.keys(tool.parameters);
+    if (keys3.length === 0) {
       return { name: tool.name, description: tool.description };
     }
     return {
@@ -2606,6 +2683,30 @@ function createApi() {
           error: failure.message
         });
       }
+    })
+  );
+  api.get(
+    "/push-key",
+    guard(async (_req, res) => {
+      res.json({ key: await publicKey(), devices: await devices() });
+    })
+  );
+  api.post(
+    "/push-subscribe",
+    guard(async (req, res) => {
+      const result = await subscribe(req.body?.subscription);
+      if (!result.ok) {
+        res.status(400).json(result);
+        return;
+      }
+      res.json({ ok: true, devices: await devices() });
+    })
+  );
+  api.post(
+    "/push-test",
+    guard(async (_req, res) => {
+      const sent = await notify("Grace", "That reached you. Everything is working.");
+      res.json({ sent });
     })
   );
   api.post(
