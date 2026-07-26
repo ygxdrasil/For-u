@@ -154,3 +154,89 @@
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Signs of life.
+
+   Everything below is either driven by real state or slow enough to read as
+   atmosphere rather than motion. Nothing here loops fast enough to pull the
+   eye — an interface that fidgets is harder to look at, not more alive — and
+   all of it stands down for anyone who has asked for less movement.
+   --------------------------------------------------------------------------- */
+
+/* A slow band of light crossing the panel, as though something were thinking. */
+@keyframes sheen {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+
+.sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgb(125 211 252 / 0.07) 48%,
+    transparent 72%
+  );
+  animation: sheen 7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* A number that has just changed, catching the light for a moment. */
+@keyframes settle {
+  0% { opacity: 0; transform: translateY(0.35rem); filter: blur(2px); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+
+.settle {
+  animation: settle 0.45s ease-out both;
+}
+
+/* The seconds, ticking under the clock. */
+@keyframes sweep {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+.sweep {
+  transform-origin: left;
+  animation: sweep 60s linear infinite;
+}
+
+/* Something she has just noticed, arriving rather than appearing. */
+@keyframes arrive {
+  0% { opacity: 0; transform: translateX(-0.5rem); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: none; }
+}
+
+.arrive {
+  animation: arrive 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* A quiet, slow glow behind whatever currently matters most. */
+@keyframes attend {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(125 211 252 / 0.14); }
+  50% { box-shadow: 0 0 1.5rem 0 rgb(125 211 252 / 0.05); }
+}
+
+.attend {
+  animation: attend 5.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheen::after,
+  .settle,
+  .sweep,
+  .arrive,
+  .attend {
+    animation: none;
+  }
+}

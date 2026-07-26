@@ -281,11 +281,18 @@ export class GeminiProvider implements LlmProvider {
     // Conversation should feel immediate; deliberation costs a beat of silence
     // that is far more noticeable when the reply is spoken aloud.
     //
-    // But never with a tool attached. Deciding to search *is* deliberation, so
-    // zeroing the budget leaves the tool present and unused: she answers from
-    // memory and then says, quite correctly, that she cannot reach the web.
-    if (request.fast && !config.tools) {
-      config.thinkingConfig = {thinkingBudget: 0};
+    // Zero is only safe with no tool attached. Deciding to search *is*
+    // deliberation, so zeroing the budget leaves the tool present and unused:
+    // she answers from memory and then says, quite correctly, that she cannot
+    // reach the web. But the default is dynamic, which on a plain "what's on
+    // today" spends thousands of tokens working out that the answer is the
+    // diary — seconds of silence for a decision that was never in doubt.
+    //
+    // A small budget is the middle: enough to pick a tool, not enough to
+    // ruminate. It is the single largest thing between her and answering
+    // quickly, now that she always has tools in hand.
+    if (request.fast) {
+      config.thinkingConfig = {thinkingBudget: config.tools ? 256 : 0};
     }
 
     return {

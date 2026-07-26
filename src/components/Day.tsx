@@ -72,9 +72,9 @@ function Row({
 }) {
   return (
     <li
-      className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed ${
+      className={`arrive flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed ${
         tone === 'urgent'
-          ? 'border-ember/30 bg-ember/10 text-ember/90'
+          ? 'attend border-ember/30 bg-ember/10 text-ember/90'
           : 'border-edge/60 bg-surface/30 text-slate-300'
       }`}>
       <span className="mt-0.5 shrink-0 text-mist/50">{icon}</span>

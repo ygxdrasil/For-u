@@ -32,6 +32,7 @@ import {
   redirectUri,
   type GoogleError,
 } from './google/oauth';
+import {greet} from './greeting';
 import {recentDeeds} from './journal';
 import {getProvider} from './llm/index';
 import {playstation, psnConfigured, PsnError, recentlyPlayed} from './ps5';
@@ -53,6 +54,7 @@ import {
   setAddressAs,
 } from './memory';
 import {buildSystemPrompt} from './persona';
+import {learnWritingStyle, styleNote} from './style';
 import {getBackend} from './store/index';
 
 /**
@@ -86,7 +88,8 @@ async function listeningContext(): Promise<string> {
   const [profile, turns] = await Promise.all([getProfile(), recentTurns()]);
 
   const known = profile.entries
-    .slice(-25)
+    .filter((entry) => !entry.supersededAt)
+    .slice(-40)
     .map((entry) => entry.text)
     .join('; ');
 
@@ -339,9 +342,12 @@ export function createApi(): Express {
       const controller = new AbortController();
       res.on('close', () => controller.abort());
 
-      await record('user', text, via);
-
-      const [profile, summary, policies, turns] = await Promise.all([
+      // Everything the prompt needs, at once. Writing the user's turn used to
+      // happen first and alone, which put a round trip to the store in front
+      // of every single reply for no reason — the turn being recorded is not
+      // something the prompt builder waits on, since the text is right here.
+      const [, profile, summary, policies, turns] = await Promise.all([
+        record('user', text, via),
         getProfile(),
         getSummary(),
         getPolicies(),
@@ -356,7 +362,11 @@ export function createApi(): Express {
         now: new Date(),
         mode: (await getMode()).mode,
         briefing: await buildBriefing().catch(() => null),
+        style: await styleNote().catch(() => null),
       });
+
+      // The turn just recorded is not in `turns`, which was read alongside it.
+      turns.push({role: 'user', text});
 
       let reply = '';
       let grounded = false;
@@ -466,6 +476,11 @@ export function createApi(): Express {
 
       // If this times out the condition persists, so the next reflect retries.
       const compacted = await compactIfNeeded();
+
+      // Reading the sent folder to see how they write belongs here, behind the
+      // reply, and it no-ops until the description is a week old.
+      learnWritingStyle().catch(() => {});
+
       res.json({learned, compacted});
     }),
   );
@@ -677,6 +692,41 @@ export function createApi(): Express {
     guard(async (_req, res) => {
       const sent = await notify('Grace', 'That reached you. Everything is working.');
       res.json({sent});
+    }),
+  );
+
+  /**
+   * What she says when you walk in, at most once every few hours.
+   *
+   * Costs nothing on an ordinary reopen — the ration is checked before any
+   * model is reached for.
+   */
+  api.post(
+    '/greeting',
+    guard(async (_req, res) => {
+      if (!isConfigured()) {
+        res.json({say: null});
+        return;
+      }
+
+      res.json(
+        await greet(async (context) =>
+          getProvider().complete({
+            system:
+              'You are Grace, a composed personal assistant. The person you ' +
+              'work for has just opened you. Greet them in one short sentence ' +
+              'and, in the same breath, tell them the single most useful thing ' +
+              'from what follows — the next thing in their diary, or what is ' +
+              'overdue. If there is genuinely nothing, say only that the day ' +
+              'looks clear. No lists, no markdown, no preamble, never more ' +
+              'than two sentences.',
+            turns: [{role: 'user', text: context}],
+            temperature: 0.5,
+            maxOutputTokens: 150,
+            fast: true,
+          }),
+        ),
+      );
     }),
   );
 

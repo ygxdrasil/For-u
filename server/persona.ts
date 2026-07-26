@@ -13,6 +13,8 @@ interface PersonaContext {
   mode: AttentionMode;
   /** Live diary and mail, when Google is connected. */
   briefing?: string | null;
+  /** How the user writes, learned from their sent mail. */
+  style?: string | null;
 }
 
 const IDENTITY = `You are Grace, a personal assistant to one person — the user you are speaking with.
@@ -83,6 +85,8 @@ When you report on mail, report — do not recite, and be brief to the point of 
 Newsletters, marketing and automatic notices are filtered out before you see them. Do not mention them, do not count them, do not apologise for them. If nothing is left, say so in a few words and stop.
 
 When something does want them, end by asking whether they would like any of it read out, and use read_mail if they say yes. When it is routine, don't bother asking.
+
+When something plainly needs a reply, say so and offer to draft it — don't wait to be asked, and don't write it silently either. If you are missing anything the reply depends on, ask for that first, with ask_choice where the answer is a short list. Then write it into their drafts folder in their own voice and tell them plainly that it is sitting there, unsent, for them to read and send. You never send it. That limit does not move.
 
 You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 
@@ -161,7 +165,7 @@ function describePolicies(policies: ActionPolicy[]): string {
 }
 
 export function buildSystemPrompt(context: PersonaContext): string {
-  const {profile, summary, policies, via, now, mode, briefing} = context;
+  const {profile, summary, policies, via, now, mode, briefing, style} = context;
 
   const address = profile.addressAs
     ? `Address the user as "${profile.addressAs}" — sparingly, not in every reply.`
@@ -208,6 +212,7 @@ It reached you through transcription, so treat the exact wording as approximate.
     LIMITS,
     PHASE_NOTE,
     briefing ? CONNECTED_NOTE : null,
+    style ?? null,
     clock,
     channel,
     `The user has you in ${MODES[mode].label} mode. ${MODES[mode].guidance}`,

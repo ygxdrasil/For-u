@@ -65,7 +65,19 @@ export function useGrace() {
       .fetchSession()
       .then(async (status) => {
         setSession(status);
-        if (status === 'ok' || status === 'open') await load();
+        if (status !== 'ok' && status !== 'open') return;
+        await load();
+
+        // She says something when you walk in, at most once every few hours.
+        // Not spoken: opening her is not the same as talking to her, and a
+        // voice starting up unbidden in a quiet room is startling.
+        const hello = await api
+          .greeting()
+          .catch(() => ({say: null, message: undefined}));
+        if (hello.message) {
+          const said = hello.message;
+          setMessages((current) => [...current, said]);
+        }
       })
       .catch((cause: Error) => setError(cause.message));
   }, [load]);

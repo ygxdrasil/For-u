@@ -12,8 +12,14 @@ import {connection} from './oauth';
  * the diary, not the conversation.
  */
 
-/** Google is not allowed to hold up a reply. */
-const PATIENCE_MS = 2500;
+/**
+ * Google is not allowed to hold up a reply.
+ *
+ * Two and a half seconds was a whole beat of silence on every cache miss,
+ * paid before she has said a word. If Google is slower than this, she answers
+ * without the diary and reaches for check_diary when it actually matters.
+ */
+const PATIENCE_MS = 1200;
 
 /**
  * How long a briefing stays good for.

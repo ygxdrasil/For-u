@@ -390,10 +390,18 @@ try {
     );
   }
   ok('search and function calling are never combined in one request');
-  assert.equal(
-    grounded.config.thinkingConfig?.thinkingBudget,
-    undefined,
-    'thinking must not be disabled while a tool is attached, or it is never called',
+  // Deciding to call a tool is itself deliberation, so a zero budget leaves
+  // the tool present and unused — she answers from memory and then says she
+  // cannot reach the web. It must be small, for the sake of the pause before
+  // she speaks, and it must not be nothing.
+  const budget = grounded.config.thinkingConfig?.thinkingBudget;
+  assert.ok(
+    budget === undefined || budget > 0,
+    `thinking must not be switched off while a tool is attached, got ${budget}`,
+  );
+  assert.ok(
+    budget === undefined || budget <= 1024,
+    `and must stay small, or every reply waits on it — got ${budget}`,
   );
 
   const plain = provider.params({
@@ -612,6 +620,21 @@ try {
     'with no token she must say it is not connected',
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
+
+  // ---- she says something when you walk in, but not every time -------------
+  const hello = (await (await call('/greeting', {method: 'POST'})).json()) as {
+    say: string | null;
+  };
+  assert.ok(hello.say, 'she should have something to say on the first open');
+  const secondHello = (await (await call('/greeting', {method: 'POST'})).json()) as {
+    say: string | null;
+  };
+  assert.equal(
+    secondHello.say,
+    null,
+    'and nothing on the next — three greetings while you find the right tab is worse than none',
+  );
+  ok('she greets you when you walk in, and not again for hours');
 
   // ---- she can ask, with the answers laid out ------------------------------
   stub.nextToolCall = {
@@ -992,7 +1015,11 @@ try {
 
   // ---- compaction, and the context gap it used to leave -------------------
   await clearConversation();
-  for (let i = 0; i < 21; i += 1) await chat(`Message number ${i}.`);
+  // Two messages per exchange, and enough of them to be past the threshold
+  // whatever that threshold is set to — the seeding used to be a bare number
+  // and quietly stopped testing anything the moment the window was widened.
+  const enough = Math.ceil(config.summarizeAfter / 2) + 2;
+  for (let i = 0; i < enough; i += 1) await chat(`Message number ${i}.`);
   assert.ok((await getMessages()).length > config.summarizeAfter);
 
   const {compacted} = (await (

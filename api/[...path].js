@@ -47,10 +47,17 @@ var config = {
   /** Where memory lives when running on local disk. */
   dataDir: process.env.GRACE_DATA_DIR ?? path.resolve(process.cwd(), ".grace"),
   port: Number(process.env.PORT ?? 3001),
-  /** How many recent turns are replayed to the model verbatim. */
-  verbatimTurns: 24,
+  /**
+   * How many recent turns are replayed to the model verbatim.
+   *
+   * Raised because the commonest complaint about her was forgetting something
+   * said a little while ago. Everything older is still reachable through
+   * search_memory, but a wider window means she does not have to think to
+   * reach for it — which is the difference between remembering and looking up.
+   */
+  verbatimTurns: 32,
   /** Once the log passes this many turns, older ones fold into a summary. */
-  summarizeAfter: 40,
+  summarizeAfter: 48,
   /** Set GRACE_LEARN=false to stop Grace building a profile of you. */
   learnFromConversation: process.env.GRACE_LEARN !== "false",
   /** True on Vercel and friends, where an open instance is a public one. */
@@ -781,8 +788,8 @@ ${request.text}` }]
     } else if (request.search) {
       config2.tools = [{ googleSearch: {} }];
     }
-    if (request.fast && !config2.tools) {
-      config2.thinkingConfig = { thinkingBudget: 0 };
+    if (request.fast) {
+      config2.thinkingConfig = { thinkingBudget: config2.tools ? 256 : 0 };
     }
     return {
       model: this.model,
@@ -885,15 +892,15 @@ async function remember(entries) {
       reinforced = true;
       continue;
     }
-    const fresh = {
+    const fresh2 = {
       ...entry,
       id: randomUUID2(),
       learnedAt: now,
       lastSeenAt: now,
       timesSeen: 1
     };
-    byKey.set(key, fresh);
-    added.push(fresh);
+    byKey.set(key, fresh2);
+    added.push(fresh2);
   }
   if (added.length > 0 || reinforced) {
     await profile.write({
@@ -1366,7 +1373,7 @@ function encodeHeader(value) {
 }
 
 // server/google/briefing.ts
-var PATIENCE_MS = 2500;
+var PATIENCE_MS = 1200;
 var FRESH_FOR_MS = 9e4;
 var cached3 = null;
 function timeboxed(work, fallback2) {
@@ -1446,191 +1453,6 @@ async function noteDeed(kind, text, unprompted = false) {
   await store6.update((current) => [...current, entry].slice(-LIMIT));
 }
 
-// server/ps5.ts
-var AUTH = "https://ca.account.sony.com/api/authz/v3/oauth";
-var PROFILE = "https://m.np.playstation.com/api/userProfile/v1/internal/users";
-var TROPHY = "https://m.np.playstation.com/api/trophy/v1/users";
-var GRAPH = "https://web.np.playstation.com/api/graphql/v1/op";
-var CLIENT_AUTH = "Basic MDk1MTUxNTktNzIzNy00MzcwLTliNDAtMzgwNmU2N2MwODkxOnVjUGprYTV0bnRCMktxc1A=";
-var CLIENT_ID = "09515159-7237-4370-9b40-3806e67c0891";
-var REDIRECT = "com.scee.psxandroid.scecompcall://redirect";
-var SCOPE = "psn:mobile.v2.core psn:clientapp";
-var session = new Document("psn", () => null);
-var PsnError = class extends Error {
-  constructor(message, needsToken = false) {
-    super(message);
-    this.needsToken = needsToken;
-  }
-};
-function psnConfigured() {
-  return Boolean(psnToken());
-}
-async function tokensFromNpsso(npsso) {
-  const query = new URLSearchParams({
-    access_type: "offline",
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT,
-    response_type: "code",
-    scope: SCOPE
-  });
-  const handshake = await fetch(`${AUTH}/authorize?${query}`, {
-    headers: { Cookie: `npsso=${npsso}` },
-    redirect: "manual"
-  });
-  const location = handshake.headers.get("location") ?? "";
-  if (!location.includes("?code=")) {
-    throw new PsnError(
-      "PlayStation would not accept that sign-in code. They expire after a couple of months \u2014 fetch a fresh one and paste it in again.",
-      true
-    );
-  }
-  const code = new URLSearchParams(location.split("redirect/")[1] ?? "").get("code");
-  if (!code) throw new PsnError("PlayStation sent back no sign-in code.", true);
-  return exchange({
-    code,
-    redirect_uri: REDIRECT,
-    grant_type: "authorization_code",
-    token_format: "jwt"
-  });
-}
-async function exchange(body) {
-  const response = await fetch(`${AUTH}/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: CLIENT_AUTH
-    },
-    body: new URLSearchParams(body).toString()
-  });
-  const data = await response.json().catch(() => ({}));
-  const accessToken2 = typeof data.access_token === "string" ? data.access_token : "";
-  if (!accessToken2) {
-    throw new PsnError(
-      `PlayStation refused the sign-in (${String(data.error_description ?? response.status)}).`,
-      true
-    );
-  }
-  const now = Date.now();
-  return {
-    accessToken: accessToken2,
-    // A minute of margin, so a token never expires mid-request.
-    expiresAt: now + (Number(data.expires_in) || 3600) * 1e3 - 6e4,
-    refreshToken: String(data.refresh_token ?? ""),
-    refreshExpiresAt: now + (Number(data.refresh_token_expires_in) || 0) * 1e3
-  };
-}
-async function token() {
-  const npsso = psnToken();
-  if (!npsso) {
-    throw new PsnError(
-      "The PlayStation is not connected. Paste an NPSSO code into her keys.",
-      true
-    );
-  }
-  const saved = await session.read();
-  const now = Date.now();
-  if (saved && saved.expiresAt > now) return saved.accessToken;
-  if (saved?.refreshToken && saved.refreshExpiresAt > now) {
-    try {
-      const refreshed = await exchange({
-        refresh_token: saved.refreshToken,
-        grant_type: "refresh_token",
-        token_format: "jwt",
-        scope: SCOPE
-      });
-      await session.write(refreshed);
-      return refreshed.accessToken;
-    } catch {
-    }
-  }
-  const fresh = await tokensFromNpsso(npsso);
-  await session.write(fresh);
-  return fresh.accessToken;
-}
-async function read(url) {
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${await token()}`,
-      "Content-Type": "application/json"
-    }
-  });
-  if (response.status === 401 || response.status === 403) {
-    throw new PsnError(
-      "PlayStation stopped accepting the connection. The code needs pasting again.",
-      true
-    );
-  }
-  const data = await response.json().catch(() => null);
-  if (!data) throw new PsnError("PlayStation sent back nothing readable.");
-  return data;
-}
-async function presence() {
-  const data = await read(`${PROFILE}/me/basicPresences?type=primary`);
-  const basic = data.basicPresence ?? {};
-  const platformInfo = basic.primaryPlatformInfo ?? {};
-  const game = basic.gameTitleInfoList?.[0];
-  const online = platformInfo.onlineStatus === "online";
-  return {
-    online,
-    status: game?.titleName ? "playing" : online ? "online" : "offline",
-    playing: game?.titleName ?? null,
-    platform: game?.format ?? platformInfo.platform ?? null,
-    lastOnline: platformInfo.lastOnlineDate ?? null
-  };
-}
-async function player() {
-  const data = await read(`${PROFILE}/me/profiles`);
-  return {
-    onlineId: data.onlineId ?? "unknown",
-    level: data.trophySummary?.level ?? null,
-    plus: Boolean(data.isPsPlus)
-  };
-}
-async function trophies() {
-  const data = await read(`${TROPHY}/me/trophySummary`);
-  const earned = data.earnedTrophies ?? {};
-  return {
-    level: Number(data.trophyLevel ?? 0),
-    progress: Number(data.progress ?? 0),
-    platinum: earned.platinum ?? 0,
-    gold: earned.gold ?? 0,
-    silver: earned.silver ?? 0,
-    bronze: earned.bronze ?? 0
-  };
-}
-async function recentlyPlayed(limit = 10) {
-  const url = new URL(GRAPH);
-  url.searchParams.set("operationName", "getUserGameList");
-  url.searchParams.set(
-    "variables",
-    JSON.stringify({ limit, categories: "ps4_game,ps5_native_game" })
-  );
-  url.searchParams.set(
-    "extensions",
-    JSON.stringify({
-      persistedQuery: {
-        version: 1,
-        sha256Hash: "e780a6d8b921ef0c59ec01ea5c5255671272ca0d819edb61320914cf7a78b3ae"
-      }
-    })
-  );
-  const data = await read(url.toString());
-  const games = data.data?.gameLibraryTitlesRetrieve?.games ?? [];
-  return games.map((game) => ({
-    name: game.name ?? "an unnamed game",
-    platform: game.platform ?? null,
-    lastPlayed: game.lastPlayedDateTime ?? null
-  }));
-}
-async function playstation() {
-  const [now, who, cabinet] = await Promise.all([
-    presence(),
-    player().catch(() => null),
-    trophies().catch(() => null)
-  ]);
-  return { presence: now, player: who, trophies: cabinet };
-}
-
 // server/modes.ts
 var MODES = {
   open: {
@@ -1668,77 +1490,6 @@ async function setMode(mode) {
   const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
   await store7.write(next);
   return next;
-}
-
-// server/push.ts
-import webpush from "web-push";
-var keyStore = new Document("push-keys", () => null);
-var subscriptions = new Document("push-subs", () => []);
-var CONTACT = "mailto:grace@localhost";
-async function keys2() {
-  const saved = await keyStore.read();
-  if (saved) return saved;
-  const fresh = webpush.generateVAPIDKeys();
-  await keyStore.write(fresh);
-  return fresh;
-}
-async function publicKey() {
-  return (await keys2()).publicKey;
-}
-async function subscribe(raw) {
-  const candidate = raw;
-  const endpoint = candidate?.endpoint;
-  const p256dh = candidate?.keys?.p256dh;
-  const auth = candidate?.keys?.auth;
-  if (typeof endpoint !== "string" || !p256dh || !auth) {
-    return { ok: false, error: "that is not a usable subscription" };
-  }
-  await subscriptions.update((current) => {
-    const others = current.filter((entry) => entry.endpoint !== endpoint);
-    return [
-      ...others,
-      { endpoint, keys: { p256dh, auth }, addedAt: (/* @__PURE__ */ new Date()).toISOString() }
-    ];
-  });
-  return { ok: true };
-}
-async function devices() {
-  return (await subscriptions.read()).filter((entry) => !entry.goneAt).length;
-}
-async function notify(title, body) {
-  const all = await subscriptions.read();
-  const live = all.filter((entry) => !entry.goneAt);
-  if (live.length === 0) return 0;
-  const { publicKey: pub, privateKey } = await keys2();
-  webpush.setVapidDetails(CONTACT, pub, privateKey);
-  const payload = JSON.stringify({ title, body });
-  const gone = [];
-  let sent = 0;
-  await Promise.all(
-    live.map(async (entry) => {
-      try {
-        await webpush.sendNotification(
-          { endpoint: entry.endpoint, keys: entry.keys },
-          payload,
-          { TTL: 900 }
-        );
-        sent += 1;
-      } catch (error) {
-        const status = error.statusCode;
-        if (status === 404 || status === 410) gone.push(entry.endpoint);
-        else console.error("[grace] push failed:", error.message);
-      }
-    })
-  );
-  if (gone.length > 0) {
-    const at = (/* @__PURE__ */ new Date()).toISOString();
-    await subscriptions.update(
-      (current) => current.map(
-        (entry) => gone.includes(entry.endpoint) ? { ...entry, goneAt: at } : entry
-      )
-    );
-  }
-  return sent;
 }
 
 // server/tools/reminders.ts
@@ -1838,6 +1589,291 @@ ${open.map((item) => `- ${describe(item)}`).join("\n")}`;
   }
 ];
 
+// server/greeting.ts
+var store9 = new Document("greeting", () => ({ at: null }));
+var EVERY_MS = 4 * 60 * 60 * 1e3;
+async function greet(compose2) {
+  const { at } = await store9.read();
+  if (at && Date.now() - new Date(at).getTime() < EVERY_MS) return { say: null };
+  const { mode } = await getMode();
+  if (mode === "focus" || mode === "away") return { say: null };
+  const [briefing, list] = await Promise.all([
+    buildBriefing().catch(() => null),
+    outstanding().catch(() => [])
+  ]);
+  const soon = list.filter((reminder) => reminder.due).slice(0, 3).map((reminder) => `- ${reminder.text}`).join("\n");
+  const context = [
+    briefing,
+    soon && `Outstanding on their list:
+${soon}`,
+    `The time is ${(/* @__PURE__ */ new Date()).toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit"
+    })}.`
+  ].filter(Boolean).join("\n\n");
+  const said = (await compose2(context)).trim();
+  if (!said) return { say: null };
+  await store9.write({ at: (/* @__PURE__ */ new Date()).toISOString() });
+  await noteDeed("spoke", said, true);
+  return { say: said, message: await record2("grace", said, "text") };
+}
+
+// server/ps5.ts
+var AUTH = "https://ca.account.sony.com/api/authz/v3/oauth";
+var PROFILE = "https://m.np.playstation.com/api/userProfile/v1/internal/users";
+var TROPHY = "https://m.np.playstation.com/api/trophy/v1/users";
+var GRAPH = "https://web.np.playstation.com/api/graphql/v1/op";
+var CLIENT_AUTH = "Basic MDk1MTUxNTktNzIzNy00MzcwLTliNDAtMzgwNmU2N2MwODkxOnVjUGprYTV0bnRCMktxc1A=";
+var CLIENT_ID = "09515159-7237-4370-9b40-3806e67c0891";
+var REDIRECT = "com.scee.psxandroid.scecompcall://redirect";
+var SCOPE = "psn:mobile.v2.core psn:clientapp";
+var session = new Document("psn", () => null);
+var PsnError = class extends Error {
+  constructor(message, needsToken = false) {
+    super(message);
+    this.needsToken = needsToken;
+  }
+};
+function psnConfigured() {
+  return Boolean(psnToken());
+}
+async function tokensFromNpsso(npsso) {
+  const query = new URLSearchParams({
+    access_type: "offline",
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT,
+    response_type: "code",
+    scope: SCOPE
+  });
+  const handshake = await fetch(`${AUTH}/authorize?${query}`, {
+    headers: { Cookie: `npsso=${npsso}` },
+    redirect: "manual"
+  });
+  const location = handshake.headers.get("location") ?? "";
+  if (!location.includes("?code=")) {
+    throw new PsnError(
+      "PlayStation would not accept that sign-in code. They expire after a couple of months \u2014 fetch a fresh one and paste it in again.",
+      true
+    );
+  }
+  const code = new URLSearchParams(location.split("redirect/")[1] ?? "").get("code");
+  if (!code) throw new PsnError("PlayStation sent back no sign-in code.", true);
+  return exchange({
+    code,
+    redirect_uri: REDIRECT,
+    grant_type: "authorization_code",
+    token_format: "jwt"
+  });
+}
+async function exchange(body) {
+  const response = await fetch(`${AUTH}/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: CLIENT_AUTH
+    },
+    body: new URLSearchParams(body).toString()
+  });
+  const data = await response.json().catch(() => ({}));
+  const accessToken2 = typeof data.access_token === "string" ? data.access_token : "";
+  if (!accessToken2) {
+    throw new PsnError(
+      `PlayStation refused the sign-in (${String(data.error_description ?? response.status)}).`,
+      true
+    );
+  }
+  const now = Date.now();
+  return {
+    accessToken: accessToken2,
+    // A minute of margin, so a token never expires mid-request.
+    expiresAt: now + (Number(data.expires_in) || 3600) * 1e3 - 6e4,
+    refreshToken: String(data.refresh_token ?? ""),
+    refreshExpiresAt: now + (Number(data.refresh_token_expires_in) || 0) * 1e3
+  };
+}
+async function token() {
+  const npsso = psnToken();
+  if (!npsso) {
+    throw new PsnError(
+      "The PlayStation is not connected. Paste an NPSSO code into her keys.",
+      true
+    );
+  }
+  const saved = await session.read();
+  const now = Date.now();
+  if (saved && saved.expiresAt > now) return saved.accessToken;
+  if (saved?.refreshToken && saved.refreshExpiresAt > now) {
+    try {
+      const refreshed = await exchange({
+        refresh_token: saved.refreshToken,
+        grant_type: "refresh_token",
+        token_format: "jwt",
+        scope: SCOPE
+      });
+      await session.write(refreshed);
+      return refreshed.accessToken;
+    } catch {
+    }
+  }
+  const fresh2 = await tokensFromNpsso(npsso);
+  await session.write(fresh2);
+  return fresh2.accessToken;
+}
+async function read(url) {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${await token()}`,
+      "Content-Type": "application/json"
+    }
+  });
+  if (response.status === 401 || response.status === 403) {
+    throw new PsnError(
+      "PlayStation stopped accepting the connection. The code needs pasting again.",
+      true
+    );
+  }
+  const data = await response.json().catch(() => null);
+  if (!data) throw new PsnError("PlayStation sent back nothing readable.");
+  return data;
+}
+async function presence() {
+  const data = await read(`${PROFILE}/me/basicPresences?type=primary`);
+  const basic = data.basicPresence ?? {};
+  const platformInfo = basic.primaryPlatformInfo ?? {};
+  const game = basic.gameTitleInfoList?.[0];
+  const online = platformInfo.onlineStatus === "online";
+  return {
+    online,
+    status: game?.titleName ? "playing" : online ? "online" : "offline",
+    playing: game?.titleName ?? null,
+    platform: game?.format ?? platformInfo.platform ?? null,
+    lastOnline: platformInfo.lastOnlineDate ?? null
+  };
+}
+async function player() {
+  const data = await read(`${PROFILE}/me/profiles`);
+  return {
+    onlineId: data.onlineId ?? "unknown",
+    level: data.trophySummary?.level ?? null,
+    plus: Boolean(data.isPsPlus)
+  };
+}
+async function trophies() {
+  const data = await read(`${TROPHY}/me/trophySummary`);
+  const earned = data.earnedTrophies ?? {};
+  return {
+    level: Number(data.trophyLevel ?? 0),
+    progress: Number(data.progress ?? 0),
+    platinum: earned.platinum ?? 0,
+    gold: earned.gold ?? 0,
+    silver: earned.silver ?? 0,
+    bronze: earned.bronze ?? 0
+  };
+}
+async function recentlyPlayed(limit = 10) {
+  const url = new URL(GRAPH);
+  url.searchParams.set("operationName", "getUserGameList");
+  url.searchParams.set(
+    "variables",
+    JSON.stringify({ limit, categories: "ps4_game,ps5_native_game" })
+  );
+  url.searchParams.set(
+    "extensions",
+    JSON.stringify({
+      persistedQuery: {
+        version: 1,
+        sha256Hash: "e780a6d8b921ef0c59ec01ea5c5255671272ca0d819edb61320914cf7a78b3ae"
+      }
+    })
+  );
+  const data = await read(url.toString());
+  const games = data.data?.gameLibraryTitlesRetrieve?.games ?? [];
+  return games.map((game) => ({
+    name: game.name ?? "an unnamed game",
+    platform: game.platform ?? null,
+    lastPlayed: game.lastPlayedDateTime ?? null
+  }));
+}
+async function playstation() {
+  const [now, who, cabinet] = await Promise.all([
+    presence(),
+    player().catch(() => null),
+    trophies().catch(() => null)
+  ]);
+  return { presence: now, player: who, trophies: cabinet };
+}
+
+// server/push.ts
+import webpush from "web-push";
+var keyStore = new Document("push-keys", () => null);
+var subscriptions = new Document("push-subs", () => []);
+var CONTACT = "mailto:grace@localhost";
+async function keys2() {
+  const saved = await keyStore.read();
+  if (saved) return saved;
+  const fresh2 = webpush.generateVAPIDKeys();
+  await keyStore.write(fresh2);
+  return fresh2;
+}
+async function publicKey() {
+  return (await keys2()).publicKey;
+}
+async function subscribe(raw) {
+  const candidate = raw;
+  const endpoint = candidate?.endpoint;
+  const p256dh = candidate?.keys?.p256dh;
+  const auth = candidate?.keys?.auth;
+  if (typeof endpoint !== "string" || !p256dh || !auth) {
+    return { ok: false, error: "that is not a usable subscription" };
+  }
+  await subscriptions.update((current) => {
+    const others = current.filter((entry) => entry.endpoint !== endpoint);
+    return [
+      ...others,
+      { endpoint, keys: { p256dh, auth }, addedAt: (/* @__PURE__ */ new Date()).toISOString() }
+    ];
+  });
+  return { ok: true };
+}
+async function devices() {
+  return (await subscriptions.read()).filter((entry) => !entry.goneAt).length;
+}
+async function notify(title, body) {
+  const all = await subscriptions.read();
+  const live = all.filter((entry) => !entry.goneAt);
+  if (live.length === 0) return 0;
+  const { publicKey: pub, privateKey } = await keys2();
+  webpush.setVapidDetails(CONTACT, pub, privateKey);
+  const payload = JSON.stringify({ title, body });
+  const gone = [];
+  let sent = 0;
+  await Promise.all(
+    live.map(async (entry) => {
+      try {
+        await webpush.sendNotification(
+          { endpoint: entry.endpoint, keys: entry.keys },
+          payload,
+          { TTL: 900 }
+        );
+        sent += 1;
+      } catch (error) {
+        const status = error.statusCode;
+        if (status === 404 || status === 410) gone.push(entry.endpoint);
+        else console.error("[grace] push failed:", error.message);
+      }
+    })
+  );
+  if (gone.length > 0) {
+    const at = (/* @__PURE__ */ new Date()).toISOString();
+    await subscriptions.update(
+      (current) => current.map(
+        (entry) => gone.includes(entry.endpoint) ? { ...entry, goneAt: at } : entry
+      )
+    );
+  }
+  return sent;
+}
+
 // server/pulse.ts
 var seen = new Document("pulse", () => ({ raised: {} }));
 var IMMINENT_MINUTES = 45;
@@ -1878,14 +1914,30 @@ async function gather(now = /* @__PURE__ */ new Date()) {
         at: event.start
       });
     }
-    if (mail.length > 0) {
-      const senders = [...new Set(mail.map((message) => message.from.split("<")[0].trim()))];
+    const real = mail.filter((message) => !message.bulk);
+    if (real.length > 0) {
+      const senders = [...new Set(real.map((message) => message.from.split("<")[0].trim()))];
       concerns.push({
         // Keyed on the newest message, so the same batch is one concern and a
         // genuinely new arrival is a new one.
-        id: `mail:${mail[0].id}`,
+        id: `mail:${real[0].id}`,
         kind: "mail",
-        text: mail.length === 1 ? `New mail from ${senders[0]}: ${mail[0].subject}` : `${mail.length} new emails, from ${senders.slice(0, 3).join(", ")}`,
+        text: real.length === 1 ? `${senders[0]} wrote: ${real[0].subject}` : `${real.length} new emails, from ${senders.slice(0, 3).join(", ")}`,
+        // Someone writing to you is worth a note on your phone; it is not
+        // worth stopping you mid-sentence for.
+        urgency: "soon"
+      });
+    }
+    const moving = mail.find(
+      (message) => /(out for delivery|has shipped|is on the way|arriving today|delivered)/i.test(
+        message.subject
+      )
+    );
+    if (moving) {
+      concerns.push({
+        id: `delivery:${moving.id}`,
+        kind: "mail",
+        text: `Delivery update: ${moving.subject}`,
         urgency: "whenever"
       });
     }
@@ -1900,17 +1952,17 @@ async function unraised(concerns) {
   for (const [id, at] of Object.entries(record3.raised)) {
     if (new Date(at).getTime() > cutoff) kept[id] = at;
   }
-  const fresh = concerns.filter((concern) => !kept[concern.id]);
-  if (fresh.length === 0) {
+  const fresh2 = concerns.filter((concern) => !kept[concern.id]);
+  if (fresh2.length === 0) {
     if (Object.keys(kept).length !== Object.keys(record3.raised).length) {
       await seen.write({ raised: kept });
     }
     return [];
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  for (const concern of fresh) kept[concern.id] = now;
+  for (const concern of fresh2) kept[concern.id] = now;
   await seen.write({ raised: kept });
-  return fresh;
+  return fresh2;
 }
 function mayInterrupt(mode, urgency) {
   if (mode === "away") return false;
@@ -1918,17 +1970,26 @@ function mayInterrupt(mode, urgency) {
   if (mode === "work") return urgency !== "whenever";
   return true;
 }
+function overnight(now) {
+  const hour = now.getHours();
+  return hour >= 23 || hour < 7;
+}
 var RANK = { now: 0, soon: 1, whenever: 2 };
 async function pulse() {
-  const fresh = await unraised(await gather());
-  if (fresh.length === 0) return { concerns: [], say: null, held: null };
-  for (const concern of fresh) {
+  const fresh2 = await unraised(await gather());
+  if (fresh2.length === 0) return { concerns: [], say: null, held: null };
+  for (const concern of fresh2) {
     await noteDeed("noticed", concern.text, true);
   }
   const { mode } = await getMode();
-  const sorted = [...fresh].sort((left, right) => RANK[left.urgency] - RANK[right.urgency]);
-  const speakable = sorted.filter((concern) => mayInterrupt(mode, concern.urgency));
-  const worthABuzz = sorted.filter((concern) => concern.urgency !== "whenever");
+  const now = /* @__PURE__ */ new Date();
+  const sorted = [...fresh2].sort((left, right) => RANK[left.urgency] - RANK[right.urgency]);
+  const speakable = sorted.filter(
+    (concern) => mayInterrupt(mode, concern.urgency) && (!overnight(now) || concern.urgency === "now")
+  );
+  const worthABuzz = sorted.filter(
+    (concern) => concern.urgency !== "whenever" && (!overnight(now) || concern.urgency === "now")
+  );
   if (worthABuzz.length > 0) {
     await notify("Grace", worthABuzz.map((concern) => concern.text).join(" \xB7 ")).catch(
       () => 0
@@ -1938,7 +1999,7 @@ async function pulse() {
     return {
       concerns: sorted,
       say: null,
-      held: mode === "away" ? "Holding this until you are back." : "Not interrupting while you are heads-down."
+      held: overnight(now) ? "Holding this until morning." : mode === "away" ? "Holding this until you are back." : "Not interrupting while you are heads-down."
     };
   }
   const say = await compose(speakable).catch(() => fallback(speakable));
@@ -2549,6 +2610,8 @@ Newsletters, marketing and automatic notices are filtered out before you see the
 
 When something does want them, end by asking whether they would like any of it read out, and use read_mail if they say yes. When it is routine, don't bother asking.
 
+When something plainly needs a reply, say so and offer to draft it \u2014 don't wait to be asked, and don't write it silently either. If you are missing anything the reply depends on, ask for that first, with ask_choice where the answer is a short list. Then write it into their drafts folder in their own voice and tell them plainly that it is sitting there, unsent, for them to read and send. You never send it. That limit does not move.
+
 You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 function describeProfile(profile2) {
   if (profile2.entries.filter((entry) => !entry.supersededAt).length === 0) {
@@ -2592,7 +2655,7 @@ function describePolicies(policies) {
 ${described}`;
 }
 function buildSystemPrompt(context) {
-  const { profile: profile2, summary, policies, via, now, mode, briefing } = context;
+  const { profile: profile2, summary, policies, via, now, mode, briefing, style } = context;
   const address = profile2.addressAs ? `Address the user as "${profile2.addressAs}" \u2014 sparingly, not in every reply.` : `Do not use an honorific for the user. Address them simply as "you".`;
   const clock = `The current date and time is ${now.toLocaleString("en-GB", {
     weekday: "long",
@@ -2628,10 +2691,65 @@ ${summary}` : null;
     LIMITS,
     PHASE_NOTE,
     briefing ? CONNECTED_NOTE : null,
+    style ?? null,
     clock,
     channel,
     `The user has you in ${MODES[mode].label} mode. ${MODES[mode].guidance}`
   ].filter(Boolean).join("\n\n");
+}
+
+// server/style.ts
+var store10 = new Document("style", () => ({
+  description: null,
+  samples: 0,
+  builtAt: null
+}));
+var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
+var SAMPLES = 8;
+async function writingStyle() {
+  return (await store10.read()).description;
+}
+function fresh(style) {
+  if (!style.description || !style.builtAt) return false;
+  return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
+}
+async function learnWritingStyle(force = false) {
+  const current = await store10.read();
+  if (!force && fresh(current)) return false;
+  const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
+  if (sent.length < 3) return false;
+  const bodies = (await Promise.all(
+    sent.slice(0, SAMPLES).map(
+      (message) => readMail(message.id).then((full) => full.body.slice(0, 1200)).catch(() => "")
+    )
+  )).filter((body) => body.trim().length > 40);
+  if (bodies.length < 3) return false;
+  const description = await getProvider().complete({
+    system: "You are describing how one person writes email, from a sample of messages they sent. Write a short paragraph another writer could follow to sound like them: how they open and close, how formal they are, typical length, whether they use contractions, punctuation habits, anything characteristic. Describe the manner only. Never repeat their content, never name the people they wrote to, and do not quote whole sentences. Under 150 words.",
+    turns: [
+      {
+        role: "user",
+        text: bodies.map((body, index) => `--- message ${index + 1} ---
+${body}`).join("\n\n")
+      }
+    ],
+    temperature: 0.2,
+    maxOutputTokens: 400
+  }).catch(() => "");
+  if (!description.trim()) return false;
+  await store10.write({
+    description: description.trim(),
+    samples: bodies.length,
+    builtAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  return true;
+}
+async function styleNote() {
+  const description = await writingStyle();
+  if (!description) return null;
+  return `How the user writes email, taken from their own sent messages. Any draft you write for them must sound like this and not like you \u2014 they should be able to read it once and send it:
+
+${description}`;
 }
 
 // server/api.ts
@@ -2648,7 +2766,7 @@ var contextCache = null;
 async function listeningContext() {
   if (contextCache && contextCache.until > Date.now()) return contextCache.text;
   const [profile2, turns] = await Promise.all([getProfile(), recentTurns()]);
-  const known = profile2.entries.slice(-25).map((entry) => entry.text).join("; ");
+  const known = profile2.entries.filter((entry) => !entry.supersededAt).slice(-40).map((entry) => entry.text).join("; ");
   const recent = turns.slice(-4).map((turn) => `${turn.role === "assistant" ? "Grace" : "They"}: ${turn.text}`).join("\n");
   const text = [
     known && `Things known about the speaker: ${known}`,
@@ -2829,8 +2947,8 @@ function createApi() {
       }
       const controller = new AbortController();
       res.on("close", () => controller.abort());
-      await record2("user", text, via);
-      const [profile2, summary, policies, turns] = await Promise.all([
+      const [, profile2, summary, policies, turns] = await Promise.all([
+        record2("user", text, via),
         getProfile(),
         getSummary(),
         getPolicies(),
@@ -2843,8 +2961,10 @@ function createApi() {
         via,
         now: /* @__PURE__ */ new Date(),
         mode: (await getMode()).mode,
-        briefing: await buildBriefing().catch(() => null)
+        briefing: await buildBriefing().catch(() => null),
+        style: await styleNote().catch(() => null)
       });
+      turns.push({ role: "user", text });
       let reply = "";
       let grounded = false;
       const shown = /* @__PURE__ */ new Map();
@@ -2922,6 +3042,8 @@ function createApi() {
       const userAt = log.slice(0, Math.max(graceAt, 0)).findLastIndex((message) => message.speaker === "user");
       const learned = graceAt >= 0 && userAt >= 0 ? await learnFrom(log[userAt].text, log[graceAt].text) : [];
       const compacted = await compactIfNeeded();
+      learnWritingStyle().catch(() => {
+      });
       res.json({ learned, compacted });
     })
   );
@@ -3074,6 +3196,26 @@ function createApi() {
     guard(async (_req, res) => {
       const sent = await notify("Grace", "That reached you. Everything is working.");
       res.json({ sent });
+    })
+  );
+  api.post(
+    "/greeting",
+    guard(async (_req, res) => {
+      if (!isConfigured()) {
+        res.json({ say: null });
+        return;
+      }
+      res.json(
+        await greet(
+          async (context) => getProvider().complete({
+            system: "You are Grace, a composed personal assistant. The person you work for has just opened you. Greet them in one short sentence and, in the same breath, tell them the single most useful thing from what follows \u2014 the next thing in their diary, or what is overdue. If there is genuinely nothing, say only that the day looks clear. No lists, no markdown, no preamble, never more than two sentences.",
+            turns: [{ role: "user", text: context }],
+            temperature: 0.5,
+            maxOutputTokens: 150,
+            fast: true
+          })
+        )
+      );
     })
   );
   api.post(

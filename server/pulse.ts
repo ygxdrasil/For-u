@@ -102,17 +102,40 @@ export async function gather(now = new Date()): Promise<Concern[]> {
     // Mail is the noisiest of the three, so it is deliberately the quietest:
     // one line about who wrote, never the contents, and never each message
     // separately. Anyone who wants their inbox read to them can ask.
-    if (mail.length > 0) {
-      const senders = [...new Set(mail.map((message) => message.from.split('<')[0].trim()))];
+    //
+    // Newsletters and marketing are dropped outright. A person writing is
+    // worth interrupting for; an advertisement never is, and treating the two
+    // the same is how an assistant becomes something you mute.
+    const real = mail.filter((message) => !message.bulk);
+    if (real.length > 0) {
+      const senders = [...new Set(real.map((message) => message.from.split('<')[0].trim()))];
       concerns.push({
         // Keyed on the newest message, so the same batch is one concern and a
         // genuinely new arrival is a new one.
-        id: `mail:${mail[0].id}`,
+        id: `mail:${real[0].id}`,
         kind: 'mail',
         text:
-          mail.length === 1
-            ? `New mail from ${senders[0]}: ${mail[0].subject}`
-            : `${mail.length} new emails, from ${senders.slice(0, 3).join(', ')}`,
+          real.length === 1
+            ? `${senders[0]} wrote: ${real[0].subject}`
+            : `${real.length} new emails, from ${senders.slice(0, 3).join(', ')}`,
+        // Someone writing to you is worth a note on your phone; it is not
+        // worth stopping you mid-sentence for.
+        urgency: 'soon',
+      });
+    }
+
+    // Deliveries move on their own and are the one automated message worth
+    // knowing about — which is why this looks at everything, bulk included.
+    const moving = mail.find((message) =>
+      /(out for delivery|has shipped|is on the way|arriving today|delivered)/i.test(
+        message.subject,
+      ),
+    );
+    if (moving) {
+      concerns.push({
+        id: `delivery:${moving.id}`,
+        kind: 'mail',
+        text: `Delivery update: ${moving.subject}`,
         urgency: 'whenever',
       });
     }
@@ -162,6 +185,19 @@ function mayInterrupt(mode: AttentionMode, urgency: Urgency): boolean {
   return true;
 }
 
+/**
+ * Whether it is the middle of the night where the user is.
+ *
+ * Between eleven and seven, only something genuinely urgent gets through.
+ * Everything else is still noticed, still recorded, and still waiting in the
+ * morning — an assistant who wakes you to say a parcel shipped is one you
+ * switch off, and then she is no use at all when something does matter.
+ */
+function overnight(now: Date): boolean {
+  const hour = now.getHours();
+  return hour >= 23 || hour < 7;
+}
+
 const RANK: Record<Urgency, number> = {now: 0, soon: 1, whenever: 2};
 
 export interface PulseResult {
@@ -198,13 +234,24 @@ export async function pulse(): Promise<PulseResult> {
   }
 
   const {mode} = await getMode();
+  const now = new Date();
   const sorted = [...fresh].sort((left, right) => RANK[left.urgency] - RANK[right.urgency]);
-  const speakable = sorted.filter((concern) => mayInterrupt(mode, concern.urgency));
+  const speakable = sorted.filter(
+    (concern) =>
+      mayInterrupt(mode, concern.urgency) &&
+      (!overnight(now) || concern.urgency === 'now'),
+  );
 
   // The phone is the other half of this. Speaking aloud reaches someone in the
   // room; a notification reaches them when they are not, which is exactly the
   // case where holding her tongue would otherwise mean saying nothing at all.
-  const worthABuzz = sorted.filter((concern) => concern.urgency !== 'whenever');
+  //
+  // One notification, not one per item: everything found this hour goes out
+  // together or not at all.
+  const worthABuzz = sorted.filter(
+    (concern) =>
+      concern.urgency !== 'whenever' && (!overnight(now) || concern.urgency === 'now'),
+  );
   if (worthABuzz.length > 0) {
     await notify('Grace', worthABuzz.map((concern) => concern.text).join(' · ')).catch(
       () => 0,
@@ -215,8 +262,9 @@ export async function pulse(): Promise<PulseResult> {
     return {
       concerns: sorted,
       say: null,
-      held:
-        mode === 'away'
+      held: overnight(now)
+        ? 'Holding this until morning.'
+        : mode === 'away'
           ? 'Holding this until you are back.'
           : 'Not interrupting while you are heads-down.',
     };

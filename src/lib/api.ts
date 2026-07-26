@@ -8,6 +8,7 @@ import type {
   ConfirmationPolicy,
   GraceState,
   InputMode,
+  Message,
   Profile,
   ProfileEntry,
   PulseResult,
@@ -187,6 +188,13 @@ export async function webCheck(): Promise<Record<string, unknown>> {
 export async function pulse(): Promise<PulseResult> {
   const response = await fetch('/api/pulse', {method: 'POST'});
   if (!response.ok) return {concerns: [], say: null, held: null};
+  return response.json();
+}
+
+/** What she says when you walk in. Null most of the time, by design. */
+export async function greeting(): Promise<{say: string | null; message?: Message}> {
+  const response = await fetch('/api/greeting', {method: 'POST'});
+  if (!response.ok) return {say: null};
   return response.json();
 }
 

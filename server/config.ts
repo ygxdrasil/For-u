@@ -50,11 +50,18 @@ export const config = {
 
   port: Number(process.env.PORT ?? 3001),
 
-  /** How many recent turns are replayed to the model verbatim. */
-  verbatimTurns: 24,
+  /**
+   * How many recent turns are replayed to the model verbatim.
+   *
+   * Raised because the commonest complaint about her was forgetting something
+   * said a little while ago. Everything older is still reachable through
+   * search_memory, but a wider window means she does not have to think to
+   * reach for it — which is the difference between remembering and looking up.
+   */
+  verbatimTurns: 32,
 
   /** Once the log passes this many turns, older ones fold into a summary. */
-  summarizeAfter: 40,
+  summarizeAfter: 48,
 
   /** Set GRACE_LEARN=false to stop Grace building a profile of you. */
   learnFromConversation: process.env.GRACE_LEARN !== 'false',

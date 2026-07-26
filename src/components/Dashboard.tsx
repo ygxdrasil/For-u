@@ -203,7 +203,10 @@ export function Dashboard({
   );
 
   return (
-    <div className="scroll-thin flex h-full flex-col gap-5 overflow-y-auto px-5 py-5">
+    <div
+      className={`scroll-thin flex h-full flex-col gap-5 overflow-y-auto px-5 py-5 ${
+        mode === 'thinking' ? 'sheen' : ''
+      }`}>
       <div className="flex flex-col items-center">
         {/* The orb is the control now, not an ornament. Pressing it is the one
             way in that cannot be got wrong. */}
@@ -213,9 +216,17 @@ export function Dashboard({
 
       <div className="text-center">
         <p className="font-serif text-4xl tracking-wide text-slate-100 tabular-nums">
-          {now.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})}
+          {/* Keyed on the minute, so the new figure settles in rather than
+              swapping. It is the one thing on screen that is always true. */}
+          <span key={now.getMinutes()} className="settle inline-block">
+            {now.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})}
+          </span>
         </p>
-        <p className="mt-0.5 text-xs text-mist/60">
+        {/* The minute filling up. Slow enough to be atmosphere, not a timer. */}
+        <div className="mx-auto mt-1.5 h-px w-24 overflow-hidden bg-edge">
+          <div className="sweep h-full w-full bg-ice/50" />
+        </div>
+        <p className="mt-1.5 text-xs text-mist/60">
           {now.toLocaleDateString('en-GB', {
             weekday: 'long',
             day: 'numeric',
