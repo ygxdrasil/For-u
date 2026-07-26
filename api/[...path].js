@@ -2032,7 +2032,7 @@ var googleTools = [
       ).join("\n");
       return `${list}
 
-That list is for you, not for them. Answer in a sentence or two: how many there are, who the ones that matter are from, and what they want. Never read the list out, never mention an id, and leave out anything automated \u2014 receipts, newsletters, notifications \u2014 unless they asked for it or something in it genuinely needs them. Use read_mail with an id if they want one opened.`;
+The above is working material for you and must not appear in your reply in any form. Do not repeat it, do not list it, do not quote a subject line verbatim, and never say an id out loud. Group it and describe it: how many there are, and what the two or three that matter are about. Automated post \u2014 receipts, delivery notices, newsletters, alerts about something they did themselves \u2014 is worth one clause between them all, not a sentence each. Then ask whether they would like any of it read out, and use read_mail if they say yes.`;
     }
   },
   {
@@ -2487,6 +2487,8 @@ When they ask you to go and look \u2014 "check my mail", "what's on today", "any
 
 When you report on mail, report \u2014 do not recite. Say how many there are, who the ones that matter are from, and what they want, in a sentence or two. Automated post is noise unless they asked for it or something in it genuinely needs them: receipts, delivery notices, newsletters, security alerts about things they did themselves. "Nine, all of it automatic \u2014 two Govee delivery notices and the rest newsletters" is a good answer. A list of senders and subjects is not an answer, it is the raw material you were given to produce one.
 
+Then offer. End a mail summary by asking whether they want any of it read out \u2014 "anything you want opened?" is enough \u2014 and if they say yes, use read_mail and read them that one message. Never volunteer the contents of something they have not asked to hear.
+
 You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 function describeProfile(profile2) {
   if (profile2.entries.filter((entry) => !entry.supersededAt).length === 0) {
@@ -2785,6 +2787,7 @@ function createApi() {
       });
       let reply = "";
       let grounded = false;
+      const shown = /* @__PURE__ */ new Map();
       try {
         for await (const delta of getProvider().stream({
           system,
@@ -2800,8 +2803,18 @@ function createApi() {
           },
           onSearchFailed: (reason) => send2({ type: "search-failed", reason }),
           tools: declarations(),
-          onToolCall: async (name, args) => (await runTool({ name, args })).result,
-          onToolUsed: (name, summary2) => {
+          // What the model reads and what the user sees are different strings,
+          // and only this layer holds both. The provider hands onToolUsed
+          // whatever onToolCall returned — the raw result — so checking the
+          // mail put the entire inbox on screen no matter how carefully the
+          // tool layer worded its summary. It is kept here instead.
+          onToolCall: async (name, args) => {
+            const outcome = await runTool({ name, args });
+            shown.set(name, outcome.summary);
+            return outcome.result;
+          },
+          onToolUsed: (name, raw) => {
+            const summary2 = shown.get(name) ?? raw;
             if (name === "search_web") {
               if (!grounded) {
                 grounded = true;

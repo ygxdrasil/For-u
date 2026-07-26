@@ -60,12 +60,24 @@ class StubProvider implements LlmProvider {
 
   lastSearch: boolean | undefined = undefined;
   lastTools: {name: string}[] | undefined = undefined;
+  /** Set to make the next reply call a tool, as the real model would. */
+  nextToolCall: {name: string; args: Record<string, unknown>} | null = null;
 
   async *stream(request: GenerateRequest): AsyncIterable<string> {
     this.lastSystem = request.system;
     this.lastTurns = request.turns;
     this.lastSearch = request.search;
     this.lastTools = request.tools as {name: string}[] | undefined;
+
+    if (this.nextToolCall && request.onToolCall) {
+      const {name, args} = this.nextToolCall;
+      this.nextToolCall = null;
+      // Exactly what the provider does: hand onToolUsed whatever onToolCall
+      // returned. That is the seam the display summary used to fall through.
+      const result = await request.onToolCall(name, args);
+      request.onToolUsed?.(name, result);
+    }
+
     for (const chunk of REPLY_CHUNKS) yield chunk;
   }
 
@@ -600,6 +612,32 @@ try {
     'with no token she must say it is not connected',
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
+
+  // ---- what an action looks like on screen --------------------------------
+  // The provider hands onToolUsed whatever onToolCall returned — the raw
+  // result — so however carefully the tool layer worded its short summary, the
+  // interface showed the wall of text instead. Checking the mail printed the
+  // whole inbox under her reply, twice over, including the guidance meant only
+  // for her. Asserted end to end, through the same seam that leaked.
+  for (let index = 0; index < 12; index += 1) {
+    await runTool({name: 'add_reminder', args: {text: `something to do ${index}`}});
+  }
+  const bulky = await runTool({name: 'list_reminders', args: {}});
+  assert.ok(bulky.result.length > 200, 'the raw result should be genuinely long');
+
+  stub.nextToolCall = {name: 'list_reminders', args: {}};
+  const withAction = await chat('What is on my list?');
+  const acted = withAction.find((event) => event.type === 'acted');
+  assert.ok(acted && acted.type === 'acted', 'the action should reach the interface');
+  assert.ok(
+    acted.summary.length < 70 && !acted.summary.includes('\n'),
+    `what is shown must be one short line, got ${acted.summary.length} characters`,
+  );
+  assert.ok(
+    !acted.summary.includes('something to do'),
+    'and must not be the tool output itself',
+  );
+  ok('an action reaches the screen as a short line, not the tool’s output');
 
   // ---- tool output is working material, not something to read out ---------
   // She was handed the inbox — senders, subjects and a preview of each — and

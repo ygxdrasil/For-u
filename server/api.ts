@@ -359,6 +359,8 @@ export function createApi(): Express {
 
       let reply = '';
       let grounded = false;
+      /** Tool name to the one line the user should see about it. */
+      const shown = new Map<string, string>();
 
       try {
         for await (const delta of getProvider().stream({
@@ -375,8 +377,18 @@ export function createApi(): Express {
           },
           onSearchFailed: (reason) => send({type: 'search-failed', reason}),
           tools: declarations(),
-          onToolCall: async (name, args) => (await runTool({name, args})).result,
-          onToolUsed: (name, summary) => {
+          // What the model reads and what the user sees are different strings,
+          // and only this layer holds both. The provider hands onToolUsed
+          // whatever onToolCall returned — the raw result — so checking the
+          // mail put the entire inbox on screen no matter how carefully the
+          // tool layer worded its summary. It is kept here instead.
+          onToolCall: async (name, args) => {
+            const outcome = await runTool({name, args});
+            shown.set(name, outcome.summary);
+            return outcome.result;
+          },
+          onToolUsed: (name, raw) => {
+            const summary = shown.get(name) ?? raw;
             // Searching is an action like any other, but reads better as
             // "checked the web" than as a line of results.
             if (name === 'search_web') {

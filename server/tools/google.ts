@@ -76,12 +76,14 @@ export const googleTools: Tool[] = [
 
       return (
         `${list}\n\n` +
-        `That list is for you, not for them. Answer in a sentence or two: how ` +
-        `many there are, who the ones that matter are from, and what they want. ` +
-        `Never read the list out, never mention an id, and leave out anything ` +
-        `automated — receipts, newsletters, notifications — unless they asked ` +
-        `for it or something in it genuinely needs them. Use read_mail with an ` +
-        `id if they want one opened.`
+        `The above is working material for you and must not appear in your ` +
+        `reply in any form. Do not repeat it, do not list it, do not quote a ` +
+        `subject line verbatim, and never say an id out loud. Group it and ` +
+        `describe it: how many there are, and what the two or three that ` +
+        `matter are about. Automated post — receipts, delivery notices, ` +
+        `newsletters, alerts about something they did themselves — is worth ` +
+        `one clause between them all, not a sentence each. Then ask whether ` +
+        `they would like any of it read out, and use read_mail if they say yes.`
       );
     },
   },
