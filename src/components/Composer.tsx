@@ -93,9 +93,9 @@ export function Composer({
         label={
           micSupported
             ? micOn
-              ? 'Wake word on'
-              : 'Wake word off'
-            : 'This browser has no wake-word support'
+              ? 'Always listening — say “Grace”'
+              : 'Not listening. Turn on to say “Grace” from across the room'
+            : 'This browser cannot listen'
         }
         onClick={onToggleMic}>
         {micOn ? <Mic size={17} /> : <MicOff size={17} />}

@@ -76,7 +76,7 @@ export default function App() {
   const notice =
     mode === 'offline'
       ? 'No Gemini API key found. Set GEMINI_API_KEY where Grace is running, then restart or redeploy her.'
-      : (grace.error ?? grace.listener.error);
+      : (grace.error ?? grace.ambient.error);
 
   /** One press: she opens the microphone and closes it when you stop talking. */
   const talk = () => {
@@ -186,7 +186,7 @@ export default function App() {
               streaming={grace.streaming}
               searched={grace.searched}
               actions={grace.actions}
-              heard={grace.micOn ? grace.listener.heard : ''}
+              heard={grace.micOn ? grace.ambient.heard : ''}
               onOpener={(text) => void grace.send(text, 'text')}
             />
           </div>
@@ -274,9 +274,9 @@ export default function App() {
         canStop={mode === 'thinking' || mode === 'speaking'}
         micOn={grace.micOn}
         voiceOn={grace.voiceOn}
-        micSupported={grace.listener.supported}
+        micSupported
         voiceSupported={grace.speech.supported}
-        awake={grace.listener.awake}
+        awake={grace.ambient.awake}
         recording={grace.recorder.state === 'recording'}
         recorderBusy={
           grace.recorder.state === 'starting' ||
@@ -290,7 +290,7 @@ export default function App() {
         onStop={grace.stop}
         onToggleMic={() => grace.setMicOn(!grace.micOn)}
         onToggleVoice={() => grace.setVoiceOn(!grace.voiceOn)}
-        onTalk={grace.listener.wake}
+        onTalk={talk}
       />
     </div>
   );

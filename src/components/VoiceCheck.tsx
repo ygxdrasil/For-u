@@ -239,11 +239,12 @@ export function VoiceCheck({onClose, deviceId, onPickDevice}: VoiceCheckProps) {
         ok: found.length > 0,
       });
 
-      const wake = Boolean(window.SpeechRecognition ?? window.webkitSpeechRecognition);
       results.push({
-        label: 'Wake word available',
-        value: wake ? 'yes' : 'no — press Speak instead, which always works',
-        ok: true,
+        label: 'Always-on listening',
+        value: canRecord
+          ? 'available — turn on the microphone to say “Grace”'
+          : 'needs a working microphone',
+        ok: canRecord,
       });
 
       if (!cancelled) setFindings(results);

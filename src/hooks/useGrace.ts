@@ -10,9 +10,10 @@ import type {
 } from '../../shared/types.ts';
 import * as api from '../lib/api.ts';
 import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
-import {useListener} from '../voice/useListener.ts';
+import {useAmbient} from '../voice/useAmbient.ts';
 import {useRecorder} from '../voice/useRecorder.ts';
 import {useSpeech} from '../voice/useSpeech.ts';
+import {useWakeLock} from '../voice/useWakeLock.ts';
 import type {EncodedAudio} from '../voice/wav.ts';
 
 export type Mode = 'offline' | 'idle' | 'waiting' | 'listening' | 'thinking' | 'speaking';
@@ -189,16 +190,18 @@ export function useGrace() {
     onCaptured: (audio) => void handleRecordingRef.current(audio),
   });
 
-  const listener = useListener({
+  const ambient = useAmbient({
     enabled: micOn,
-    // Deaf while she is thinking or talking, so she never answers herself —
-    // and, critically, whenever the recorder wants the microphone. Speech
-    // recognition holds the device for as long as it runs, so leaving it going
-    // during a recording is two consumers fighting over one microphone, which
-    // the recorder loses silently.
+    deviceId,
+    // Her own voice must never wake her, and the recorder must never be
+    // fighting her for the microphone.
     paused: busy || speech.speaking || recorder.state !== 'idle' || transcribing,
     onRequest: handleRequest,
   });
+
+  // Only worth holding the machine awake while she is actually listening.
+  useWakeLock(micOn);
+
 
   /**
    * The reliable route in. The browser records, the server transcribes, and
@@ -282,7 +285,10 @@ export function useGrace() {
     if (speech.speaking) return 'speaking';
     if (busy) return 'thinking';
     if (!micOn) return 'idle';
-    return listener.awake ? 'listening' : 'waiting';
+    // Someone is talking in the room, whether or not it turns out to be for her.
+    if (ambient.state === 'hearing' || ambient.awake) return 'listening';
+    if (ambient.state === 'working') return 'thinking';
+    return 'waiting';
   }, [
     state,
     recorder.state,
@@ -290,7 +296,8 @@ export function useGrace() {
     speech.speaking,
     busy,
     micOn,
-    listener.awake,
+    ambient.state,
+    ambient.awake,
   ]);
 
   return {
@@ -304,7 +311,7 @@ export function useGrace() {
     mode,
     micOn,
     voiceOn,
-    listener,
+    ambient,
     recorder,
     transcribing,
     misheard,
