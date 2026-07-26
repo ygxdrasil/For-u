@@ -1,4 +1,5 @@
-import type {ActionPolicy, Profile} from '../shared/types';
+import type {ActionPolicy, AttentionMode, Profile} from '../shared/types';
+import {MODES} from './modes';
 
 interface PersonaContext {
   profile: Profile;
@@ -8,6 +9,8 @@ interface PersonaContext {
   /** How the current message arrived — spoken replies need to be shorter. */
   via: 'voice' | 'text';
   now: Date;
+  /** How much of the user's attention she may take right now. */
+  mode: AttentionMode;
 }
 
 const IDENTITY = `You are Grace, a personal assistant to one person — the user you are speaking with.
@@ -93,7 +96,7 @@ function describePolicies(policies: ActionPolicy[]): string {
 }
 
 export function buildSystemPrompt(context: PersonaContext): string {
-  const {profile, summary, policies, via, now} = context;
+  const {profile, summary, policies, via, now, mode} = context;
 
   const address = profile.addressAs
     ? `Address the user as "${profile.addressAs}" — sparingly, not in every reply.`
@@ -131,6 +134,7 @@ export function buildSystemPrompt(context: PersonaContext): string {
     PHASE_NOTE,
     clock,
     channel,
+    `The user has you in ${MODES[mode].label} mode. ${MODES[mode].guidance}`,
   ]
     .filter(Boolean)
     .join('\n\n');

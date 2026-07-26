@@ -17,8 +17,8 @@ const SILENCE =
 
 const SENTENCE_END = /(?<=[.!?…])\s+/;
 
-/** Long enough to be worth a request, short enough to start talking quickly. */
-const CHUNK_TARGET = 240;
+/** Comfortably inside what the speech route accepts in one go. */
+const CHUNK_TARGET = 1500;
 
 export type VoiceSource = 'grace' | 'browser';
 
@@ -255,40 +255,46 @@ export function useSpeech(enabled: boolean) {
   );
 
   /**
-   * Feed streamed text in. The first complete sentence goes out on its own so
-   * she starts talking early; after that lines are grouped, since each one
-   * costs a request.
+   * Collect the reply as it streams. Nothing is spoken yet.
+   *
+   * Speaking sentence by sentence starts her talking sooner, but costs a
+   * request per sentence, and the free allowance for the speech model is
+   * counted in requests per day rather than words. One request per reply is
+   * the difference between her having a voice all day and losing it by
+   * mid-morning, and since she answers in two or three sentences the wait is
+   * about a second.
    */
   const push = useCallback(
     (delta: string) => {
       if (!enabled) return;
       bufferRef.current += delta;
-
-      const first = queueRef.current.length === 0 && !pumpingRef.current;
-      const target = first ? 1 : CHUNK_TARGET;
-
-      while (true) {
-        const parts = bufferRef.current.split(SENTENCE_END);
-        if (parts.length < 2) break;
-
-        let taken = '';
-        while (parts.length > 1 && taken.length < target) {
-          taken += `${parts.shift() as string} `;
-        }
-        bufferRef.current = parts.join(' ');
-        enqueue(taken);
-        if (first) break;
-      }
     },
-    [enabled, enqueue],
+    [enabled],
   );
 
-  /** Speak whatever is left once the stream ends. */
+  /** The reply is complete. Say it. */
   const flush = useCallback(() => {
     if (!enabled) return;
-    const remainder = bufferRef.current;
+    const whole = bufferRef.current.trim();
     bufferRef.current = '';
-    enqueue(remainder);
+    if (!whole) return;
+
+    // Only a long reply is broken up, and then on sentence boundaries, since
+    // the server won't take more than a couple of thousand characters at once.
+    if (whole.length <= CHUNK_TARGET) {
+      enqueue(whole);
+      return;
+    }
+
+    let batch = '';
+    for (const sentence of whole.split(SENTENCE_END)) {
+      if (batch && batch.length + sentence.length > CHUNK_TARGET) {
+        enqueue(batch);
+        batch = '';
+      }
+      batch += `${sentence} `;
+    }
+    enqueue(batch);
   }, [enabled, enqueue]);
 
   /** Say one thing right now, outside any stream. */

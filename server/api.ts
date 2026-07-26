@@ -18,6 +18,7 @@ import {
 import {config, isConfigured} from './config';
 import {learnFrom} from './learn';
 import {getProvider} from './llm/index';
+import {getMode, isMode, setMode} from './modes';
 import {
   clearConversation,
   compactIfNeeded,
@@ -110,10 +111,12 @@ export function createApi(): Express {
   api.get(
     '/state',
     guard(async (_req, res) => {
-      const [messages, profile, policies] = await Promise.all([
+      const [messages, profile, policies, mode, summary] = await Promise.all([
         getMessages(),
         getProfile(),
         getPolicies(),
+        getMode(),
+        getSummary(),
       ]);
 
       const state: GraceState = {
@@ -122,8 +125,23 @@ export function createApi(): Express {
         policies,
         ready: isConfigured(),
         model: config.model,
+        mode,
+        summary,
+        storage: {backend: getBackend().name, encrypted: Boolean(config.secret)},
       };
       res.json(state);
+    }),
+  );
+
+  api.post(
+    '/mode',
+    guard(async (req, res) => {
+      const requested = req.body?.mode;
+      if (!isMode(requested)) {
+        res.status(400).json({error: 'unknown mode'});
+        return;
+      }
+      res.json(await setMode(requested));
     }),
   );
 
@@ -174,6 +192,7 @@ export function createApi(): Express {
         policies,
         via,
         now: new Date(),
+        mode: (await getMode()).mode,
       });
 
       let reply = '';
@@ -317,7 +336,10 @@ export function createApi(): Express {
             ? 'I have used up my speech allowance for now. It resets shortly.'
             : 'I could not put that into words out loud.';
 
-        res.status(502).json({error: explained});
+        // The raw provider message goes back too. This is the user's own
+        // server behind their own password, and without it every diagnosis of
+        // a silent assistant is guesswork.
+        res.status(502).json({error: explained, detail: detail.slice(0, 500)});
       }
     }),
   );

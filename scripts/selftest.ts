@@ -298,6 +298,38 @@ try {
   );
   ok('speech endpoint validates its input');
 
+  // ---- attention modes ---------------------------------------------------
+  // These are not decoration: the mode has to reach the model, or "Focus" is
+  // a button that changes a colour and nothing else.
+  const focused = await call('/mode', {
+    method: 'POST',
+    body: JSON.stringify({mode: 'focus'}),
+  });
+  assert.equal(focused.status, 200);
+  assert.equal(((await focused.json()) as {mode: string}).mode, 'focus');
+
+  await chat('Still there?');
+  assert.match(stub.lastSystem, /Focus mode/, 'the mode must reach the model');
+  assert.match(stub.lastSystem, /Volunteer nothing/, 'and bring its guidance with it');
+  ok('attention mode reaches the system prompt');
+
+  const state = (await (await call('/state')).json()) as {
+    mode: {mode: string};
+    storage: {backend: string; encrypted: boolean};
+  };
+  assert.equal(state.mode.mode, 'focus', 'the mode must survive a reload');
+  assert.equal(state.storage.encrypted, true, 'the dashboard must report the truth');
+  ok('dashboard readouts come from real state, not placeholders');
+
+  assert.equal(
+    (await call('/mode', {method: 'POST', body: JSON.stringify({mode: 'nap'})})).status,
+    400,
+    'an unknown mode must be refused',
+  );
+  ok('unknown modes rejected');
+
+  await call('/mode', {method: 'POST', body: JSON.stringify({mode: 'open'})});
+
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {
     const locked = await call('/policies', {

@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {
+  AttentionMode,
   GraceState,
   InputMode,
   Message,
@@ -224,6 +225,11 @@ export function useGrace() {
     [applyProfile],
   );
 
+  const setAttention = useCallback(async (next: AttentionMode) => {
+    const mode = await api.setAttentionMode(next);
+    setState((current) => (current ? {...current, mode} : current));
+  }, []);
+
   const clear = useCallback(async () => {
     await api.clearConversation();
     setMessages([]);
@@ -273,5 +279,6 @@ export function useGrace() {
     forget,
     rename,
     clear,
+    setAttention,
   };
 }

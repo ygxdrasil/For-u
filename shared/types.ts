@@ -58,6 +58,15 @@ export interface ActionPolicy {
   locked?: boolean;
 }
 
+/** How much of your attention Grace may take. */
+export type AttentionMode = 'open' | 'work' | 'focus' | 'away';
+
+export interface ModeState {
+  mode: AttentionMode;
+  /** ISO timestamp of when this mode was entered. */
+  since: string;
+}
+
 export interface GraceState {
   messages: Message[];
   profile: Profile;
@@ -65,6 +74,11 @@ export interface GraceState {
   /** False when no API key is configured, so the UI can explain itself. */
   ready: boolean;
   model: string;
+  mode: ModeState;
+  /** What she has folded away from older conversations. Null before any. */
+  summary: string | null;
+  /** Where memory is kept, and whether it is encrypted at rest. */
+  storage: {backend: string; encrypted: boolean};
 }
 
 /** Server-sent events streamed from POST /api/chat. */

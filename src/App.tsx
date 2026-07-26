@@ -1,6 +1,7 @@
 import {Headphones, PanelRight} from 'lucide-react';
 import {useState} from 'react';
 import {Composer} from './components/Composer';
+import {Dashboard} from './components/Dashboard';
 import {Lock} from './components/Lock';
 import {VoiceCheck} from './components/VoiceCheck';
 import {Orb} from './components/Orb';
@@ -122,15 +123,20 @@ export default function App() {
       </header>
 
       <main className="relative flex min-h-0 flex-1">
-        <aside className="hidden w-80 shrink-0 flex-col items-center justify-center gap-6 border-r border-edge/70 lg:flex">
-          <Orb mode={mode} />
-          <div className="px-8 text-center">
-            <p className="text-sm text-slate-300">{MODE_LABEL[mode]}</p>
-            <p className="mt-1.5 text-xs leading-relaxed text-mist/50">
-              Press Speak, say your piece, press Stop.
-            </p>
-          </div>
-        </aside>
+        {/* This used to be the orb alone on an empty column, which is a lot of
+            screen saying nothing. */}
+        {state && (
+          <aside className="hidden w-80 shrink-0 border-r border-edge/70 lg:block">
+            <Dashboard
+              state={state}
+              mode={mode}
+              micLevel={grace.recorder.level}
+              recording={grace.recorder.state === 'recording'}
+              voiceSource={grace.speech.source}
+              onSetAttention={(next) => void grace.setAttention(next)}
+            />
+          </aside>
+        )}
 
         <section className="flex min-w-0 flex-1 flex-col">
           {/* The orb rides along the top on narrow screens. The wrapper is sized

@@ -1,6 +1,8 @@
 import type {
   ActionCategory,
+  AttentionMode,
   ChatEvent,
+  ModeState,
   ConfirmationPolicy,
   GraceState,
   InputMode,
@@ -155,13 +157,28 @@ export async function speak(
   if (response.status === 401) throw new NeedsPassword();
 
   const body = (await response.json().catch(() => null)) as
-    | {audio?: string; mimeType?: string; error?: string}
+    | {audio?: string; mimeType?: string; error?: string; detail?: string}
     | null;
 
   if (!response.ok || !body?.audio) {
-    throw new Error(body?.error ?? 'speech failed');
+    const failure = new Error(body?.error ?? 'speech failed');
+    // Kept apart from the readable message so a diagnostic can show the
+    // provider's own words without them leaking into ordinary notices.
+    (failure as Error & {detail?: string}).detail = body?.detail;
+    throw failure;
   }
   return {audio: body.audio, mimeType: body.mimeType ?? 'audio/wav'};
+}
+
+export async function setAttentionMode(mode: AttentionMode): Promise<ModeState> {
+  const response = await expectOk(
+    await fetch('/api/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode}),
+    }),
+  );
+  return response.json();
 }
 
 export async function setAddressAs(addressAs: string | null): Promise<Profile> {

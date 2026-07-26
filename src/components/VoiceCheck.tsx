@@ -104,12 +104,14 @@ export function VoiceCheck({onClose}: {onClose: () => void}) {
       URL.revokeObjectURL(url);
       report('voice', 'Spoke that aloud. If you heard nothing, check the volume.');
     } catch (cause) {
-      const message = (cause as Error).message;
+      const failure = cause as Error & {detail?: string};
       report(
         'voice',
-        (cause as Error).name === 'NotAllowedError'
+        failure.name === 'NotAllowedError'
           ? 'The browser blocked the audio. Tap the page once, then try again.'
-          : `Failed: ${message}`,
+          : // The provider's own words, verbatim. A paraphrase is no use when
+            // the whole question is why she won't speak.
+            `Failed: ${failure.message}${failure.detail ? ` — ${failure.detail}` : ''}`,
       );
     } finally {
       setRunning(null);

@@ -650,6 +650,45 @@ Grace: ${graceText}`
   }
 }
 
+// server/modes.ts
+var MODES = {
+  open: {
+    label: "Open",
+    blurb: "Normal. She speaks up when it\u2019s worth it.",
+    guidance: "No special constraints. Answer as you normally would, and raise anything genuinely worth raising."
+  },
+  work: {
+    label: "Work",
+    blurb: "Brisk and on-task. Personal matters wait.",
+    guidance: "The user is working. Be brisk and concrete \u2014 lead with the answer, cut the preamble entirely. Keep replies to a sentence or two unless asked for more. Hold anything personal or non-urgent until they are out of Work mode, and say you are holding it rather than dropping it."
+  },
+  focus: {
+    label: "Focus",
+    blurb: "Answers only. Nothing volunteered.",
+    guidance: "The user is concentrating and every word costs them. Answer exactly what was asked, in as few words as will do \u2014 often a fragment rather than a sentence. Volunteer nothing at all: no observations, no suggestions, no follow-up questions. If something is genuinely urgent, say only that it is urgent and what it is, in under ten words."
+  },
+  away: {
+    label: "Away",
+    blurb: "She takes messages and holds them.",
+    guidance: "The user is away from their desk and may be listening rather than reading. Assume everything is being spoken aloud: short sentences, no detail they cannot hold in their head. Take note of anything that arrives and tell them it is waiting rather than working through it now."
+  }
+};
+var DEFAULT = { mode: "open", since: (/* @__PURE__ */ new Date(0)).toISOString() };
+var store2 = new Document("mode", () => DEFAULT);
+function getMode() {
+  return store2.read();
+}
+function isMode(value) {
+  return typeof value === "string" && value in MODES;
+}
+async function setMode(mode) {
+  const current = await store2.read();
+  if (current.mode === mode) return current;
+  const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
+  await store2.write(next);
+  return next;
+}
+
 // server/persona.ts
 var IDENTITY = `You are Grace, a personal assistant to one person \u2014 the user you are speaking with.
 
@@ -712,7 +751,7 @@ function describePolicies(policies) {
 ${described}`;
 }
 function buildSystemPrompt(context) {
-  const { profile: profile2, summary, policies, via, now } = context;
+  const { profile: profile2, summary, policies, via, now, mode } = context;
   const address = profile2.addressAs ? `Address the user as "${profile2.addressAs}" \u2014 sparingly, not in every reply.` : `Do not use an honorific for the user. Address them simply as "you".`;
   const clock = `The current date and time is ${now.toLocaleString("en-GB", {
     weekday: "long",
@@ -738,7 +777,8 @@ ${summary}` : null;
     LIMITS,
     PHASE_NOTE,
     clock,
-    channel
+    channel,
+    `The user has you in ${MODES[mode].label} mode. ${MODES[mode].guidance}`
   ].filter(Boolean).join("\n\n");
 }
 
@@ -793,19 +833,35 @@ function createApi() {
   api.get(
     "/state",
     guard(async (_req, res) => {
-      const [messages2, profile2, policies] = await Promise.all([
+      const [messages2, profile2, policies, mode, summary] = await Promise.all([
         getMessages(),
         getProfile(),
-        getPolicies()
+        getPolicies(),
+        getMode(),
+        getSummary()
       ]);
       const state = {
         messages: messages2,
         profile: profile2,
         policies,
         ready: isConfigured(),
-        model: config.model
+        model: config.model,
+        mode,
+        summary,
+        storage: { backend: getBackend().name, encrypted: Boolean(config.secret) }
       };
       res.json(state);
+    })
+  );
+  api.post(
+    "/mode",
+    guard(async (req, res) => {
+      const requested = req.body?.mode;
+      if (!isMode(requested)) {
+        res.status(400).json({ error: "unknown mode" });
+        return;
+      }
+      res.json(await setMode(requested));
     })
   );
   api.post(
@@ -848,7 +904,8 @@ function createApi() {
         summary,
         policies,
         via,
-        now: /* @__PURE__ */ new Date()
+        now: /* @__PURE__ */ new Date(),
+        mode: (await getMode()).mode
       });
       let reply = "";
       try {
@@ -939,7 +996,7 @@ function createApi() {
         const detail = error.message ?? "unknown error";
         console.error("[grace] speech failed:", detail);
         const explained = /API[_ ]?KEY|not valid|UNAUTHENTICATED/i.test(detail) ? "My API key was rejected. Check GEMINI_API_KEY where I am running." : /quota|RESOURCE_EXHAUSTED|rate/i.test(detail) ? "I have used up my speech allowance for now. It resets shortly." : "I could not put that into words out loud.";
-        res.status(502).json({ error: explained });
+        res.status(502).json({ error: explained, detail: detail.slice(0, 500) });
       }
     })
   );
