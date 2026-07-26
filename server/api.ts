@@ -30,6 +30,7 @@ import {
   type GoogleError,
 } from './google/oauth';
 import {getProvider} from './llm/index';
+import {auditTools, declarations, runTool} from './tools/index';
 import {getMode, isMode, setMode} from './modes';
 import {
   clearConversation,
@@ -291,6 +292,9 @@ export function createApi(): Express {
             }
           },
           onSearchFailed: (reason) => send({type: 'search-failed', reason}),
+          tools: declarations(),
+          onToolCall: async (name, args) => (await runTool({name, args})).result,
+          onToolUsed: (name, summary) => send({type: 'acted', name, summary}),
         })) {
           reply += delta;
           send({type: 'delta', text: delta});

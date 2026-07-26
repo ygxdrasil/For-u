@@ -185,6 +185,7 @@ export default function App() {
               messages={grace.messages}
               streaming={grace.streaming}
               searched={grace.searched}
+              actions={grace.actions}
               heard={grace.micOn ? grace.listener.heard : ''}
               onOpener={(text) => void grace.send(text, 'text')}
             />

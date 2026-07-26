@@ -38,6 +38,12 @@ export interface GenerateRequest {
   onGrounded?: () => void;
   /** Called when the web was wanted but could not be reached. */
   onSearchFailed?: (reason: string) => void;
+  /** Function declarations she may call, in the provider's own shape. */
+  tools?: unknown[];
+  /** Runs one call and returns what to hand back to the model. */
+  onToolCall?: (name: string, args: Record<string, unknown>) => Promise<string>;
+  /** Told about each call so the interface can show it happening. */
+  onToolUsed?: (name: string, summary: string) => void;
 }
 
 export interface TranscribeRequest {

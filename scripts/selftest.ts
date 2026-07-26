@@ -35,6 +35,8 @@ import {
   recentTurns,
 } from '../server/memory';
 import {setBackend} from '../server/store/index';
+import {auditTools, runTool} from '../server/tools/index';
+import {allReminders, outstanding} from '../server/tools/reminders';
 import type {Backend} from '../server/store/types';
 
 const REPLY_CHUNKS = ['Good morning. ', 'Nothing pressing today. ', 'Tea at four?'];
@@ -424,6 +426,48 @@ try {
   const nested = routes.filter((route) => route.split('/').filter(Boolean).length > 1);
   assert.deepEqual(nested, [], `these routes are unreachable once deployed: ${nested}`);
   ok(`all ${routes.length} routes are a single segment, so Vercel can reach them`);
+
+  // ---- she can actually do things ----------------------------------------
+  const openBefore = (await outstanding()).length;
+  const added = await runTool({
+    name: 'add_reminder',
+    args: {text: 'ring the dentist', due: '2026-08-01T09:00:00Z'},
+  });
+  assert.ok(added.ok, `adding a reminder should work: ${added.result}`);
+  assert.equal((await outstanding()).length, openBefore + 1, 'and should persist');
+  ok('tools run and their effects last');
+
+  const listed = await runTool({name: 'list_reminders', args: {}});
+  assert.match(listed.result, /dentist/, 'the list should come back');
+
+  const finished = await runTool({
+    name: 'complete_reminder',
+    args: {text: 'dentist'},
+  });
+  assert.ok(finished.ok);
+  assert.equal(
+    (await outstanding()).length,
+    openBefore,
+    'completing should take it off the outstanding list',
+  );
+  assert.equal(
+    (await allReminders()).length,
+    openBefore + 1,
+    'but must not delete it — nothing is ever destroyed',
+  );
+  ok('completed items are marked, never deleted');
+
+  const missing = await runTool({name: 'add_reminder', args: {}});
+  assert.equal(missing.ok, false, 'a call with no text must not silently succeed');
+  const unknown = await runTool({name: 'launch_missiles', args: {}});
+  assert.equal(unknown.ok, false, 'an invented tool must not run');
+  ok('malformed and invented tool calls refused');
+
+  // The two hard limits, proved about the tool list itself rather than about
+  // any particular call: there is no tool that sends, spends, or destroys, so
+  // there is nothing to be talked past.
+  assert.deepEqual(auditTools(), [], 'no tool may send, spend, or destroy');
+  ok('no tool exists that could send, spend, or destroy anything');
 
   // ---- she cannot send mail, as a matter of code -------------------------
   // Google publishes no draft-only scope, so gmail.compose carries the ability

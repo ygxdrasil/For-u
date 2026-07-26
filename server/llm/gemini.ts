@@ -1,5 +1,5 @@
 import {GoogleGenAI} from '@google/genai';
-import type {GenerateContentConfig} from '@google/genai';
+import type {Content, GenerateContentConfig} from '@google/genai';
 import {config} from '../config';
 import type {
   GenerateRequest,
@@ -21,6 +21,14 @@ The speaker may have a strong accent, may not be a native English speaker, and m
 - If the speaker uses another language entirely, transcribe it in that language.
 
 Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio, no notes about audio quality. If there is no speech at all, return nothing.`;
+
+/**
+ * How many times she may act before answering.
+ *
+ * High enough for "add that, and what else is on my list", low enough that a
+ * model stuck in a loop stops rather than running until the request times out.
+ */
+const MAX_TOOL_ROUNDS = 5;
 
 const SPEAK_DIRECTION =
   'Read the following aloud in a calm, warm, unhurried voice, the way a ' +
@@ -73,16 +81,61 @@ export class GeminiProvider implements LlmProvider {
     let spoken = false;
 
     try {
-      const response = await this.client.models.generateContentStream(
-        this.params(request),
-      );
-      for await (const chunk of response) {
-        if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
-        if (chunk.text) {
-          spoken = true;
-          yield chunk.text;
+      // The conversation grows as she acts: each round may end in tool calls,
+      // whose results are appended and the whole thing asked again, until she
+      // has nothing left to do and simply answers.
+      const history: Content[] = request.turns.map((turn) => ({
+        role: turn.role === 'assistant' ? 'model' : 'user',
+        parts: [{text: turn.text}],
+      }));
+
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+        const response = await this.client.models.generateContentStream({
+          ...this.params(request),
+          contents: history,
+        });
+
+        const calls: {name: string; args: Record<string, unknown>}[] = [];
+
+        for await (const chunk of response) {
+          if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
+
+          for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+            if (part.functionCall?.name) {
+              calls.push({
+                name: part.functionCall.name,
+                args: (part.functionCall.args ?? {}) as Record<string, unknown>,
+              });
+            }
+          }
+
+          if (chunk.text) {
+            spoken = true;
+            yield chunk.text;
+          }
         }
+
+        // Nothing to do: that was her answer.
+        if (calls.length === 0 || !request.onToolCall) return;
+
+        history.push({
+          role: 'model',
+          parts: calls.map((call) => ({
+            functionCall: {name: call.name, args: call.args},
+          })),
+        });
+
+        const results = [];
+        for (const call of calls) {
+          const result = await request.onToolCall(call.name, call.args);
+          request.onToolUsed?.(call.name, result);
+          results.push({
+            functionResponse: {name: call.name, response: {result}},
+          });
+        }
+        history.push({role: 'user', parts: results});
       }
+
       return;
     } catch (error) {
       // The daily allowance for grounded prompts is smaller than the one for
@@ -192,10 +245,13 @@ export class GeminiProvider implements LlmProvider {
     if (request.json) {
       config.responseMimeType = 'application/json';
       config.responseSchema = request.json;
-    } else if (request.search) {
+    } else {
+      const tools: object[] = [];
       // Grounding is a tool, not a mode: she searches when the answer needs
       // something she cannot know, and doesn't when it doesn't.
-      config.tools = [{googleSearch: {}}];
+      if (request.search) tools.push({googleSearch: {}});
+      if (request.tools?.length) tools.push({functionDeclarations: request.tools});
+      if (tools.length > 0) config.tools = tools;
     }
 
     // Conversation should feel immediate; deliberation costs a beat of silence

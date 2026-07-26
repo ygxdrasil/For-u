@@ -9,8 +9,11 @@ const DEFAULT_POLICIES: ActionPolicy[] = [
   {category: 'communication', policy: 'always', locked: true},
   {category: 'purchase', policy: 'always', locked: true},
   {category: 'security', policy: 'always'},
+  // The user's chosen line: she gets on with things she can undo, and only
+  // sending and spending stop her. Nothing here can delete, so "high-risk"
+  // covers cancelling and anything involving other people.
   {category: 'calendar', policy: 'high-risk'},
-  {category: 'home', policy: 'high-risk'},
+  {category: 'home', policy: 'never'},
   {category: 'research', policy: 'never'},
 ];
 

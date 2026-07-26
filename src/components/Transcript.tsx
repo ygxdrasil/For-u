@@ -1,4 +1,4 @@
-import {Globe} from 'lucide-react';
+import {Check, Globe} from 'lucide-react';
 import {useEffect, useRef} from 'react';
 import type {Message} from '../../shared/types.ts';
 
@@ -63,6 +63,8 @@ interface TranscriptProps {
   streaming: string;
   /** She went to the web for the reply currently streaming in. */
   searched: boolean;
+  /** Things she actually did while answering. */
+  actions: string[];
   heard: string;
   onOpener?: (text: string) => void;
 }
@@ -71,6 +73,7 @@ export function Transcript({
   messages,
   streaming,
   searched,
+  actions,
   heard,
   onOpener,
 }: TranscriptProps) {
@@ -144,6 +147,16 @@ export function Transcript({
           </span>
         </div>
       )}
+
+      {/* An action she took is never left invisible. */}
+      {actions.map((action, index) => (
+        <div key={`${action}-${index}`} className="flex justify-start">
+          <span className="rise inline-flex items-center gap-1.5 rounded-full border border-ice/25 bg-ice/10 px-2.5 py-1 text-[0.65rem] text-ice/90">
+            <Check size={11} />
+            {action}
+          </span>
+        </div>
+      ))}
 
       {streaming && (
         <div className="flex justify-start">
