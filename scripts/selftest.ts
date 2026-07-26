@@ -601,6 +601,17 @@ try {
   ok('she can look at the PlayStation, and says so when it is not connected');
 
   // ---- the laptop bridge --------------------------------------------------
+  // Grace hands out the bridge program herself, so getting it onto a locked-
+  // down laptop needs no git, no installer and no administrator. That copy
+  // has to be the same program, or she is serving something that has quietly
+  // stopped matching what is tested here.
+  assert.equal(
+    readFileSync('public/bridge.mjs', 'utf8'),
+    readFileSync('bridge/bridge.mjs', 'utf8'),
+    'the downloadable bridge has drifted from the real one — run npm run sync:bridge',
+  );
+  ok('the bridge she hands out is the same program that is tested');
+
   // This is the only route that anything on the open internet can reach
   // without the password, so what it refuses matters more than what it does.
   const refused = await fetch(`${base}/bridge`, {

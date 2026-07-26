@@ -1,4 +1,4 @@
-import {Check, Copy, Laptop} from 'lucide-react';
+import {Check, Copy, Download, Laptop} from 'lucide-react';
 import {useEffect, useState} from 'react';
 
 /**
@@ -46,9 +46,12 @@ export function Bridge() {
 
   if (!status) return null;
 
+  // The exact line to run, with her own address and the token already in it.
+  const command = `node bridge.mjs ${window.location.origin} ${status.token}`;
+
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(status.token);
+      await navigator.clipboard.writeText(command);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -82,38 +85,49 @@ export function Bridge() {
       ) : (
         <p className="text-[0.65rem] leading-relaxed text-mist/60">
           She can only reach the PlayStation through a program on a machine in
-          the same house. It is in <span className="font-mono">bridge/</span> in
-          her repository, with instructions.
+          the same house. Download it below, then run the command in a terminal
+          on the laptop that stays on.
           {status.seenAt && ` Last heard from ${ago(status.seenAt)}.`}
         </p>
       )}
 
       <div className="flex gap-1.5">
+        <a
+          href="/bridge.mjs"
+          download="bridge.mjs"
+          className="flex items-center gap-1.5 rounded-lg border border-ice/40 bg-ice/15 px-3 py-1.5 text-xs text-ice transition hover:bg-ice/25">
+          <Download size={12} />
+          Download the bridge
+        </a>
         <button
           type="button"
           onClick={() => void copy()}
-          className="flex items-center gap-1.5 rounded-lg border border-ice/40 bg-ice/15 px-3 py-1.5 text-xs text-ice transition hover:bg-ice/25">
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? 'Copied' : 'Copy the token'}
-        </button>
-        <button
-          type="button"
-          onClick={() => setShown((open) => !open)}
           className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-mist transition hover:text-slate-200">
-          <Laptop size={12} />
-          {shown ? 'Hide' : 'Show'}
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? 'Copied' : 'Copy command'}
         </button>
       </div>
 
+      {/* The whole command, token and all. Nobody should have to assemble
+          this by hand from three places on a laptop they cannot install
+          anything on. */}
+      <button
+        type="button"
+        onClick={() => setShown((open) => !open)}
+        className="flex items-center gap-1.5 text-[0.62rem] text-mist/50 transition hover:text-mist">
+        <Laptop size={11} />
+        {shown ? 'Hide the command' : 'Show the command to run'}
+      </button>
+
       {shown && (
-        <p className="break-all rounded-lg border border-edge bg-surface px-2.5 py-2 font-mono text-[0.65rem] text-slate-300">
-          {status.token}
+        <p className="break-all rounded-lg border border-edge bg-surface px-2.5 py-2 font-mono text-[0.65rem] leading-relaxed text-slate-300">
+          {command}
         </p>
       )}
 
       <p className="text-[0.6rem] leading-relaxed text-mist/40">
-        This one is meant to be copied — it is how the laptop proves it is
-        yours. It can wake the console and put it to sleep, and nothing else.
+        The token in that command is how the laptop proves it is yours. It can
+        wake the console and put it to sleep, and nothing else.
       </p>
     </div>
   );
