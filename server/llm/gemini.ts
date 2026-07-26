@@ -1,10 +1,53 @@
 import {GoogleGenAI} from '@google/genai';
 import type {GenerateContentConfig} from '@google/genai';
-import type {GenerateRequest, LlmProvider, TranscribeRequest} from './types';
+import {config} from '../config';
+import type {
+  GenerateRequest,
+  LlmProvider,
+  SpeakRequest,
+  SpokenAudio,
+  TranscribeRequest,
+} from './types';
 
 const TRANSCRIBE_PROMPT = `Write out exactly what is said in this recording.
 
 Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio. If the recording contains no speech, return nothing at all.`;
+
+const SPEAK_DIRECTION =
+  'Read the following aloud in a calm, warm, unhurried voice, the way a ' +
+  'composed personal assistant would speak to someone they know well. Read ' +
+  'only the text itself:';
+
+/** Gemini labels its audio `audio/L16;codec=pcm;rate=24000`. */
+function sampleRateOf(mimeType: string | undefined): number {
+  const rate = Number(/rate=(\d+)/.exec(mimeType ?? '')?.[1]);
+  return Number.isFinite(rate) && rate > 0 ? rate : 24_000;
+}
+
+/**
+ * The speech model hands back headerless 16-bit PCM, which no browser will
+ * play. Forty-four bytes of WAV header in front of it and every one will.
+ */
+function wrapPcmAsWav(base64Pcm: string, sampleRate: number): string {
+  const pcm = Buffer.from(base64Pcm, 'base64');
+  const header = Buffer.alloc(44);
+
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16); // PCM header length
+  header.writeUInt16LE(1, 20); // uncompressed
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28); // bytes per second
+  header.writeUInt16LE(2, 32); // bytes per sample
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.length, 40);
+
+  return Buffer.concat([header, pcm]).toString('base64');
+}
 
 export class GeminiProvider implements LlmProvider {
   readonly name = 'gemini';
@@ -56,6 +99,38 @@ export class GeminiProvider implements LlmProvider {
     });
 
     return (response.text ?? '').trim();
+  }
+
+  async speak(request: SpeakRequest): Promise<SpokenAudio> {
+    const response = await this.client.models.generateContent({
+      model: config.speechModel,
+      // The instruction rides along with the words. The model reads the
+      // direction and speaks only what follows it.
+      contents: [
+        {
+          role: 'user',
+          parts: [{text: `${SPEAK_DIRECTION}\n\n${request.text}`}],
+        },
+      ],
+      config: {
+        abortSignal: request.signal,
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {prebuiltVoiceConfig: {voiceName: config.voice}},
+        },
+      },
+    });
+
+    const part = response.candidates?.[0]?.content?.parts?.find(
+      (candidate) => candidate.inlineData?.data,
+    );
+    const pcm = part?.inlineData?.data;
+    if (!pcm) throw new Error('the speech model returned no audio');
+
+    return {
+      audio: wrapPcmAsWav(pcm, sampleRateOf(part.inlineData?.mimeType)),
+      mimeType: 'audio/wav',
+    };
   }
 
   private params(request: GenerateRequest) {

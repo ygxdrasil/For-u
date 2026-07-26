@@ -30,6 +30,17 @@ export interface TranscribeRequest {
   signal?: AbortSignal;
 }
 
+export interface SpeakRequest {
+  text: string;
+  signal?: AbortSignal;
+}
+
+export interface SpokenAudio {
+  /** Base64 WAV, ready to hand straight to an audio element. */
+  audio: string;
+  mimeType: 'audio/wav';
+}
+
 export interface LlmProvider {
   readonly name: string;
   readonly model: string;
@@ -44,4 +55,14 @@ export interface LlmProvider {
    * anywhere a microphone does.
    */
   transcribe(request: TranscribeRequest): Promise<string>;
+  /**
+   * Say something out loud.
+   *
+   * Her voice used to be the browser's own speech synthesis, which is absent
+   * on some platforms, silent until a user gesture on others, and a different
+   * voice on every machine. Generating the audio here means she sounds like
+   * herself everywhere, and a failure is something we can explain rather than
+   * a silence nobody can account for.
+   */
+  speak(request: SpeakRequest): Promise<SpokenAudio>;
 }

@@ -1,8 +1,8 @@
-import {PanelRight} from 'lucide-react';
+import {Headphones, PanelRight} from 'lucide-react';
 import {useState} from 'react';
 import {Composer} from './components/Composer';
 import {Lock} from './components/Lock';
-import {MicCheck} from './components/MicCheck';
+import {VoiceCheck} from './components/VoiceCheck';
 import {Orb} from './components/Orb';
 import {ProfilePanel} from './components/ProfilePanel';
 import {Transcript} from './components/Transcript';
@@ -30,7 +30,7 @@ const MODE_DOT: Record<Mode, string> = {
 export default function App() {
   const grace = useGrace();
   const [panelOpen, setPanelOpen] = useState(false);
-  const [micCheckOpen, setMicCheckOpen] = useState(false);
+  const [soundCheckOpen, setSoundCheckOpen] = useState(false);
 
   const {session, state, mode} = grace;
 
@@ -96,11 +96,20 @@ export default function App() {
             <span className={`h-1.5 w-1.5 rounded-full ${MODE_DOT[mode]}`} />
             {MODE_LABEL[mode]}
           </span>
+          {/* This used to be the word "Mic" in dim ten-pixel text, which is a
+              fine way to hide the one control people go looking for when she
+              seems deaf. */}
           <button
             type="button"
-            onClick={() => setMicCheckOpen((open) => !open)}
-            className="text-xs text-mist transition hover:text-slate-200">
-            Mic
+            onClick={() => setSoundCheckOpen((open) => !open)}
+            aria-pressed={soundCheckOpen}
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition ${
+              soundCheckOpen
+                ? 'border-ice/40 bg-ice/15 text-ice'
+                : 'border-edge bg-surface text-mist hover:border-ice/40 hover:text-ice'
+            }`}>
+            <Headphones size={14} />
+            Sound check
           </button>
           <button
             type="button"
@@ -178,7 +187,7 @@ export default function App() {
           <span>{grace.recorder.error ?? grace.misheard}</span>
           <button
             type="button"
-            onClick={() => setMicCheckOpen(true)}
+            onClick={() => setSoundCheckOpen(true)}
             className="shrink-0 underline underline-offset-2 hover:text-rose-100">
             Check microphone
           </button>
@@ -195,8 +204,26 @@ export default function App() {
 
       {grace.speech.blocked && grace.voiceOn && (
         <p className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
-          Your browser is refusing to let me speak. Click anywhere on the page and
-          send another message — that usually settles it.
+          Your browser is refusing to play my voice. Tap anywhere on the page,
+          then send another message — that usually settles it.
+        </p>
+      )}
+
+      {/* Her own voice failed and the browser's took over. Worth saying: the
+          difference is audible, and the reason is usually fixable. */}
+      {grace.speech.source === 'browser' && grace.voiceOn && (
+        <p className="flex items-center justify-between gap-3 border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
+          <span>
+            I’m speaking through the browser’s voice. Mine needs Gemini’s speech
+            model, which isn’t on the free tier
+            {grace.speech.error ? ` — ${grace.speech.error}` : '.'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSoundCheckOpen(true)}
+            className="shrink-0 underline underline-offset-2 hover:text-ember">
+            Sound check
+          </button>
         </p>
       )}
 
@@ -206,7 +233,7 @@ export default function App() {
         </p>
       )}
 
-      {micCheckOpen && <MicCheck onClose={() => setMicCheckOpen(false)} />}
+      {soundCheckOpen && <VoiceCheck onClose={() => setSoundCheckOpen(false)} />}
 
       {/* Speaking is interruptible: typing while she talks cuts her off, which
           is the point. Only an in-flight request actually blocks sending. */}

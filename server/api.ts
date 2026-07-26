@@ -290,6 +290,39 @@ export function createApi(): Express {
   );
 
   api.post(
+    '/speak',
+    guard(async (req, res) => {
+      if (!isConfigured()) {
+        res.status(503).json({error: 'No Gemini API key is configured.'});
+        return;
+      }
+
+      // Long enough for a paragraph, short enough that a runaway reply can't
+      // spend the day's speech allowance in one go.
+      const text = String(req.body?.text ?? '').slice(0, 2000).trim();
+      if (!text) {
+        res.status(400).json({error: 'nothing to say'});
+        return;
+      }
+
+      try {
+        res.json(await getProvider().speak({text}));
+      } catch (error) {
+        const detail = (error as Error).message ?? 'unknown error';
+        console.error('[grace] speech failed:', detail);
+
+        const explained = /API[_ ]?KEY|not valid|UNAUTHENTICATED/i.test(detail)
+          ? 'My API key was rejected. Check GEMINI_API_KEY where I am running.'
+          : /quota|RESOURCE_EXHAUSTED|rate/i.test(detail)
+            ? 'I have used up my speech allowance for now. It resets shortly.'
+            : 'I could not put that into words out loud.';
+
+        res.status(502).json({error: explained});
+      }
+    }),
+  );
+
+  api.post(
     '/profile/address',
     guard(async (req, res) => {
       const raw = req.body?.addressAs;

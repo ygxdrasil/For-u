@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {transcribe} from '../lib/api';
+import {speak, transcribe} from '../lib/api';
 import {toWav} from '../voice/wav';
 
 const TEST_SECONDS = 4;
@@ -10,18 +10,27 @@ interface Finding {
   ok: boolean;
 }
 
+type Half = 'hearing' | 'voice';
+
 /**
- * Answers "why can't she hear me" without guesswork.
+ * Answers "why can't she hear me" and "why won't she talk" without guesswork.
  *
- * Every line here is something that has actually caused silence: an insecure
- * connection, a browser with no recording support, a permission set to block,
- * no input device attached. Reading it beats another round of trial and error.
+ * Each test runs the real chain end to end rather than reporting capabilities,
+ * because every one of these has been the culprit at some point: an insecure
+ * connection, a permission set to block, no input device, a browser refusing to
+ * play audio nobody asked for.
  */
-export function MicCheck({onClose}: {onClose: () => void}) {
+export function VoiceCheck({onClose}: {onClose: () => void}) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+  const [running, setRunning] = useState<Half | null>(null);
+  const [result, setResult] = useState<Record<Half, string | null>>({
+    hearing: null,
+    voice: null,
+  });
   const playbackRef = useRef<string | null>(null);
+
+  const report = (half: Half, message: string) =>
+    setResult((current) => ({...current, [half]: message}));
 
   useEffect(
     () => () => {
@@ -30,15 +39,11 @@ export function MicCheck({onClose}: {onClose: () => void}) {
     [],
   );
 
-  /**
-   * The whole chain, end to end, on demand: record, play it back so you can
-   * hear for yourself whether anything was captured, then transcribe it. Far
-   * more use than a list of capabilities when the complaint is "she can't
-   * hear me".
-   */
-  const runTest = async () => {
-    setTesting(true);
-    setResult(null);
+  /** Record, play it back so you can hear whether anything was captured at
+   * all, then transcribe it and show the words. */
+  const testHearing = async () => {
+    setRunning('hearing');
+    report('hearing', `Recording for ${TEST_SECONDS} seconds — say something.`);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({audio: true});
@@ -51,8 +56,7 @@ export function MicCheck({onClose}: {onClose: () => void}) {
       });
 
       recorder.start();
-      setResult(`Recording for ${TEST_SECONDS} seconds — say something.`);
-      await new Promise((r) => setTimeout(r, TEST_SECONDS * 1000));
+      await new Promise((resolve) => setTimeout(resolve, TEST_SECONDS * 1000));
       recorder.stop();
       stream.getTracks().forEach((track) => track.stop());
 
@@ -60,20 +64,55 @@ export function MicCheck({onClose}: {onClose: () => void}) {
       if (playbackRef.current) URL.revokeObjectURL(playbackRef.current);
       playbackRef.current = URL.createObjectURL(blob);
 
-      setResult('Playing it back — if you hear nothing, the microphone captured nothing.');
+      report('hearing', 'Playing it back — silence here means nothing was captured.');
       await new Audio(playbackRef.current).play().catch(() => {});
 
       const audio = await toWav(blob);
       const text = await transcribe(audio.base64, audio.mimeType);
-      setResult(
+      report(
+        'hearing',
         text
-          ? `Heard: “${text}”  — hearing works.`
+          ? `Heard: “${text}” — hearing works.`
           : 'The recording arrived, but no words were made out. Try again louder, or closer.',
       );
     } catch (cause) {
-      setResult(`Failed: ${(cause as Error).message}`);
+      report('hearing', `Failed: ${(cause as Error).message}`);
     } finally {
-      setTesting(false);
+      setRunning(null);
+    }
+  };
+
+  /** Generate a line of her real voice and play it. */
+  const testVoice = async () => {
+    setRunning('voice');
+    report('voice', 'Asking for a line in her voice…');
+
+    try {
+      const spoken = await speak('Hearing me clearly? Good. Everything works.');
+      const binary = atob(spoken.audio);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], {type: spoken.mimeType}));
+
+      const element = new Audio(url);
+      report('voice', 'Playing…');
+      await element.play();
+      await new Promise<void>((resolve) => {
+        element.onended = () => resolve();
+        element.onerror = () => resolve();
+      });
+      URL.revokeObjectURL(url);
+      report('voice', 'Spoke that aloud. If you heard nothing, check the volume.');
+    } catch (cause) {
+      const message = (cause as Error).message;
+      report(
+        'voice',
+        (cause as Error).name === 'NotAllowedError'
+          ? 'The browser blocked the audio. Tap the page once, then try again.'
+          : `Failed: ${message}`,
+      );
+    } finally {
+      setRunning(null);
     }
   };
 
@@ -119,7 +158,7 @@ export function MicCheck({onClose}: {onClose: () => void}) {
 
       try {
         const devices = await navigator.mediaDevices?.enumerateDevices();
-        const inputs = (devices ?? []).filter((d) => d.kind === 'audioinput');
+        const inputs = (devices ?? []).filter((device) => device.kind === 'audioinput');
         results.push({
           label: 'Microphones found',
           value: inputs.length === 0 ? 'none' : String(inputs.length),
@@ -129,12 +168,10 @@ export function MicCheck({onClose}: {onClose: () => void}) {
         results.push({label: 'Microphones found', value: 'could not check', ok: false});
       }
 
-      const speech = Boolean(
-        window.SpeechRecognition ?? window.webkitSpeechRecognition,
-      );
+      const wake = Boolean(window.SpeechRecognition ?? window.webkitSpeechRecognition);
       results.push({
         label: 'Wake word available',
-        value: speech ? 'yes' : 'no — press Speak instead, which always works',
+        value: wake ? 'yes' : 'no — press Speak instead, which always works',
         ok: true,
       });
 
@@ -149,9 +186,9 @@ export function MicCheck({onClose}: {onClose: () => void}) {
 
   return (
     <div className="border-t border-edge/70 bg-surface/70 px-5 py-3">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-3 flex items-center justify-between">
         <h3 className="text-[0.7rem] font-medium uppercase tracking-[0.14em] text-mist/60">
-          Microphone check
+          Sound check
         </h3>
         <button
           type="button"
@@ -161,15 +198,28 @@ export function MicCheck({onClose}: {onClose: () => void}) {
         </button>
       </div>
 
-      <div className="mb-3 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void runTest()}
-          disabled={testing}
-          className="rounded-full border border-ice/40 bg-ice/15 px-3 py-1.5 text-xs text-ice transition hover:bg-ice/25 disabled:opacity-40">
-          {testing ? 'Testing…' : 'Test my microphone'}
-        </button>
-        {result && <span className="text-xs text-slate-300">{result}</span>}
+      <div className="mb-3 grid gap-2 sm:grid-cols-2">
+        {(
+          [
+            ['hearing', 'Test her hearing', testHearing],
+            ['voice', 'Test her voice', testVoice],
+          ] as const
+        ).map(([half, label, run]) => (
+          <div key={half}>
+            <button
+              type="button"
+              onClick={() => void run()}
+              disabled={running !== null}
+              className="w-full rounded-lg border border-ice/40 bg-ice/15 px-3 py-2 text-sm text-ice transition hover:bg-ice/25 disabled:opacity-40">
+              {running === half ? 'Testing…' : label}
+            </button>
+            {result[half] && (
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-300">
+                {result[half]}
+              </p>
+            )}
+          </div>
+        ))}
       </div>
 
       {findings === null ? (

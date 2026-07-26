@@ -15,6 +15,13 @@ var config = {
   apiKey: process.env.GEMINI_API_KEY ?? "",
   /** Flash is the free-tier workhorse. Override to trade cost for depth. */
   model: process.env.GRACE_MODEL ?? "gemini-2.5-flash",
+  /** The model that gives her a voice. Separate from the one that thinks. */
+  speechModel: process.env.GRACE_SPEECH_MODEL ?? "gemini-2.5-flash-preview-tts",
+  /**
+   * Which of the prebuilt voices she speaks in. Kore is composed and even,
+   * which is the brief: calm, formal, unhurried.
+   */
+  voice: process.env.GRACE_VOICE ?? "Kore",
   /** Encrypts memory at rest, and signs login cookies. */
   secret: process.env.GRACE_SECRET,
   /** When set, Grace asks for this before she'll talk to anyone. */
@@ -315,6 +322,29 @@ import { GoogleGenAI } from "@google/genai";
 var TRANSCRIBE_PROMPT = `Write out exactly what is said in this recording.
 
 Return only the words spoken, with ordinary punctuation. No preamble, no quotes, no speaker labels, no description of the audio. If the recording contains no speech, return nothing at all.`;
+var SPEAK_DIRECTION = "Read the following aloud in a calm, warm, unhurried voice, the way a composed personal assistant would speak to someone they know well. Read only the text itself:";
+function sampleRateOf(mimeType) {
+  const rate = Number(/rate=(\d+)/.exec(mimeType ?? "")?.[1]);
+  return Number.isFinite(rate) && rate > 0 ? rate : 24e3;
+}
+function wrapPcmAsWav(base64Pcm, sampleRate) {
+  const pcm = Buffer.from(base64Pcm, "base64");
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]).toString("base64");
+}
 var GeminiProvider = class {
   constructor(apiKey, model) {
     this.model = model;
@@ -356,6 +386,37 @@ var GeminiProvider = class {
       }
     });
     return (response.text ?? "").trim();
+  }
+  async speak(request) {
+    const response = await this.client.models.generateContent({
+      model: config.speechModel,
+      // The instruction rides along with the words. The model reads the
+      // direction and speaks only what follows it.
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: `${SPEAK_DIRECTION}
+
+${request.text}` }]
+        }
+      ],
+      config: {
+        abortSignal: request.signal,
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: config.voice } }
+        }
+      }
+    });
+    const part = response.candidates?.[0]?.content?.parts?.find(
+      (candidate) => candidate.inlineData?.data
+    );
+    const pcm = part?.inlineData?.data;
+    if (!pcm) throw new Error("the speech model returned no audio");
+    return {
+      audio: wrapPcmAsWav(pcm, sampleRateOf(part.inlineData?.mimeType)),
+      mimeType: "audio/wav"
+    };
   }
   params(request) {
     const config2 = {
@@ -856,6 +917,28 @@ function createApi() {
         const detail = error.message ?? "unknown error";
         console.error("[grace] transcription failed:", detail);
         const explained = /API[_ ]?KEY|not valid|UNAUTHENTICATED/i.test(detail) ? "My API key was rejected. Check GEMINI_API_KEY where I am running." : /quota|RESOURCE_EXHAUSTED|rate/i.test(detail) ? "I have hit the daily limit on my free allowance. It resets tomorrow." : "I could not make out that recording. Try again, a little closer to the microphone.";
+        res.status(502).json({ error: explained });
+      }
+    })
+  );
+  api.post(
+    "/speak",
+    guard(async (req, res) => {
+      if (!isConfigured()) {
+        res.status(503).json({ error: "No Gemini API key is configured." });
+        return;
+      }
+      const text = String(req.body?.text ?? "").slice(0, 2e3).trim();
+      if (!text) {
+        res.status(400).json({ error: "nothing to say" });
+        return;
+      }
+      try {
+        res.json(await getProvider().speak({ text }));
+      } catch (error) {
+        const detail = error.message ?? "unknown error";
+        console.error("[grace] speech failed:", detail);
+        const explained = /API[_ ]?KEY|not valid|UNAUTHENTICATED/i.test(detail) ? "My API key was rejected. Check GEMINI_API_KEY where I am running." : /quota|RESOURCE_EXHAUSTED|rate/i.test(detail) ? "I have used up my speech allowance for now. It resets shortly." : "I could not put that into words out loud.";
         res.status(502).json({ error: explained });
       }
     })

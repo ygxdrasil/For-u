@@ -20,6 +20,8 @@ import {setProvider} from '../server/llm/index';
 import type {
   GenerateRequest,
   LlmProvider,
+  SpeakRequest,
+  SpokenAudio,
   TranscribeRequest,
   Turn,
 } from '../server/llm/types';
@@ -38,6 +40,9 @@ const REPLY_CHUNKS = ['Good morning. ', 'Nothing pressing today. ', 'Tea at four
 const REPLY = REPLY_CHUNKS.join('');
 const LEARNED_FACT = 'Prefers tea in the afternoon';
 const TRANSCRIBED = 'What is on today?';
+/** A valid, empty WAV — enough for the route to be exercised end to end. */
+const SPOKEN_AUDIO =
+  'UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
 
 /** Stands in for Gemini, and records what it was asked. */
 class StubProvider implements LlmProvider {
@@ -67,6 +72,13 @@ class StubProvider implements LlmProvider {
   async transcribe(request: TranscribeRequest): Promise<string> {
     this.lastAudio = request;
     return TRANSCRIBED;
+  }
+
+  lastSpoken: string | null = null;
+
+  async speak(request: SpeakRequest): Promise<SpokenAudio> {
+    this.lastSpoken = request.text;
+    return {audio: SPOKEN_AUDIO, mimeType: 'audio/wav'};
   }
 }
 
@@ -260,6 +272,31 @@ try {
     'transcription must require audio',
   );
   ok('transcription endpoint validates its input');
+
+  // ---- her voice ---------------------------------------------------------
+  // Generated here rather than by the browser, which has no speech synthesis
+  // at all on some platforms and a different voice on every other.
+  const voice = await call('/speak', {
+    method: 'POST',
+    body: JSON.stringify({text: 'Good morning.'}),
+  });
+  assert.equal(voice.status, 200);
+  const voiceBody = (await voice.json()) as {audio: string; mimeType: string};
+  assert.equal(voiceBody.mimeType, 'audio/wav', 'audio must be playable as-is');
+  assert.equal(
+    Buffer.from(voiceBody.audio, 'base64').subarray(0, 4).toString(),
+    'RIFF',
+    'the audio must actually be a WAV, header and all',
+  );
+  assert.equal(stub.lastSpoken, 'Good morning.', 'the words reach the model');
+  ok('replies are spoken as server-generated audio');
+
+  assert.equal(
+    (await call('/speak', {method: 'POST', body: JSON.stringify({text: '  '})})).status,
+    400,
+    'speaking must require something to say',
+  );
+  ok('speech endpoint validates its input');
 
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {

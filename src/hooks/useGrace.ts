@@ -28,6 +28,20 @@ export function useGrace() {
   const abortRef = useRef<AbortController | null>(null);
   const speech = useSpeech(voiceOn);
 
+  // Browsers hand out permission to play audio on the first real gesture and
+  // not before. Taking it from any click at all means she is never mute merely
+  // because the first thing you did was press the wrong button.
+  const {unlock} = speech;
+  useEffect(() => {
+    const take = () => unlock();
+    window.addEventListener('pointerdown', take);
+    window.addEventListener('keydown', take);
+    return () => {
+      window.removeEventListener('pointerdown', take);
+      window.removeEventListener('keydown', take);
+    };
+  }, [unlock]);
+
   const load = useCallback(async () => {
     const loaded = await api.fetchState();
     setState(loaded);

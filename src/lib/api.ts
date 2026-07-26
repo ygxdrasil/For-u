@@ -135,6 +135,35 @@ export async function transcribe(
   return (body?.text ?? '').trim();
 }
 
+/**
+ * Ask for a line of speech back as audio.
+ *
+ * Generated on the server so Grace has one voice everywhere, rather than
+ * whatever the browser happens to ship — or, on several of them, nothing.
+ */
+export async function speak(
+  text: string,
+  signal?: AbortSignal,
+): Promise<{audio: string; mimeType: string}> {
+  const response = await fetch('/api/speak', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text}),
+    signal,
+  });
+
+  if (response.status === 401) throw new NeedsPassword();
+
+  const body = (await response.json().catch(() => null)) as
+    | {audio?: string; mimeType?: string; error?: string}
+    | null;
+
+  if (!response.ok || !body?.audio) {
+    throw new Error(body?.error ?? 'speech failed');
+  }
+  return {audio: body.audio, mimeType: body.mimeType ?? 'audio/wav'};
+}
+
 export async function setAddressAs(addressAs: string | null): Promise<Profile> {
   const response = await expectOk(
     await fetch('/api/profile/address', {

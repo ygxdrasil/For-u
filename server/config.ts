@@ -11,6 +11,15 @@ export const config = {
   /** Flash is the free-tier workhorse. Override to trade cost for depth. */
   model: process.env.GRACE_MODEL ?? 'gemini-2.5-flash',
 
+  /** The model that gives her a voice. Separate from the one that thinks. */
+  speechModel: process.env.GRACE_SPEECH_MODEL ?? 'gemini-2.5-flash-preview-tts',
+
+  /**
+   * Which of the prebuilt voices she speaks in. Kore is composed and even,
+   * which is the brief: calm, formal, unhurried.
+   */
+  voice: process.env.GRACE_VOICE ?? 'Kore',
+
   /** Encrypts memory at rest, and signs login cookies. */
   secret: process.env.GRACE_SECRET,
 
