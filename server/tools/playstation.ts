@@ -1,12 +1,14 @@
+import {bridgeStatus} from '../bridge';
 import {PsnError, playstation, presence, recentlyPlayed} from '../ps5';
 import type {Tool} from './types';
 
 /**
  * The PlayStation, as something she can be asked about.
  *
- * Read-only on purpose, and not only because of the user's limits: there is no
- * write to be had. Sony's app API shows; it does not switch anything on. She
- * says so plainly rather than implying a power she does not have.
+ * This half only ever looks: Sony's app API shows a console, it does not
+ * operate one. Switching it on and off lives next door in console.ts, which
+ * goes out through the laptop on the home network, because that is the only
+ * thing the console will take an instruction from.
  */
 
 function when(iso: string | null): string {
@@ -35,6 +37,24 @@ export const playstationTools: Tool[] = [
     parameters: {},
     required: [],
     run: async () => {
+      // The laptop is standing next to the thing. Sony's cloud lags by a
+      // minute or two and reports a console that is on but idle as simply
+      // offline, so when there is something on the local network that can
+      // see it, that answer wins.
+      const local = await bridgeStatus().catch(() => null);
+      if (local?.online && local.state?.found) {
+        const awake = local.state.status === 'AWAKE';
+        const name = local.state.name ? ` (${local.state.name})` : '';
+        const cloud = await presence().catch(() => null);
+
+        if (awake && cloud?.playing) {
+          return `The console${name} is on, playing ${cloud.playing}.`;
+        }
+        return awake
+          ? `The console${name} is on, with nothing running that I can see.`
+          : `The console${name} is in rest mode. I can switch it on if you want.`;
+      }
+
       try {
         const {presence: now, player, trophies} = await playstation();
 

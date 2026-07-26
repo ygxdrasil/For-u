@@ -1,0 +1,14 @@
+{
+  "name": "grace-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Grace's hands on your home network: wakes and sleeps the PlayStation.",
+  "scripts": {
+    "start": "node bridge.mjs",
+    "pair": "npx --yes playactor login --ps5"
+  },
+  "dependencies": {
+    "playactor": "^0.4.1"
+  }
+}

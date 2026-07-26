@@ -1,5 +1,6 @@
 import {requiresConfirmation} from '../actions';
 import {noteDeed} from '../journal';
+import {consoleTools} from './console';
 import {googleTools} from './google';
 import {playstationTools} from './playstation';
 import {recallTools} from './recall';
@@ -21,6 +22,7 @@ const TOOLS: Tool[] = [
   ...reminderTools,
   ...googleTools,
   ...playstationTools,
+  ...consoleTools,
   ...recallTools,
 ];
 
@@ -73,6 +75,8 @@ const LABELS: Record<string, string> = {
   add_to_diary: 'Added to the diary',
   check_playstation: 'Looked at the PlayStation',
   recent_games: 'Checked recent games',
+  wake_playstation: 'Switched the PlayStation on',
+  sleep_playstation: 'Put the PlayStation to sleep',
   search_memory: 'Went back through the record',
 };
 

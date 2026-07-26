@@ -1,0 +1,6 @@
+{
+  "grace": "https://grace-vercel.vercel.app",
+  "token": "paste the bridge token from Grace here",
+  "pollMs": 15000,
+  "ps5Ip": ""
+}

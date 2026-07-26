@@ -361,6 +361,94 @@ function checkPassword(candidate) {
   return config.password.length > 0 && matches(candidate, config.password);
 }
 
+// server/bridge.ts
+import { randomBytes as randomBytes2, randomUUID, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+var store2 = new Document("bridge", () => ({
+  token: null,
+  queue: [],
+  state: null,
+  seenAt: null
+}));
+var STALE_MS = 2 * 60 * 1e3;
+var ABSENT_MS = 90 * 1e3;
+async function bridgeToken() {
+  const current = await store2.read();
+  if (current.token) return current.token;
+  const token2 = randomBytes2(24).toString("base64url");
+  await store2.write({ ...current, token: token2 });
+  return token2;
+}
+async function tokenMatches(offered) {
+  const real = await bridgeToken();
+  const left = Buffer.from(offered);
+  const right = Buffer.from(real);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual3(left, right);
+}
+async function bridgeStatus() {
+  const current = await store2.read();
+  const seen2 = current.seenAt ? new Date(current.seenAt).getTime() : 0;
+  return {
+    online: Date.now() - seen2 < ABSENT_MS,
+    seenAt: current.seenAt,
+    state: current.state
+  };
+}
+async function enqueue(action) {
+  const id = randomUUID();
+  const now = Date.now();
+  await store2.update((current) => ({
+    ...current,
+    queue: [
+      // Anything nobody collected is not worth carrying, and a queue that only
+      // grows is a console that suddenly does five things at once.
+      ...current.queue.filter((command) => now - new Date(command.at).getTime() < STALE_MS),
+      { id, action, at: new Date(now).toISOString() }
+    ]
+  }));
+  return id;
+}
+async function awaitResult(id, patienceMs = 12e3) {
+  const until = Date.now() + patienceMs;
+  while (Date.now() < until) {
+    const current = await store2.read();
+    const found = current.queue.find((command) => command.id === id);
+    if (found?.doneAt) return found;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+  return null;
+}
+async function claim(token2, state) {
+  if (!await tokenMatches(token2)) return { ok: false, commands: [] };
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  let taken = [];
+  await store2.update((current) => {
+    taken = current.queue.filter((command) => !command.claimedAt && !command.doneAt);
+    return {
+      ...current,
+      seenAt: now,
+      state: state ?? current.state,
+      queue: current.queue.map(
+        (command) => taken.some((one) => one.id === command.id) ? { ...command, claimedAt: now } : command
+      )
+    };
+  });
+  return { ok: true, commands: taken };
+}
+async function report(token2, results) {
+  if (!await tokenMatches(token2)) return false;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await store2.update((current) => ({
+    ...current,
+    seenAt: now,
+    queue: current.queue.map((command) => {
+      const result = results.find((one) => one.id === command.id);
+      return result ? { ...command, doneAt: now, ok: result.ok, detail: result.detail } : command;
+    })
+  }));
+  return true;
+}
+
 // server/budget.ts
 var RATES = {
   "gemini-2.5-flash": { in: 0.3, out: 2.5 },
@@ -368,7 +456,7 @@ var RATES = {
   "gemini-2.5-flash-preview-tts": { in: 0.5, out: 10 }
 };
 var FALLBACK = { in: 1, out: 20 };
-var store2 = new Document("spend", () => ({
+var store3 = new Document("spend", () => ({
   month: currentMonth(),
   dollars: 0,
   requests: 0,
@@ -383,10 +471,10 @@ function monthlyCap() {
 }
 var cached = null;
 async function spend() {
-  if (!cached) cached = await store2.read();
+  if (!cached) cached = await store3.read();
   if (cached.month !== currentMonth()) {
     cached = { month: currentMonth(), dollars: 0, requests: 0, stoppedAt: null };
-    await store2.write(cached);
+    await store3.write(cached);
   }
   return cached;
 }
@@ -414,21 +502,21 @@ async function record(model, inputTokens, outputTokens) {
     stoppedAt: current.dollars + cost >= monthlyCap() ? current.stoppedAt ?? (/* @__PURE__ */ new Date()).toISOString() : current.stoppedAt
   };
   cached = next;
-  await store2.write(next);
+  await store3.write(next);
 }
 
 // server/keys.ts
-var store3 = new Document("keys", () => ({}));
+var store4 = new Document("keys", () => ({}));
 var cached2 = null;
 async function loadKeys() {
-  if (!cached2) cached2 = await store3.read();
+  if (!cached2) cached2 = await store4.read();
   return cached2;
 }
 async function setKey(name, value) {
-  const current = await store3.read();
+  const current = await store4.read();
   const trimmed = value.trim();
   const next = { ...current, [name]: trimmed || void 0 };
-  await store3.write(next);
+  await store4.write(next);
   cached2 = next;
 }
 function geminiKey() {
@@ -722,7 +810,7 @@ function getProvider() {
 }
 
 // server/memory.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 var messages = new Document("conversation", () => []);
 var profile = new Document("profile", () => ({
   addressAs: null,
@@ -744,7 +832,7 @@ async function getSummary() {
 }
 async function record2(speaker, text, via) {
   const message = {
-    id: randomUUID(),
+    id: randomUUID2(),
     speaker,
     text,
     at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -799,7 +887,7 @@ async function remember(entries) {
     }
     const fresh = {
       ...entry,
-      id: randomUUID(),
+      id: randomUUID2(),
       learnedAt: now,
       lastSeenAt: now,
       timesSeen: 1
@@ -843,7 +931,7 @@ async function noteStyle(notes) {
         (note) => normalise(note.text) === normalise(clean)
       );
       if (at >= 0) style[at] = { ...style[at], timesSeen: style[at].timesSeen + 1 };
-      else style.push({ id: randomUUID(), text: clean, learnedAt: now, timesSeen: 1 });
+      else style.push({ id: randomUUID2(), text: clean, learnedAt: now, timesSeen: 1 });
     }
     style.sort((left, right) => right.timesSeen - left.timesSeen);
     return { ...current, style: style.slice(0, 12), updatedAt: now };
@@ -1003,7 +1091,7 @@ var SCOPES = [
   "openid",
   "email"
 ];
-var store4 = new Document("google", () => null);
+var store5 = new Document("google", () => null);
 var accessTokens = /* @__PURE__ */ new Map();
 function googleConfigured() {
   const client = googleClient();
@@ -1080,7 +1168,7 @@ async function completeSignIn(code, state) {
       `This is Grace's owner's account only. Signed in as ${email}, expected ${owner}.`
     );
   }
-  await store4.write({
+  await store5.write({
     refreshToken: token2.refresh_token,
     email,
     scopes: (token2.scope ?? "").split(" ").filter(Boolean),
@@ -1089,14 +1177,14 @@ async function completeSignIn(code, state) {
   return { email };
 }
 async function connection() {
-  return store4.read();
+  return store5.read();
 }
 async function disconnect() {
   accessTokens.clear();
-  await store4.write(null);
+  await store5.write(null);
 }
 async function accessToken() {
-  const saved = await store4.read();
+  const saved = await store5.read();
   if (!saved) throw new GoogleError("Google is not connected yet.", true);
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
   const cached4 = accessTokens.get(saved.refreshToken);
@@ -1109,7 +1197,7 @@ async function accessToken() {
   });
   if (token2.error === "invalid_grant") {
     const reason = "Google has disconnected Grace \u2014 usually a changed password or a revoked permission. Reconnect to put it back.";
-    await store4.write({ ...saved, brokenReason: reason });
+    await store5.write({ ...saved, brokenReason: reason });
     throw new GoogleError(reason, true);
   }
   if (token2.error || !token2.access_token) {
@@ -1333,24 +1421,24 @@ async function buildBriefing() {
 }
 
 // server/journal.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 var LIMIT = 120;
-var store5 = new Document("journal", () => []);
+var store6 = new Document("journal", () => []);
 async function recentDeeds(limit = 25) {
-  const all = await store5.read();
+  const all = await store6.read();
   return all.slice(-limit).reverse();
 }
 async function noteDeed(kind, text, unprompted = false) {
   const clean = text.trim().slice(0, 300);
   if (!clean) return;
   const entry = {
-    id: randomUUID2(),
+    id: randomUUID3(),
     at: (/* @__PURE__ */ new Date()).toISOString(),
     kind,
     text: clean,
     ...unprompted ? { unprompted: true } : {}
   };
-  await store5.update((current) => [...current, entry].slice(-LIMIT));
+  await store6.update((current) => [...current, entry].slice(-LIMIT));
 }
 
 // server/ps5.ts
@@ -1562,18 +1650,18 @@ var MODES = {
   }
 };
 var DEFAULT = { mode: "open", since: (/* @__PURE__ */ new Date(0)).toISOString() };
-var store6 = new Document("mode", () => DEFAULT);
+var store7 = new Document("mode", () => DEFAULT);
 function getMode() {
-  return store6.read();
+  return store7.read();
 }
 function isMode(value) {
   return typeof value === "string" && Object.hasOwn(MODES, value);
 }
 async function setMode(mode) {
-  const current = await store6.read();
+  const current = await store7.read();
   if (current.mode === mode) return current;
   const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
-  await store6.write(next);
+  await store7.write(next);
   return next;
 }
 
@@ -1649,10 +1737,10 @@ async function notify(title, body) {
 }
 
 // server/tools/reminders.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
-var store7 = new Document("reminders", () => []);
+import { randomUUID as randomUUID4 } from "node:crypto";
+var store8 = new Document("reminders", () => []);
 async function outstanding() {
-  const all = await store7.read();
+  const all = await store8.read();
   return all.filter((reminder) => !reminder.doneAt).sort((left, right) => {
     if (!left.due) return 1;
     if (!right.due) return -1;
@@ -1692,13 +1780,13 @@ var reminderTools = [
       const parsed = raw ? new Date(raw) : null;
       const valid2 = parsed && Number.isFinite(parsed.getTime()) ? parsed : null;
       const reminder = {
-        id: randomUUID3(),
+        id: randomUUID4(),
         text,
         due: valid2 ? valid2.toISOString() : null,
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         doneAt: null
       };
-      await store7.update((current) => [...current, reminder]);
+      await store8.update((current) => [...current, reminder]);
       return `Noted: ${describe(reminder)}`;
     }
   },
@@ -1735,7 +1823,7 @@ ${open.map((item) => `- ${describe(item)}`).join("\n")}`;
       if (matches2.length > 1) {
         return `More than one matches: ${matches2.map((item) => item.text).join("; ")}. Ask which one they mean.`;
       }
-      await store7.update(
+      await store8.update(
         (current) => current.map(
           (item) => item.id === matches2[0].id ? { ...item, doneAt: (/* @__PURE__ */ new Date()).toISOString() } : item
         )
@@ -1870,6 +1958,42 @@ async function compose(concerns) {
   });
   return said.trim() || fallback(concerns);
 }
+
+// server/tools/console.ts
+var NO_LAPTOP = "The laptop bridge is not running, so I have no way onto your home network. Tell the user plainly: the console can only be reached from something in the same house, and that program is not answering.";
+async function send(action, verb) {
+  const { online, state } = await bridgeStatus();
+  if (!online) return NO_LAPTOP;
+  if (action === "wake" && state?.status === "AWAKE") {
+    return "The console is already on.";
+  }
+  if (action === "sleep" && state?.status === "STANDBY") {
+    return "The console is already asleep.";
+  }
+  const finished = await awaitResult(await enqueue(action));
+  if (!finished) {
+    return `The laptop took the instruction to ${verb} the console but has not reported back yet. Say that it is on its way rather than that it is done.`;
+  }
+  return finished.ok ? `Done \u2014 the console is ${action === "wake" ? "coming on" : "going to sleep"}.` + (finished.detail ? ` ${finished.detail}` : "") : `That did not work: ${finished.detail || "the laptop gave no reason"}.`;
+}
+var consoleTools = [
+  {
+    name: "wake_playstation",
+    description: "Switch the PlayStation on. Use it whenever the user asks you to turn on the console, the PS5, or the PlayStation, or to get it ready. It takes a few seconds to come up.",
+    category: "home",
+    parameters: {},
+    required: [],
+    run: () => send("wake", "wake")
+  },
+  {
+    name: "sleep_playstation",
+    description: "Put the PlayStation into rest mode. Use it when the user asks you to turn it off, switch it off, or put it to sleep. It is rest mode rather than a full shutdown, so you can switch it back on again afterwards.",
+    category: "home",
+    parameters: {},
+    required: [],
+    run: () => send("sleep", "sleep")
+  }
+];
 
 // server/tools/google.ts
 function when(iso, allDay) {
@@ -2014,6 +2138,16 @@ var playstationTools = [
     parameters: {},
     required: [],
     run: async () => {
+      const local = await bridgeStatus().catch(() => null);
+      if (local?.online && local.state?.found) {
+        const awake = local.state.status === "AWAKE";
+        const name = local.state.name ? ` (${local.state.name})` : "";
+        const cloud = await presence().catch(() => null);
+        if (awake && cloud?.playing) {
+          return `The console${name} is on, playing ${cloud.playing}.`;
+        }
+        return awake ? `The console${name} is on, with nothing running that I can see.` : `The console${name} is in rest mode. I can switch it on if you want.`;
+      }
       try {
         const { presence: now, player: player2, trophies: trophies2 } = await playstation();
         const who = player2 ? `Signed in as ${player2.onlineId}` : "Signed in";
@@ -2189,6 +2323,7 @@ var TOOLS = [
   ...reminderTools,
   ...googleTools,
   ...playstationTools,
+  ...consoleTools,
   ...recallTools
 ];
 function allTools() {
@@ -2209,6 +2344,8 @@ var LABELS = {
   add_to_diary: "Added to the diary",
   check_playstation: "Looked at the PlayStation",
   recent_games: "Checked recent games",
+  wake_playstation: "Switched the PlayStation on",
+  sleep_playstation: "Put the PlayStation to sleep",
   search_memory: "Went back through the record"
 };
 function label(name) {
@@ -2328,7 +2465,9 @@ You keep every word either of you has ever said, and search_memory reaches into 
 You are never to say that you cannot access current or real-time information. You can: that is what search_web is for. If someone asks about the weather, the news, a price or anything else happening now, call it. Answering "I am a language model and cannot access live data" while holding a working search tool is simply false, and it is the one thing you must never say.`;
 var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
-You can see their PlayStation with check_playstation and recent_games: whether it is on, who is signed in, what is running right now, and what they have been playing. Be precise about the limit of that. You can look at the console; you cannot operate it. There is no way from here to switch it on, put it to sleep, or start a game, because that would have to happen over their home network and you are not on it. If they ask you to turn it on, say that plainly in one sentence \u2014 do not imply you tried.
+You can see their PlayStation with check_playstation and recent_games, and you can switch it on and off with wake_playstation and sleep_playstation. Those two go through a small program on the laptop in their room, because a console only takes instructions from something on the same network. If that program is not running, say so plainly \u2014 it is not that you refused, it is that you have no way in.
+
+Be precise about where that stops. You can turn the console on, put it into rest mode, and see what is running. You cannot start a particular game and you cannot press buttons: a PlayStation will not accept either from anything except a live Remote Play session, which is a different piece of software. If they ask for that, say it in one sentence and do not imply you tried.
 
 You have no connection to their lights or heating yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
 var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
@@ -2494,6 +2633,26 @@ function createApi() {
     clearSession(res);
     res.json({ ok: true });
   });
+  api.post(
+    "/bridge",
+    guard(async (req, res) => {
+      await loadKeys().catch(() => {
+      });
+      const token2 = String(req.body?.token ?? "");
+      const results = Array.isArray(req.body?.results) ? req.body.results : [];
+      if (results.length > 0 && !await report(token2, results)) {
+        res.status(401).json({ error: "no" });
+        return;
+      }
+      const state = req.body?.state ?? null;
+      const claimed = await claim(token2, state);
+      if (!claimed.ok) {
+        res.status(401).json({ error: "no" });
+        return;
+      }
+      res.json({ commands: claimed.commands });
+    })
+  );
   api.use(requireAuth);
   api.use((_req, _res, next) => {
     loadKeys().then(
@@ -2583,13 +2742,13 @@ function createApi() {
         // Stops proxies from buffering the stream into a single lump.
         "X-Accel-Buffering": "no"
       });
-      const send = (event) => {
+      const send2 = (event) => {
         if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}
 
 `);
       };
       if (!isConfigured()) {
-        send({ type: "error", message: NO_KEY_MESSAGE });
+        send2({ type: "error", message: NO_KEY_MESSAGE });
         res.end();
         return;
       }
@@ -2623,31 +2782,31 @@ function createApi() {
           onGrounded: () => {
             if (!grounded) {
               grounded = true;
-              send({ type: "searched" });
+              send2({ type: "searched" });
             }
           },
-          onSearchFailed: (reason) => send({ type: "search-failed", reason }),
+          onSearchFailed: (reason) => send2({ type: "search-failed", reason }),
           tools: declarations(),
           onToolCall: async (name, args) => (await runTool({ name, args })).result,
           onToolUsed: (name, summary2) => {
             if (name === "search_web") {
               if (!grounded) {
                 grounded = true;
-                send({ type: "searched" });
+                send2({ type: "searched" });
               }
               return;
             }
-            send({ type: "acted", name, summary: summary2 });
+            send2({ type: "acted", name, summary: summary2 });
           }
         })) {
           reply += delta;
-          send({ type: "delta", text: delta });
+          send2({ type: "delta", text: delta });
         }
       } catch (error) {
         const message = error.message ?? "unknown error";
         console.error("[grace] generation failed:", message);
         if (reply.trim()) await record2("grace", reply, via);
-        send({
+        send2({
           type: "error",
           message: `I couldn't finish that thought \u2014 ${message}`
         });
@@ -2655,11 +2814,11 @@ function createApi() {
         return;
       }
       if (!reply.trim()) {
-        send({ type: "error", message: "I drew a blank there. Try me again." });
+        send2({ type: "error", message: "I drew a blank there. Try me again." });
         res.end();
         return;
       }
-      send({ type: "done", message: await record2("grace", reply, via) });
+      send2({ type: "done", message: await record2("grace", reply, via) });
       contextCache = null;
       res.end();
     })
@@ -2779,6 +2938,12 @@ function createApi() {
     }
   }));
   api.get(
+    "/bridge-status",
+    guard(async (_req, res) => {
+      res.json({ token: await bridgeToken(), ...await bridgeStatus() });
+    })
+  );
+  api.get(
     "/ps5",
     guard(async (_req, res) => {
       if (!psnConfigured()) {
@@ -2863,7 +3028,7 @@ function createApi() {
   api.post(
     "/web-check",
     guard(async (_req, res) => {
-      const report = { model: config.model };
+      const report2 = { model: config.model };
       try {
         const answer = await getProvider().complete({
           system: "Answer in one short sentence.",
@@ -2871,11 +3036,11 @@ function createApi() {
           search: true,
           temperature: 0
         });
-        report.grounding = "ok";
-        report.groundedAnswer = answer.slice(0, 300);
+        report2.grounding = "ok";
+        report2.groundedAnswer = answer.slice(0, 300);
       } catch (error) {
-        report.grounding = "failed";
-        report.groundingError = error.message.slice(0, 500);
+        report2.grounding = "failed";
+        report2.groundingError = error.message.slice(0, 500);
       }
       const called = [];
       try {
@@ -2891,15 +3056,15 @@ function createApi() {
         })) {
           reply += delta;
         }
-        report.toolsOffered = declarations().map((tool) => tool.name);
-        report.toolsCalled = called;
-        report.reachedForTheWeb = called.includes("search_web");
-        report.reply = reply.slice(0, 300);
+        report2.toolsOffered = declarations().map((tool) => tool.name);
+        report2.toolsCalled = called;
+        report2.reachedForTheWeb = called.includes("search_web");
+        report2.reply = reply.slice(0, 300);
       } catch (error) {
-        report.toolCalling = "failed";
-        report.toolError = error.message.slice(0, 500);
+        report2.toolCalling = "failed";
+        report2.toolError = error.message.slice(0, 500);
       }
-      res.json(report);
+      res.json(report2);
     })
   );
   api.post(

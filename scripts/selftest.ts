@@ -598,11 +598,95 @@ try {
     /not connected|paste/i,
     'with no token she must say it is not connected',
   );
-  assert.ok(
-    !allTools().some((tool) => /turn on|power|launch|start_game/i.test(tool.name)),
-    'nothing may claim to operate the console — she cannot reach it',
+  ok('she can look at the PlayStation, and says so when it is not connected');
+
+  // ---- the laptop bridge --------------------------------------------------
+  // This is the only route that anything on the open internet can reach
+  // without the password, so what it refuses matters more than what it does.
+  const refused = await fetch(`${base}/bridge`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({token: 'not-the-token', state: null}),
+  });
+  assert.equal(refused.status, 401, 'a wrong token must get nowhere');
+  assert.equal(
+    ((await refused.json()) as {error: string}).error,
+    'no',
+    'and must not be told anything about why',
   );
-  ok('she can see the PlayStation and says plainly that she cannot operate it');
+  ok('the bridge route refuses anything without the right token');
+
+  const token = (
+    (await (await call('/bridge-status')).json()) as {token: string; online: boolean}
+  ).token;
+  assert.ok(token.length > 20, 'a token should be generated on first ask');
+
+  // With no laptop answering, she must say so rather than claim to have done
+  // it. Reporting success about a console that never moved is the one failure
+  // that would make this whole feature untrustworthy.
+  const noBridge = await runTool({name: 'wake_playstation', args: {}});
+  assert.match(
+    noBridge.result,
+    /not running|no way onto/i,
+    'with no bridge she must say she cannot reach the console',
+  );
+  ok('with no laptop listening she says so, rather than claiming success');
+
+  // Now stand in for the laptop: check in, take the instruction, report back.
+  const asBridge = (body: unknown) =>
+    fetch(`${base}/bridge`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+
+  const consoleState = {
+    found: true,
+    status: 'STANDBY',
+    name: 'PS5-1234',
+    address: '192.168.1.20',
+    at: new Date().toISOString(),
+  };
+  const firstCheckIn = (await (await asBridge({token, state: consoleState})).json()) as {
+    commands: {id: string}[];
+  };
+  assert.deepEqual(firstCheckIn.commands, [], 'nothing queued yet');
+
+  const woken = runTool({name: 'wake_playstation', args: {}});
+  // Give the tool a moment to queue the instruction before the laptop looks.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const collected = (await (await asBridge({token, state: consoleState})).json()) as {
+    commands: {id: string; action: string}[];
+  };
+  assert.equal(collected.commands.length, 1, 'the laptop should be given the job');
+  assert.equal(collected.commands[0].action, 'wake');
+
+  const claimedAgain = (await (await asBridge({token, state: consoleState})).json()) as {
+    commands: unknown[];
+  };
+  assert.deepEqual(
+    claimedAgain.commands,
+    [],
+    'and must not be handed the same job twice — that is a console switched on twice',
+  );
+
+  await asBridge({
+    token,
+    state: consoleState,
+    results: [{id: collected.commands[0].id, ok: true, detail: 'sent'}],
+  });
+
+  const said = await woken;
+  assert.match(said.result, /coming on/i, 'she reports what the laptop actually did');
+  ok('an instruction reaches the laptop once, and she reports back what happened');
+
+  // She can look at the console, and she cannot operate it beyond on and off.
+  assert.ok(
+    !allTools().some((tool) => /launch|start_game|press|button/i.test(tool.name)),
+    'nothing may claim to start a game — a PS5 will not accept it',
+  );
+  ok('she has switching on and off, and claims nothing beyond it');
 
   // ---- she can go back and look ------------------------------------------
   // Her working memory is the recent window and a short summary. Everything

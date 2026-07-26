@@ -15,6 +15,7 @@ import {
   pauseAfterFailure,
   requireAuth,
 } from './auth';
+import {bridgeStatus, bridgeToken, claim, report} from './bridge';
 import {monthlyCap, spend} from './budget';
 import {config, isConfigured} from './config';
 import {keyStatus, loadKeys, setKey} from './keys';
@@ -186,6 +187,38 @@ export function createApi(): Express {
     clearSession(res);
     res.json({ok: true});
   });
+
+  /**
+   * The laptop on the user's home network, checking in.
+   *
+   * Deliberately outside the password wall: the bridge is a program, not a
+   * person, and it carries its own token instead. It is also the only route
+   * here that anything on the open internet can reach without signing in, so
+   * the token is compared in constant time and a wrong one is told nothing at
+   * all beyond "no".
+   */
+  api.post(
+    '/bridge',
+    guard(async (req, res) => {
+      await loadKeys().catch(() => {});
+      const token = String(req.body?.token ?? '');
+
+      const results = Array.isArray(req.body?.results) ? req.body.results : [];
+      if (results.length > 0 && !(await report(token, results))) {
+        res.status(401).json({error: 'no'});
+        return;
+      }
+
+      const state = req.body?.state ?? null;
+      const claimed = await claim(token, state);
+      if (!claimed.ok) {
+        res.status(401).json({error: 'no'});
+        return;
+      }
+
+      res.json({commands: claimed.commands});
+    }),
+  );
 
   // ---- everything below needs a session ----------------------------------
 
@@ -558,6 +591,14 @@ export function createApi(): Express {
       res.status(failure.needsReconnect ? 409 : 502).json({error: failure.message});
     }
   }));
+
+  /** The token the laptop needs, and whether it has been heard from. */
+  api.get(
+    '/bridge-status',
+    guard(async (_req, res) => {
+      res.json({token: await bridgeToken(), ...(await bridgeStatus())});
+    }),
+  );
 
   // ---- the PlayStation ---------------------------------------------------
 
