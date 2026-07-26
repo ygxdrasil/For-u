@@ -124,7 +124,9 @@ export function Composer({
         type="button"
         onClick={recording ? onRecordStop : onRecordStart}
         disabled={recorderBusy}
-        aria-label={recording ? 'Stop recording and send' : 'Record what you say'}
+        aria-label={
+          recording ? 'Listening — stops on its own when you finish' : 'Speak to Grace'
+        }
         className={`relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 py-2 text-sm transition disabled:opacity-40 ${
           recording
             ? 'border-ice/60 bg-ice/20 text-ice'
@@ -138,7 +140,7 @@ export function Composer({
         )}
         <AudioLines size={15} className="relative" />
         <span className="relative hidden sm:inline">
-          {recorderBusy ? 'One moment' : recording ? 'Stop' : 'Speak'}
+          {recorderBusy ? 'One moment' : recording ? 'Listening' : 'Speak'}
         </span>
       </button>
 

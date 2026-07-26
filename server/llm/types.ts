@@ -21,6 +21,13 @@ export interface GenerateRequest {
   json?: object;
   /** Disable model-side deliberation where supported, for latency. */
   fast?: boolean;
+  /**
+   * Let the model search the web when it judges that it needs to.
+   *
+   * Cannot be combined with `json`: providers disallow a forced response shape
+   * alongside a search tool.
+   */
+  search?: boolean;
 }
 
 export interface TranscribeRequest {

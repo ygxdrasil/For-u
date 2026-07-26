@@ -61,10 +61,34 @@ export class GeminiProvider implements LlmProvider {
   }
 
   async *stream(request: GenerateRequest): AsyncIterable<string> {
-    const response = await this.client.models.generateContentStream(
-      this.params(request),
-    );
+    let spoken = false;
 
+    try {
+      const response = await this.client.models.generateContentStream(
+        this.params(request),
+      );
+      for await (const chunk of response) {
+        if (chunk.text) {
+          spoken = true;
+          yield chunk.text;
+        }
+      }
+      return;
+    } catch (error) {
+      // The daily allowance for grounded prompts is smaller than the one for
+      // ordinary ones, and it runs out mid-day rather than at a boundary. An
+      // assistant who goes mute the moment she cannot search is worse than one
+      // who answers from what she already knows and says so.
+      if (!request.search || spoken) throw error;
+      console.error(
+        '[grace] search unavailable, answering without it:',
+        (error as Error).message,
+      );
+    }
+
+    const response = await this.client.models.generateContentStream(
+      this.params({...request, search: false}),
+    );
     for await (const chunk of response) {
       if (chunk.text) yield chunk.text;
     }
@@ -147,6 +171,10 @@ export class GeminiProvider implements LlmProvider {
     if (request.json) {
       config.responseMimeType = 'application/json';
       config.responseSchema = request.json;
+    } else if (request.search) {
+      // Grounding is a tool, not a mode: she searches when the answer needs
+      // something she cannot know, and doesn't when it doesn't.
+      config.tools = [{googleSearch: {}}];
     }
 
     // Conversation should feel immediate; deliberation costs a beat of silence

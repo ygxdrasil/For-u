@@ -51,13 +51,17 @@ class StubProvider implements LlmProvider {
   lastSystem = '';
   lastTurns: Turn[] = [];
 
+  lastSearch: boolean | undefined = undefined;
+
   async *stream(request: GenerateRequest): AsyncIterable<string> {
     this.lastSystem = request.system;
     this.lastTurns = request.turns;
+    this.lastSearch = request.search;
     for (const chunk of REPLY_CHUNKS) yield chunk;
   }
 
   async complete(request: GenerateRequest): Promise<string> {
+    this.lastSearch = request.search;
     // The JSON-shaped request is profile extraction; the other is summarising.
     if (request.json) {
       return JSON.stringify({
@@ -297,6 +301,20 @@ try {
     'speaking must require something to say',
   );
   ok('speech endpoint validates its input');
+
+  // ---- the web -----------------------------------------------------------
+  // Grounding has to be asked for on the chat call, and must never be asked
+  // for alongside a forced JSON shape — providers reject the combination, and
+  // that would take profile extraction down with it.
+  await chat('What is the weather doing?');
+  assert.equal(stub.lastSearch, true, 'chat must offer her the web');
+  await reflect();
+  assert.notEqual(
+    stub.lastSearch,
+    true,
+    'extraction must not ask for search alongside a JSON shape',
+  );
+  ok('web search offered on chat, withheld where it would break the call');
 
   // ---- attention modes ---------------------------------------------------
   // These are not decoration: the mode has to reach the model, or "Focus" is

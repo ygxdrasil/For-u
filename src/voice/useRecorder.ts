@@ -7,6 +7,19 @@ const MIN_SECONDS = 0.3;
 /** Stop on our own terms rather than uploading a recording of an empty room. */
 const MAX_SECONDS = 60;
 
+/** Above this, someone is talking. Below it, room tone. */
+const SPEECH_LEVEL = 0.06;
+
+/** Silence this long after speech means the sentence is finished. */
+const TRAILING_SILENCE_MS = 1400;
+
+/**
+ * How long to wait for someone to start before giving up.
+ *
+ * Generous, because pressing the button and then thinking is normal.
+ */
+const OPENING_PATIENCE_MS = 8000;
+
 export type RecorderState = 'idle' | 'starting' | 'recording' | 'working';
 
 interface RecorderOptions {
@@ -35,6 +48,10 @@ export function useRecorder({onCaptured}: RecorderOptions) {
   const frameRef = useRef<number | undefined>(undefined);
   const stopTimerRef = useRef<number | undefined>(undefined);
   const onCapturedRef = useRef(onCaptured);
+  /** Lets the level meter close the recording without a stale closure. */
+  const stopRef = useRef<() => void>(() => {});
+  /** Read inside callbacks, where the state value would be a render behind. */
+  const spokeRef = useRef(false);
 
   useEffect(() => {
     onCapturedRef.current = onCaptured;
@@ -67,6 +84,8 @@ export function useRecorder({onCaptured}: RecorderOptions) {
     }
   }, [teardown]);
 
+  stopRef.current = stop;
+
   const start = useCallback(async () => {
     if (!supported) {
       setError(
@@ -78,13 +97,16 @@ export function useRecorder({onCaptured}: RecorderOptions) {
 
     setError(null);
     setHeardSomething(false);
+    spokeRef.current = false;
     setState('starting');
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {echoCancellation: true, noiseSuppression: true},
-      });
+      // Plain `audio: true`, deliberately. Asking for echo cancellation and
+      // noise suppression by name makes the whole request fail on any device
+      // that doesn't offer them, and a microphone that refuses to open is
+      // indistinguishable from an assistant who cannot hear you.
+      stream = await navigator.mediaDevices.getUserMedia({audio: true});
     } catch (cause) {
       const name = (cause as Error).name;
       setState('idle');
@@ -118,6 +140,9 @@ export function useRecorder({onCaptured}: RecorderOptions) {
       context.createMediaStreamSource(stream).connect(analyser);
 
       const samples = new Uint8Array(analyser.frequencyBinCount);
+      const openedAt = performance.now();
+      let spokeAt = 0;
+
       const tick = () => {
         analyser.getByteTimeDomainData(samples);
         let peak = 0;
@@ -125,7 +150,25 @@ export function useRecorder({onCaptured}: RecorderOptions) {
           peak = Math.max(peak, Math.abs(sample - 128) / 128);
         }
         setLevel(peak);
-        if (peak > 0.04) setHeardSomething(true);
+        if (peak > 0.04) {
+          setHeardSomething(true);
+          spokeRef.current = true;
+        }
+
+        // She closes the recording herself once you stop talking. Requiring a
+        // second press is the single easiest thing to get wrong, and getting
+        // it wrong looks exactly like an assistant who cannot hear you.
+        const now = performance.now();
+        if (peak > SPEECH_LEVEL) {
+          spokeAt = now;
+        } else if (spokeAt > 0 && now - spokeAt > TRAILING_SILENCE_MS) {
+          stopRef.current();
+          return;
+        } else if (spokeAt === 0 && now - openedAt > OPENING_PATIENCE_MS) {
+          stopRef.current();
+          return;
+        }
+
         frameRef.current = window.requestAnimationFrame(tick);
       };
       tick();
@@ -155,6 +198,18 @@ export function useRecorder({onCaptured}: RecorderOptions) {
 
       if (recording.size === 0) {
         setError('Nothing was recorded.');
+        setState('idle');
+        return;
+      }
+
+      // Never send an empty room off to be transcribed: it costs a request and
+      // comes back with nothing, which reads as her failing to understand you
+      // rather than never having heard you.
+      if (!spokeRef.current) {
+        setError(
+          'I didn’t pick up any sound. Check the right microphone is selected, ' +
+            'then try again — the bar beside the button should move while you talk.',
+        );
         setState('idle');
         return;
       }

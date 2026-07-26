@@ -203,8 +203,8 @@ export default function App() {
       {grace.recorder.state === 'recording' && (
         <p className="border-t border-ice/20 bg-ice/5 px-5 py-2 text-xs text-ice/90">
           {grace.recorder.heardSomething
-            ? 'Hearing you. Press Stop when you’re done.'
-            : 'Recording — but no sound yet. Check the right microphone is selected.'}
+            ? 'Hearing you — I’ll stop when you do.'
+            : 'Listening, but nothing’s reaching me yet. Start talking.'}
         </p>
       )}
 

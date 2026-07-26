@@ -204,6 +204,7 @@ export function createApi(): Express {
           signal: controller.signal,
           temperature: 0.7,
           fast: true,
+          search: true,
         })) {
           reply += delta;
           send({type: 'delta', text: delta});
