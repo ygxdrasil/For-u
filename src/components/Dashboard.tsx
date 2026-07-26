@@ -215,7 +215,7 @@ export function Dashboard({
             if ((id === 'mail' || id === 'diary') && google?.configured) {
               // A full page visit rather than a fetch: Google's consent screen
               // will not load inside anything.
-              window.location.href = '/api/google/start';
+              window.location.href = '/api/google-start';
             }
           }}
         />
@@ -228,7 +228,7 @@ export function Dashboard({
                   Connect Gmail and Calendar and she can read your day.
                 </p>
                 <a
-                  href="/api/google/start"
+                  href="/api/google-start"
                   className="mt-2 inline-block rounded-full border border-ice/40 bg-ice/15 px-3 py-1 text-xs text-ice transition hover:bg-ice/25">
                   Connect Google
                 </a>
@@ -246,7 +246,7 @@ export function Dashboard({
         {google?.problem && (
           <p className="mt-2 rounded-lg border border-ember/25 bg-ember/10 px-3 py-2 text-xs leading-relaxed text-ember/90">
             {google.problem}{' '}
-            <a href="/api/google/start" className="underline underline-offset-2">
+            <a href="/api/google-start" className="underline underline-offset-2">
               Reconnect
             </a>
           </p>

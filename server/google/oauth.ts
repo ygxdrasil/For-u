@@ -62,8 +62,8 @@ export function redirectUri(): string {
   if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
   const host = process.env.VERCEL_PROJECT_PRODUCTION_URL;
   return host
-    ? `https://${host}/api/google/callback`
-    : 'http://localhost:3001/api/google/callback';
+    ? `https://${host}/api/google-callback`
+    : 'http://localhost:3001/api/google-callback';
 }
 
 export function authorizeUrl(): string {

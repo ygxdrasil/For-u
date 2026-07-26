@@ -348,6 +348,22 @@ try {
 
   await call('/mode', {method: 'POST', body: JSON.stringify({mode: 'open'})});
 
+  // ---- every route must be a single path segment -------------------------
+  // Vercel answers /api/a/b with a 404 that never reaches the app, while the
+  // same request works perfectly on a local machine. That divergence silently
+  // broke forgetting a fact and clearing the conversation in production, and
+  // nothing here noticed until someone probed the deployed server by hand.
+  const routes = [
+    ...readFileSync('server/api.ts', 'utf8').matchAll(
+      /api\.(?:get|post|put|delete|patch)\(\s*'([^']+)'/g,
+    ),
+  ].map((match) => match[1]);
+
+  assert.ok(routes.length > 15, 'the route scan should have found the routes');
+  const nested = routes.filter((route) => route.split('/').filter(Boolean).length > 1);
+  assert.deepEqual(nested, [], `these routes are unreachable once deployed: ${nested}`);
+  ok(`all ${routes.length} routes are a single segment, so Vercel can reach them`);
+
   // ---- she cannot send mail, as a matter of code -------------------------
   // Google publishes no draft-only scope, so gmail.compose carries the ability
   // to send whether we want it or not. The user's first hard limit therefore

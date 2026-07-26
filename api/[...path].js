@@ -691,7 +691,7 @@ function googleConfigured() {
 function redirectUri() {
   if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
   const host = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-  return host ? `https://${host}/api/google/callback` : "http://localhost:3001/api/google/callback";
+  return host ? `https://${host}/api/google-callback` : "http://localhost:3001/api/google-callback";
 }
 function authorizeUrl() {
   const state = randomBytes2(32).toString("base64url");
@@ -1282,7 +1282,7 @@ function createApi() {
       }
     })
   );
-  api.get("/google/status", guard(async (_req, res) => {
+  api.get("/google-status", guard(async (_req, res) => {
     const saved = await connection();
     res.json({
       configured: googleConfigured(),
@@ -1292,7 +1292,7 @@ function createApi() {
       redirectUri: redirectUri()
     });
   }));
-  api.get("/google/start", (req, res) => {
+  api.get("/google-start", (req, res) => {
     if (!googleConfigured()) {
       res.status(503).json({
         error: "Google is not set up yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
@@ -1302,7 +1302,7 @@ function createApi() {
     void req;
     res.redirect(authorizeUrl());
   });
-  api.get("/google/callback", guard(async (req, res) => {
+  api.get("/google-callback", guard(async (req, res) => {
     const finish = (message) => res.status(200).send(
       `<!doctype html><meta charset="utf-8"><title>Grace</title><body style="background:#07090c;color:#e2e8f0;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;text-align:center"><div><p style="max-width:32rem;line-height:1.6">${message}</p><a href="/" style="color:#7dd3fc">Back to Grace</a></div>`
     );
@@ -1320,11 +1320,11 @@ function createApi() {
       finish(`Could not connect: ${error.message}`);
     }
   }));
-  api.post("/google/disconnect", guard(async (_req, res) => {
+  api.post("/google-disconnect", guard(async (_req, res) => {
     await disconnect();
     res.json({ ok: true });
   }));
-  api.get("/google/mail", guard(async (req, res) => {
+  api.get("/google-mail", guard(async (req, res) => {
     try {
       res.json({
         messages: await recentMail(String(req.query.q ?? "in:inbox"), 10)
@@ -1334,7 +1334,7 @@ function createApi() {
       res.status(failure.needsReconnect ? 409 : 502).json({ error: failure.message });
     }
   }));
-  api.get("/google/diary", guard(async (_req, res) => {
+  api.get("/google-diary", guard(async (_req, res) => {
     try {
       res.json({ events: await upcoming(24) });
     } catch (error) {
@@ -1365,17 +1365,22 @@ function createApi() {
     })
   );
   api.post(
-    "/profile/address",
+    "/profile-address",
     guard(async (req, res) => {
       const raw = req.body?.addressAs;
       const addressAs = typeof raw === "string" && raw.trim() ? raw.trim().slice(0, 40) : null;
       res.json(await setAddressAs(addressAs));
     })
   );
-  api.delete(
-    "/profile/:id",
+  api.post(
+    "/profile-forget",
     guard(async (req, res) => {
-      res.json(await forget(req.params.id));
+      const id = String(req.body?.id ?? "");
+      if (!id) {
+        res.status(400).json({ error: "which one?" });
+        return;
+      }
+      res.json(await forget(id));
     })
   );
   api.post(
@@ -1396,7 +1401,7 @@ function createApi() {
     })
   );
   api.post(
-    "/conversation/clear",
+    "/conversation-clear",
     guard(async (_req, res) => {
       await clearConversation();
       res.json({ ok: true });

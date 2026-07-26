@@ -71,7 +71,7 @@ app" screen once when connecting — click **Advanced** → **Go to Grace
 4. Under **Authorized redirect URIs** → **Add URI**, and paste **exactly** this:
 
    ```
-   https://grace-vercel.vercel.app/api/google/callback
+   https://grace-vercel.vercel.app/api/google-callback
    ```
 
    No trailing slash. It has to match character for character, or Google

@@ -69,6 +69,15 @@ const NO_KEY_MESSAGE =
  * a plain Node response, and it is express itself — not Router — that adds
  * res.json and friends. Mounting the app works in dev, production and serverless.
  */
+/**
+ * Every route below is a single path segment, and must stay that way.
+ *
+ * Vercel routes `/api/anything` to the catch-all function but answers
+ * `/api/anything/else` with a 404 that never reaches this code at all. That
+ * silently broke forgetting a fact and clearing the conversation on the
+ * deployed app while both worked perfectly on a local machine. The self-test
+ * fails if a nested route is ever added.
+ */
 export function createApi(): Express {
   const api = express();
   // Recorded speech arrives as base64 in a JSON body, so the default 100kb
@@ -323,7 +332,7 @@ export function createApi(): Express {
   );
 
   // ---- Google -----------------------------------------------------------
-  api.get('/google/status', guard(async (_req, res) => {
+  api.get('/google-status', guard(async (_req, res) => {
     const saved = await connection();
     res.json({
       configured: googleConfigured(),
@@ -334,7 +343,7 @@ export function createApi(): Express {
     });
   }));
 
-  api.get('/google/start', (req, res) => {
+  api.get('/google-start', (req, res) => {
     if (!googleConfigured()) {
       res.status(503).json({
         error: 'Google is not set up yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.',
@@ -346,7 +355,7 @@ export function createApi(): Express {
   });
 
   // Google sends the browser here, so it answers in HTML rather than JSON.
-  api.get('/google/callback', guard(async (req, res) => {
+  api.get('/google-callback', guard(async (req, res) => {
     const finish = (message: string) =>
       res.status(200).send(
         `<!doctype html><meta charset="utf-8"><title>Grace</title>` +
@@ -372,12 +381,12 @@ export function createApi(): Express {
     }
   }));
 
-  api.post('/google/disconnect', guard(async (_req, res) => {
+  api.post('/google-disconnect', guard(async (_req, res) => {
     await disconnect();
     res.json({ok: true});
   }));
 
-  api.get('/google/mail', guard(async (req, res) => {
+  api.get('/google-mail', guard(async (req, res) => {
     try {
       res.json({
         messages: await recentMail(String(req.query.q ?? 'in:inbox'), 10),
@@ -388,7 +397,7 @@ export function createApi(): Express {
     }
   }));
 
-  api.get('/google/diary', guard(async (_req, res) => {
+  api.get('/google-diary', guard(async (_req, res) => {
     try {
       res.json({events: await upcoming(24)});
     } catch (error) {
@@ -434,7 +443,7 @@ export function createApi(): Express {
   );
 
   api.post(
-    '/profile/address',
+    '/profile-address',
     guard(async (req, res) => {
       const raw = req.body?.addressAs;
       const addressAs =
@@ -443,10 +452,17 @@ export function createApi(): Express {
     }),
   );
 
-  api.delete(
-    '/profile/:id',
+  // The id travels in the body rather than the path: every route here is a
+  // single segment on purpose. See the note above the route table.
+  api.post(
+    '/profile-forget',
     guard(async (req, res) => {
-      res.json(await forget(req.params.id));
+      const id = String(req.body?.id ?? '');
+      if (!id) {
+        res.status(400).json({error: 'which one?'});
+        return;
+      }
+      res.json(await forget(id));
     }),
   );
 
@@ -472,7 +488,7 @@ export function createApi(): Express {
   );
 
   api.post(
-    '/conversation/clear',
+    '/conversation-clear',
     guard(async (_req, res) => {
       await clearConversation();
       res.json({ok: true});
