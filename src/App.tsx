@@ -1,6 +1,7 @@
-import {Headphones, LayoutDashboard, MessagesSquare, PanelRight} from 'lucide-react';
-import {useState} from 'react';
+import {ExternalLink, Headphones, LayoutDashboard, MessagesSquare, PanelRight} from 'lucide-react';
+import {useEffect, useState} from 'react';
 import {Composer} from './components/Composer';
+import {ACCENT, Rail} from './components/Rail';
 import {Dashboard} from './components/Dashboard';
 import {Lock} from './components/Lock';
 import {ProfilePanel} from './components/ProfilePanel';
@@ -8,6 +9,7 @@ import {Transcript} from './components/Transcript';
 import {VoiceCheck} from './components/VoiceCheck';
 import type {Mode} from './hooks/useGrace';
 import {useGrace} from './hooks/useGrace';
+import {useRooms} from './hooks/useRooms';
 
 const MODE_LABEL: Record<Mode, string> = {
   offline: 'Not configured',
@@ -29,12 +31,23 @@ const MODE_DOT: Record<Mode, string> = {
 
 export default function App() {
   const grace = useGrace();
+  const rooms = useRooms();
   const [panelOpen, setPanelOpen] = useState(false);
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
   /** Which half of the app a narrow screen is showing. */
   const [tab, setTab] = useState<'grace' | 'talk'>('grace');
 
   const {session, state, mode} = grace;
+  const {opening} = grace;
+  const {enter, open} = rooms;
+
+  // She asked the browser for something. Moving room is instant; the pages are
+  // attempted and whatever the browser refused comes back as links to tap.
+  useEffect(() => {
+    if (!opening) return;
+    if (opening.workspace) enter(opening.workspace);
+    if (opening.urls.length > 0) open(opening.urls);
+  }, [opening, enter, open]);
 
   // Nothing of hers renders until the session is settled, so a lapsed cookie
   // can't flash her transcript on screen first. But an unreachable server used
@@ -84,6 +97,8 @@ export default function App() {
     else void grace.recorder.start();
   };
 
+  const accent = ACCENT[rooms.room?.accent ?? 'ice'];
+
   const dashboard = state && (
     <Dashboard
       state={state}
@@ -106,6 +121,7 @@ export default function App() {
       onSetAttention={(next) => void grace.setAttention(next)}
       onTalk={talk}
       onOpenSoundCheck={() => setSoundCheckOpen(true)}
+      room={rooms.room}
     />
   );
 
@@ -115,7 +131,14 @@ export default function App() {
       <div className="ambient-deep pointer-events-none absolute inset-0 -z-10" />
 
       <header className="flex items-center justify-between border-b border-edge/70 px-4 py-3 sm:px-5">
-        <h1 className="font-serif text-xl tracking-wide text-slate-100">Grace</h1>
+        <h1 className="flex items-baseline gap-2 font-serif text-xl tracking-wide text-slate-100">
+          Grace
+          {rooms.room && rooms.room.id !== 'grace' && (
+            <span className={`text-xs tracking-[0.18em] uppercase ${accent.text}`}>
+              {rooms.room.name}
+            </span>
+          )}
+        </h1>
 
         <div className="flex items-center gap-2 sm:gap-4">
           <span className="hidden items-center gap-2 text-xs text-mist sm:flex">
@@ -169,7 +192,13 @@ export default function App() {
         ))}
       </div>
 
-      <main className="relative flex min-h-0 flex-1">
+      <main className="relative flex min-h-0 flex-1 max-lg:flex-col">
+        <Rail
+          rooms={rooms.rooms}
+          current={rooms.current}
+          onPick={(id) => rooms.enter(id, true)}
+        />
+
         <aside className="hidden w-80 shrink-0 border-r border-edge/70 lg:block">
           {dashboard}
         </aside>
@@ -211,6 +240,24 @@ export default function App() {
           />
         )}
       </main>
+
+      {rooms.blocked.length > 0 && (
+        <div className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
+          <span className="mr-2">Your browser blocked these — tap to open:</span>
+          {rooms.blocked.map((url) => (
+            <a
+              key={url}
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={rooms.dismissBlocked}
+              className="mr-2 inline-flex items-center gap-1 underline underline-offset-2">
+              <ExternalLink size={11} />
+              {new URL(url).hostname.replace(/^www\./, '')}
+            </a>
+          ))}
+        </div>
+      )}
 
       {notice && (
         <p className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">

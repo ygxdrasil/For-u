@@ -31,6 +31,18 @@ export function useGrace() {
   const [actions, setActions] = useState<string[]>([]);
   /** A question she has put to you, waiting on a tap. */
   const [asked, setAsked] = useState<{question: string; choices: Choice[]} | null>(null);
+  /**
+   * Pages she has asked the browser to open, and the room to move to.
+   *
+   * Held as state with a stamp rather than fired straight into a callback:
+   * this hook has no business opening windows, and the stamp is what lets the
+   * same instruction twice in a row still register as two events.
+   */
+  const [opening, setOpening] = useState<{
+    urls: string[];
+    workspace?: string;
+    at: number;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [micOn, setMicOn] = useState(false);
@@ -161,6 +173,8 @@ export function useGrace() {
             landed = true;
           } else if (event.type === 'searched') {
             setSearched(true);
+          } else if (event.type === 'open') {
+            setOpening({urls: event.urls, workspace: event.workspace, at: Date.now()});
           } else if (event.type === 'asked') {
             setAsked({question: event.question, choices: event.choices});
           } else if (event.type === 'acted') {
@@ -355,6 +369,7 @@ export function useGrace() {
     searched,
     actions,
     asked,
+    opening,
     error,
     mode,
     micOn,

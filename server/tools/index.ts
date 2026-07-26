@@ -3,6 +3,7 @@ import {noteDeed} from '../journal';
 import {askTools} from './ask';
 import {consoleTools} from './console';
 import {googleTools} from './google';
+import {openTools} from './open';
 import {playstationTools} from './playstation';
 import {recallTools} from './recall';
 import {reminderTools} from './reminders';
@@ -26,6 +27,7 @@ const TOOLS: Tool[] = [
   ...consoleTools,
   ...recallTools,
   ...askTools,
+  ...openTools,
 ];
 
 export function allTools(): Tool[] {
@@ -81,6 +83,8 @@ const LABELS: Record<string, string> = {
   sleep_playstation: 'Put the PlayStation to sleep',
   search_memory: 'Went back through the record',
   ask_choice: 'Asked you something',
+  open_pages: 'Opened a page',
+  open_workspace: 'Switched workspace',
 };
 
 function label(name: string): string {

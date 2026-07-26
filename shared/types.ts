@@ -171,6 +171,29 @@ export interface DayView {
   playstation: PlayStationPresence | null;
 }
 
+/**
+ * One room of the app: a tab in the rail, and a mode she can be put into.
+ *
+ * Data rather than code, so new ones can be added without a deploy.
+ */
+export interface Workspace {
+  id: string;
+  name: string;
+  /** Names a lucide icon; unknown names fall back to a dot. */
+  icon: string;
+  /** Which colour the app takes on while you are in here. */
+  accent: 'ice' | 'amber' | 'violet' | 'rose';
+  /** Pages opened when you switch into it, in order. The first is focused. */
+  opens: string[];
+  /** Which panels this room shows, by name. */
+  panels: string[];
+  blurb?: string;
+  /** What she should say when you arrive, if anything. */
+  brief?: string;
+  /** Hidden rather than deleted — nothing here is ever destroyed. */
+  hidden?: boolean;
+}
+
 /** One tappable answer to something she asked. */
 export interface Choice {
   label: string;
@@ -186,4 +209,5 @@ export type ChatEvent =
   | {type: 'search-failed'; reason: string}
   | {type: 'acted'; name: string; summary: string}
   | {type: 'asked'; question: string; choices: Choice[]}
+  | {type: 'open'; urls: string[]; workspace?: string}
   | {type: 'error'; message: string};

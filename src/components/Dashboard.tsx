@@ -16,6 +16,7 @@ import type {
   GoogleStatus,
   GraceState,
   Message,
+  Workspace,
 } from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
 import {Day} from './Day';
@@ -100,6 +101,8 @@ interface DashboardProps {
   concerns: Concern[];
   held: string | null;
   lastLookedAt: number | null;
+  /** Which room you are in. Decides what this panel shows. */
+  room: Workspace | null;
   onSetAttention: (mode: AttentionMode) => void;
   onTalk: () => void;
   onOpenSoundCheck: () => void;
@@ -127,11 +130,16 @@ export function Dashboard({
   concerns,
   held,
   lastLookedAt,
+  room,
   onSetAttention,
   onTalk,
   onOpenSoundCheck,
 }: DashboardProps) {
   const now = useClock();
+  // A room lists the panels it wants. An unknown or empty room shows
+  // everything, which is what the single-screen version always did.
+  const wants = (name: string) =>
+    !room || room.panels.length === 0 || room.panels.includes(name);
   const attention = state.mode.mode;
   const heldFor = sinceLabel(state.mode.since);
 
@@ -235,8 +243,11 @@ export function Dashboard({
         </p>
       </div>
 
-      <Day refreshKey={lastLookedAt} concerns={concerns} held={held} />
+      {(wants('day') || wants('needs') || wants('deeds')) && (
+        <Day refreshKey={lastLookedAt} concerns={concerns} held={held} />
+      )}
 
+      {wants('faculties') && (
       <div>
         <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
           Faculties
@@ -285,7 +296,9 @@ export function Dashboard({
           </p>
         )}
       </div>
+      )}
 
+      {wants('attention') && (
       <div>
         <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
           Attention {heldFor && <span className="text-mist/35">· {heldFor}</span>}
@@ -311,6 +324,7 @@ export function Dashboard({
           ))}
         </div>
       </div>
+      )}
 
       <div className="grid grid-cols-2 gap-1.5">
         <Readout
@@ -346,7 +360,7 @@ export function Dashboard({
         />
       </div>
 
-      {latest.length > 0 && (
+      {wants('learned') && latest.length > 0 && (
         <div>
           <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
             Lately learned

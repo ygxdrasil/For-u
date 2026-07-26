@@ -621,6 +621,73 @@ try {
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
 
+  // ---- the rooms of the app ------------------------------------------------
+  // A workspace is data rather than code, which is the whole reason the user
+  // can add one without waiting for a deploy. Everything below is about it
+  // staying data: found by name however it was said, saved, and hidden rather
+  // than destroyed.
+  const rooms = (await (await call('/workspaces')).json()) as {
+    workspaces: {id: string; name: string; opens: string[]}[];
+  };
+  assert.ok(
+    rooms.workspaces.some((one) => one.id === 'work'),
+    'the default rooms should be there on a fresh install',
+  );
+
+  const switched = await runTool({name: 'open_workspace', args: {name: 'work mode'}});
+  assert.ok(switched.ok);
+  assert.match(switched.result, /Work/, 'a loosely spoken name should still land');
+
+  const nowhere = await runTool({name: 'open_workspace', args: {name: 'atlantis'}});
+  assert.match(nowhere.result, /no workspace by that name/i);
+
+  // A bare word is a domain guess, which is what makes "open youtube" work.
+  const opened = await runTool({name: 'open_pages', args: {urls: 'youtube'}});
+  assert.match(opened.result, /youtube\.com/, 'a bare name should become an address');
+  const nonsense = await runTool({name: 'open_pages', args: {urls: '!!!'}});
+  assert.match(nonsense.result, /did not look like an address/i);
+
+  const madeRoom = (await (
+    await call('/workspace-save', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'study',
+        name: 'Study',
+        icon: 'sparkles',
+        accent: 'rose',
+        opens: ['https://example.com', 'not-a-url'],
+        panels: ['needs'],
+      }),
+    })
+  ).json()) as {workspaces: {id: string; opens: string[]}[]};
+
+  const study = madeRoom.workspaces.find((one) => one.id === 'study');
+  assert.ok(study, 'a room the user made should be saved');
+  assert.deepEqual(
+    study.opens,
+    ['https://example.com'],
+    'and anything that is not an address should be dropped rather than stored',
+  );
+
+  const hidden = (await (
+    await call('/workspace-hide', {method: 'POST', body: JSON.stringify({id: 'study'})})
+  ).json()) as {workspaces: {id: string}[]};
+  assert.ok(
+    !hidden.workspaces.some((one) => one.id === 'study'),
+    'hiding should take it out of the rail',
+  );
+  const stillThere = (await (
+    await call('/workspace-save', {
+      method: 'POST',
+      body: JSON.stringify({id: 'study', name: 'Study', panels: []}),
+    })
+  ).json()) as {workspaces: {id: string}[]};
+  assert.ok(
+    stillThere.workspaces.some((one) => one.id === 'study'),
+    'and it must come back, because nothing here is ever destroyed',
+  );
+  ok('rooms are data: found by name, made by the user, hidden but never deleted');
+
   // ---- she says something when you walk in, but not every time -------------
   const hello = (await (await call('/greeting', {method: 'POST'})).json()) as {
     say: string | null;

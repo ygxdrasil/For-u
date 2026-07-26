@@ -39,6 +39,7 @@ import {playstation, psnConfigured, PsnError, recentlyPlayed} from './ps5';
 import {pulse} from './pulse';
 import {devices, notify, publicKey, subscribe} from './push';
 import {onAsk} from './tools/ask';
+import {onOpen} from './tools/open';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {getMode, isMode, setMode} from './modes';
@@ -56,6 +57,7 @@ import {
 import {buildSystemPrompt} from './persona';
 import {learnWritingStyle, styleNote} from './style';
 import {getBackend} from './store/index';
+import {hideWorkspace, saveWorkspace, workspaces} from './workspaces';
 
 /**
  * Express 4 lets a rejected async handler escape as an unhandled rejection,
@@ -377,6 +379,9 @@ export function createApi(): Express {
       // waiting for the reply to finish — the buttons and the sentence that
       // introduces them should appear together.
       onAsk((question, choices) => send({type: 'asked', question, choices}));
+      // Likewise for pages: the browser is the only thing that can open a tab,
+      // so the instruction goes down the same stream as the words.
+      onOpen((urls, workspace) => send({type: 'open', urls, workspace}));
 
       try {
         for await (const delta of getProvider().stream({
@@ -630,6 +635,29 @@ export function createApi(): Express {
     '/bridge-status',
     guard(async (_req, res) => {
       res.json({token: await bridgeToken(), ...(await bridgeStatus())});
+    }),
+  );
+
+  // ---- the rooms of the app ----------------------------------------------
+
+  api.get(
+    '/workspaces',
+    guard(async (_req, res) => {
+      res.json({workspaces: await workspaces()});
+    }),
+  );
+
+  api.post(
+    '/workspace-save',
+    guard(async (req, res) => {
+      res.json({workspaces: await saveWorkspace(req.body ?? {})});
+    }),
+  );
+
+  api.post(
+    '/workspace-hide',
+    guard(async (req, res) => {
+      res.json({workspaces: await hideWorkspace(String(req.body?.id ?? ''))});
     }),
   );
 

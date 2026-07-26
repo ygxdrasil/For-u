@@ -2067,6 +2067,141 @@ var askTools = [
   }
 ];
 
+// server/workspaces.ts
+import { randomUUID as randomUUID5 } from "node:crypto";
+var DEFAULTS = [
+  {
+    id: "grace",
+    name: "Grace",
+    icon: "sparkles",
+    accent: "ice",
+    opens: [],
+    panels: ["orb", "faculties", "attention", "learned"],
+    blurb: "Her, and what she knows."
+  },
+  {
+    id: "day",
+    name: "Home",
+    icon: "house",
+    accent: "ice",
+    opens: [],
+    panels: ["day", "needs", "deeds"],
+    blurb: "Your day, and what wants you."
+  },
+  {
+    id: "work",
+    name: "Work",
+    icon: "briefcase",
+    accent: "amber",
+    // Opened in order; the first is the one brought forward.
+    opens: ["https://app.n8n.cloud", "https://mail.google.com"],
+    panels: ["n8n", "github", "mail", "needs"],
+    blurb: "Mail, workflows, and what is failing.",
+    brief: "Brief me on my workflows and anything in my mail that needs me."
+  },
+  {
+    id: "play",
+    name: "Play",
+    icon: "gamepad",
+    accent: "violet",
+    opens: [],
+    panels: ["playstation", "games"],
+    blurb: "The console, and what you have been playing."
+  }
+];
+var store10 = new Document("workspaces", () => DEFAULTS);
+async function workspaces() {
+  const saved = await store10.read();
+  const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
+  return [...saved, ...missing].filter((one) => !one.hidden);
+}
+async function findWorkspace(said) {
+  const needle = said.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  if (!needle) return null;
+  const all = await workspaces();
+  return all.find((one) => one.id === needle || one.name.toLowerCase() === needle) ?? all.find((one) => needle.includes(one.name.toLowerCase())) ?? all.find((one) => one.name.toLowerCase().includes(needle)) ?? null;
+}
+async function saveWorkspace(patch) {
+  const clean = {
+    id: patch.id?.trim() || randomUUID5().slice(0, 8),
+    name: (patch.name ?? "Untitled").trim().slice(0, 24),
+    icon: patch.icon ?? "sparkles",
+    accent: patch.accent ?? "ice",
+    opens: (patch.opens ?? []).map((url) => url.trim()).filter((url) => /^https?:\/\//i.test(url)).slice(0, 8),
+    panels: patch.panels ?? [],
+    blurb: patch.blurb?.slice(0, 80),
+    brief: patch.brief?.slice(0, 200)
+  };
+  await store10.update((current) => {
+    const rest = current.filter((one) => one.id !== clean.id);
+    const at = current.findIndex((one) => one.id === clean.id);
+    if (at < 0) return [...current, clean];
+    const next = [...rest];
+    next.splice(at, 0, clean);
+    return next;
+  });
+  return workspaces();
+}
+async function hideWorkspace(id) {
+  await store10.update((current) => {
+    const known = current.some((one) => one.id === id);
+    const base = known ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
+    return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
+  });
+  return workspaces();
+}
+
+// server/tools/open.ts
+var deliver2 = null;
+function onOpen(handler) {
+  deliver2 = handler;
+}
+function toUrl(raw) {
+  const said = raw.trim().replace(/\s+/g, "");
+  if (!said) return null;
+  if (/^https?:\/\//i.test(said)) return said;
+  const host = said.includes(".") ? said : `${said}.com`;
+  return /^[a-z0-9.-]+(\/.*)?$/i.test(host) ? `https://${host}` : null;
+}
+var openTools = [
+  {
+    name: "open_pages",
+    description: 'Open one or more web pages in the user\u2019s browser. Use it whenever they ask you to open, pull up, or bring up a site \u2014 "open YouTube", "open my GitHub". It only works while they are looking at you, since the browser showing you is the thing that opens them.',
+    category: "research",
+    parameters: {
+      urls: {
+        type: "string",
+        description: 'One or more addresses, separated by spaces or commas. A bare name like "youtube" is fine; a full https address is better when you know it.'
+      }
+    },
+    required: ["urls"],
+    run: async (args) => {
+      const urls = String(args.urls ?? "").split(/[\s,]+/).map(toUrl).filter((url) => Boolean(url)).slice(0, 8);
+      if (urls.length === 0) return "That did not look like an address I could open.";
+      deliver2?.(urls);
+      return `Opening ${urls.length === 1 ? urls[0] : `${urls.length} pages`}. Say so in a few words. If their browser blocks it they will see the links to tap, so do not promise it definitely opened.`;
+    }
+  },
+  {
+    name: "open_workspace",
+    description: 'Switch the user to one of their workspaces \u2014 Work, Home, Play, Grace, or any they have made. Use it for "open work", "go to play", "switch to home". It changes what is on their screen and opens whichever pages that workspace is set to open.',
+    category: "research",
+    parameters: {
+      name: { type: "string", description: "Which workspace, as they said it." }
+    },
+    required: ["name"],
+    run: async (args) => {
+      const workspace = await findWorkspace(String(args.name ?? ""));
+      if (!workspace) {
+        const names = (await workspaces()).map((one) => one.name).join(", ");
+        return `There is no workspace by that name. They have: ${names}.`;
+      }
+      deliver2?.(workspace.opens, workspace.id);
+      return `Switched them to ${workspace.name}` + (workspace.opens.length > 0 ? `, opening ${workspace.opens.length} page${workspace.opens.length === 1 ? "" : "s"}` : "") + `. Say which one you have moved them to, briefly.` + (workspace.brief ? ` Then do this without being asked, and report it in a sentence or two: ${workspace.brief}` : "");
+    }
+  }
+];
+
 // server/tools/console.ts
 var NO_LAPTOP = "The laptop bridge is not running, so I have no way onto your home network. Tell the user plainly: the console can only be reached from something in the same house, and that program is not answering.";
 async function send(action, verb) {
@@ -2446,7 +2581,8 @@ var TOOLS = [
   ...playstationTools,
   ...consoleTools,
   ...recallTools,
-  ...askTools
+  ...askTools,
+  ...openTools
 ];
 function allTools() {
   return TOOLS;
@@ -2469,7 +2605,9 @@ var LABELS = {
   wake_playstation: "Switched the PlayStation on",
   sleep_playstation: "Put the PlayStation to sleep",
   search_memory: "Went back through the record",
-  ask_choice: "Asked you something"
+  ask_choice: "Asked you something",
+  open_pages: "Opened a page",
+  open_workspace: "Switched workspace"
 };
 function label(name) {
   return LABELS[name] ?? name.replace(/_/g, " ");
@@ -2599,6 +2737,10 @@ You can see their PlayStation with check_playstation and recent_games, and you c
 
 Be precise about where that stops. You can turn the console on, put it into rest mode, and see what is running. You cannot start a particular game and you cannot press buttons: a PlayStation will not accept either from anything except a live Remote Play session, which is a different piece of software. If they ask for that, say it in one sentence and do not imply you tried.
 
+They keep the app in rooms \u2014 Grace, Home, Work, Play, and any they have made. open_workspace moves them between them and opens whatever pages that room is set to open; open_pages opens anything else they name. Use them freely: opening a page undoes nothing, so there is nothing to confirm. Say which room you have moved them to, in a few words, and do not claim a page definitely opened \u2014 a browser may refuse, in which case they are shown a link instead.
+
+Both only work while they are looking at you. A browser cannot be reached when nobody is on the page, so if they ask you to open something and then leave, say so rather than pretending.
+
 You have no connection to their lights or heating yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
 var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
 
@@ -2699,7 +2841,7 @@ ${summary}` : null;
 }
 
 // server/style.ts
-var store10 = new Document("style", () => ({
+var store11 = new Document("style", () => ({
   description: null,
   samples: 0,
   builtAt: null
@@ -2707,14 +2849,14 @@ var store10 = new Document("style", () => ({
 var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
 var SAMPLES = 8;
 async function writingStyle() {
-  return (await store10.read()).description;
+  return (await store11.read()).description;
 }
 function fresh(style) {
   if (!style.description || !style.builtAt) return false;
   return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
 }
 async function learnWritingStyle(force = false) {
-  const current = await store10.read();
+  const current = await store11.read();
   if (!force && fresh(current)) return false;
   const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
   if (sent.length < 3) return false;
@@ -2737,7 +2879,7 @@ ${body}`).join("\n\n")
     maxOutputTokens: 400
   }).catch(() => "");
   if (!description.trim()) return false;
-  await store10.write({
+  await store11.write({
     description: description.trim(),
     samples: bodies.length,
     builtAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -2969,6 +3111,7 @@ function createApi() {
       let grounded = false;
       const shown = /* @__PURE__ */ new Map();
       onAsk((question, choices) => send2({ type: "asked", question, choices }));
+      onOpen((urls, workspace) => send2({ type: "open", urls, workspace }));
       try {
         for await (const delta of getProvider().stream({
           system,
@@ -3150,6 +3293,24 @@ function createApi() {
     "/bridge-status",
     guard(async (_req, res) => {
       res.json({ token: await bridgeToken(), ...await bridgeStatus() });
+    })
+  );
+  api.get(
+    "/workspaces",
+    guard(async (_req, res) => {
+      res.json({ workspaces: await workspaces() });
+    })
+  );
+  api.post(
+    "/workspace-save",
+    guard(async (req, res) => {
+      res.json({ workspaces: await saveWorkspace(req.body ?? {}) });
+    })
+  );
+  api.post(
+    "/workspace-hide",
+    guard(async (req, res) => {
+      res.json({ workspaces: await hideWorkspace(String(req.body?.id ?? "")) });
     })
   );
   api.get(
