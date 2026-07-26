@@ -245,13 +245,14 @@ export class GeminiProvider implements LlmProvider {
     if (request.json) {
       config.responseMimeType = 'application/json';
       config.responseSchema = request.json;
-    } else {
-      const tools: object[] = [];
-      // Grounding is a tool, not a mode: she searches when the answer needs
-      // something she cannot know, and doesn't when it doesn't.
-      if (request.search) tools.push({googleSearch: {}});
-      if (request.tools?.length) tools.push({functionDeclarations: request.tools});
-      if (tools.length > 0) config.tools = tools;
+    } else if (request.tools?.length) {
+      // Never both. Gemini rejects the combination outright — "Built-in tools
+      // and Function Calling cannot be combined in the same request" — and
+      // sending both once cost her the web the moment she was given hands.
+      // Her own functions win, because searching is one of them.
+      config.tools = [{functionDeclarations: request.tools}];
+    } else if (request.search) {
+      config.tools = [{googleSearch: {}}];
     }
 
     // Conversation should feel immediate; deliberation costs a beat of silence

@@ -99,24 +99,6 @@ async function listeningContext(): Promise<string> {
   return text;
 }
 
-/**
- * Whether this message is worth offering the web for.
- *
- * Grounding is not free in time: the model weighs a search on every request
- * that carries the tool, and that shows up as a pause on turns that were never
- * going to need it — "I take my coffee black" does not require the internet.
- * The test is deliberately generous, because a needless search costs a second
- * and a missed one costs a wrong answer.
- */
-const TIME_SENSITIVE =
-  /\b(news|weather|forecast|today|tonight|tomorrow|now|currently|latest|recent|price|cost|score|result|open|closed|opening|traffic|stock|shares|rate|release|launch|update|version|who is|what is|where is|when is|how much|how many|look up|search|google|find out|according to)\b/i;
-
-function worthSearching(text: string): boolean {
-  // Anything phrased as a question, plus anything mentioning something that
-  // changes over time. Statements about themselves are left alone.
-  return text.includes('?') || TIME_SENSITIVE.test(text);
-}
-
 const NO_KEY_MESSAGE =
   'No Gemini API key is configured, so I have no voice to think with. ' +
   'Add GEMINI_API_KEY and restart me.';
@@ -284,7 +266,6 @@ export function createApi(): Express {
           signal: controller.signal,
           temperature: 0.7,
           fast: true,
-          search: worthSearching(text),
           onGrounded: () => {
             if (!grounded) {
               grounded = true;
@@ -294,7 +275,18 @@ export function createApi(): Express {
           onSearchFailed: (reason) => send({type: 'search-failed', reason}),
           tools: declarations(),
           onToolCall: async (name, args) => (await runTool({name, args})).result,
-          onToolUsed: (name, summary) => send({type: 'acted', name, summary}),
+          onToolUsed: (name, summary) => {
+            // Searching is an action like any other, but reads better as
+            // "checked the web" than as a line of results.
+            if (name === 'search_web') {
+              if (!grounded) {
+                grounded = true;
+                send({type: 'searched'});
+              }
+              return;
+            }
+            send({type: 'acted', name, summary});
+          },
         })) {
           reply += delta;
           send({type: 'delta', text: delta});

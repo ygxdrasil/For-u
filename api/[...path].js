@@ -546,11 +546,10 @@ ${request.text}` }]
     if (request.json) {
       config2.responseMimeType = "application/json";
       config2.responseSchema = request.json;
-    } else {
-      const tools = [];
-      if (request.search) tools.push({ googleSearch: {} });
-      if (request.tools?.length) tools.push({ functionDeclarations: request.tools });
-      if (tools.length > 0) config2.tools = tools;
+    } else if (request.tools?.length) {
+      config2.tools = [{ functionDeclarations: request.tools }];
+    } else if (request.search) {
+      config2.tools = [{ googleSearch: {} }];
     }
     if (request.fast && !config2.tools) {
       config2.thinkingConfig = { thinkingBudget: 0 };
@@ -1141,8 +1140,35 @@ ${open.map((item) => `- ${describe(item)}`).join("\n")}`;
   }
 ];
 
+// server/tools/web.ts
+var webTools = [
+  {
+    name: "search_web",
+    description: "Look something up on the web. Use this whenever an answer depends on something current, specific, or outside what you already know \u2014 news, weather, prices, opening times, scores, recent events, anything that has changed since you were trained. Ask it a full question rather than keywords. Do not use it for things you already know.",
+    category: "research",
+    parameters: {
+      query: {
+        type: "string",
+        description: "The question to answer, in full. Include any detail from the conversation that narrows it \u2014 a place, a date, a name."
+      }
+    },
+    required: ["query"],
+    run: async (args) => {
+      const query = String(args.query ?? "").trim();
+      if (!query) return "No question was given to look up.";
+      const answer = await getProvider().complete({
+        system: "Answer the question from current web sources. Be brief and factual. Give the figures, names and dates that were asked for. If the sources disagree or are thin, say so rather than picking one.",
+        turns: [{ role: "user", text: query }],
+        search: true,
+        temperature: 0.2
+      });
+      return answer.trim() || "Nothing useful came back for that.";
+    }
+  }
+];
+
 // server/tools/index.ts
-var TOOLS = [...reminderTools];
+var TOOLS = [...webTools, ...reminderTools];
 function findTool(name) {
   return TOOLS.find((tool) => tool.name === name);
 }
@@ -1285,7 +1311,7 @@ When someone asks you to remember something, or mentions something they need to 
 Two things you have no tools for at all, because the user forbade them: sending anything to anyone, and spending money. There is nothing to attempt. A third: you never delete. Things get marked done, filed, or archived \u2014 never destroyed \u2014 because deleting is the one thing neither of you can undo.
 
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.`;
-var PHASE_NOTE = `You can search the web, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
+var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
 You have no connection to their home yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
 var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current. You can read it and talk about it.
@@ -1387,10 +1413,6 @@ ${recent}`
   ].filter(Boolean).join("\n\n").slice(0, 4e3);
   contextCache = { text, until: Date.now() + 3e4 };
   return text;
-}
-var TIME_SENSITIVE = /\b(news|weather|forecast|today|tonight|tomorrow|now|currently|latest|recent|price|cost|score|result|open|closed|opening|traffic|stock|shares|rate|release|launch|update|version|who is|what is|where is|when is|how much|how many|look up|search|google|find out|according to)\b/i;
-function worthSearching(text) {
-  return text.includes("?") || TIME_SENSITIVE.test(text);
 }
 var NO_KEY_MESSAGE = "No Gemini API key is configured, so I have no voice to think with. Add GEMINI_API_KEY and restart me.";
 function createApi() {
@@ -1517,7 +1539,6 @@ function createApi() {
           signal: controller.signal,
           temperature: 0.7,
           fast: true,
-          search: worthSearching(text),
           onGrounded: () => {
             if (!grounded) {
               grounded = true;
@@ -1527,7 +1548,16 @@ function createApi() {
           onSearchFailed: (reason) => send({ type: "search-failed", reason }),
           tools: declarations(),
           onToolCall: async (name, args) => (await runTool({ name, args })).result,
-          onToolUsed: (name, summary2) => send({ type: "acted", name, summary: summary2 })
+          onToolUsed: (name, summary2) => {
+            if (name === "search_web") {
+              if (!grounded) {
+                grounded = true;
+                send({ type: "searched" });
+              }
+              return;
+            }
+            send({ type: "acted", name, summary: summary2 });
+          }
         })) {
           reply += delta;
           send({ type: "delta", text: delta });

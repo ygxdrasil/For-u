@@ -35,7 +35,7 @@ import {
   recentTurns,
 } from '../server/memory';
 import {setBackend} from '../server/store/index';
-import {auditTools, runTool} from '../server/tools/index';
+import {auditTools, declarations, runTool} from '../server/tools/index';
 import {allReminders, outstanding} from '../server/tools/reminders';
 import type {Backend} from '../server/store/types';
 
@@ -55,11 +55,13 @@ class StubProvider implements LlmProvider {
   lastTurns: Turn[] = [];
 
   lastSearch: boolean | undefined = undefined;
+  lastTools: {name: string}[] | undefined = undefined;
 
   async *stream(request: GenerateRequest): AsyncIterable<string> {
     this.lastSystem = request.system;
     this.lastTurns = request.turns;
     this.lastSearch = request.search;
+    this.lastTools = request.tools as {name: string}[] | undefined;
     for (const chunk of REPLY_CHUNKS) yield chunk;
   }
 
@@ -328,24 +330,20 @@ try {
   // Grounding has to be asked for on the chat call, and must never be asked
   // for alongside a forced JSON shape — providers reject the combination, and
   // that would take profile extraction down with it.
+  // Searching is a tool now, not a mode on the conversation. Gemini rejects
+  // its built-in search alongside function calling outright, so the request
+  // that carries her tools must never also ask for grounding.
   await chat('What is the weather doing?');
-  assert.equal(stub.lastSearch, true, 'a question must offer her the web');
-
-  // Grounding costs a beat on every request that carries it, so a remark that
-  // could not possibly need the internet should not pay for it.
-  await chat('I take my coffee black.');
-  assert.notEqual(stub.lastSearch, true, 'a plain statement should skip the web');
-
-  await chat('Any news this morning');
-  assert.equal(stub.lastSearch, true, 'and time-sensitive words should reach it');
-
-  await reflect();
   assert.notEqual(
     stub.lastSearch,
     true,
-    'extraction must not ask for search alongside a JSON shape',
+    'the conversation itself must not request grounding',
   );
-  ok('web offered when it could help, withheld when it would only cost time');
+  assert.ok(
+    (stub.lastTools ?? []).some((tool) => tool.name === 'search_web'),
+    'she should be given the web as something she can reach for',
+  );
+  ok('the web is a tool she chooses, not a mode on every request');
 
   // The bug this guards against cost her the web for days without an error
   // anywhere: the search tool was attached, deliberation was switched off, and
@@ -358,6 +356,24 @@ try {
     search: true,
   });
   assert.ok(grounded.config.tools, 'the search tool should be attached');
+
+  // Gemini rejects the two together outright: "Built-in tools and Function
+  // Calling cannot be combined in the same request." Shipping both meant that
+  // the moment she was given hands, she lost the web. Searching is a function
+  // now, so no request may ever carry both again.
+  for (const req of [
+    {system: 's', turns: [], search: true, tools: declarations()},
+    {system: 's', turns: [], search: true},
+    {system: 's', turns: [], tools: declarations()},
+  ]) {
+    const kinds = ((provider.params(req).config.tools ?? []) as Record<string, unknown>[])
+      .map((entry) => Object.keys(entry)[0]);
+    assert.ok(
+      !(kinds.includes('googleSearch') && kinds.includes('functionDeclarations')),
+      'built-in search and function calling must never be sent together',
+    );
+  }
+  ok('search and function calling are never combined in one request');
   assert.equal(
     grounded.config.thinkingConfig?.thinkingBudget,
     undefined,
