@@ -1,16 +1,36 @@
 import {useEffect, useState} from 'react';
-import {fetchKeys, saveKey, type KeyStatus} from '../lib/api';
+import {fetchKeys, saveKey, type KeyName, type KeyStatus} from '../lib/api';
 
-const FIELDS = [
+const FIELDS: {name: KeyName; label: string; blurb: string; secret: boolean}[] = [
   {
-    name: 'gemini' as const,
+    name: 'gemini',
     label: 'Gemini',
     blurb: 'What she thinks, listens and speaks with. From aistudio.google.com.',
+    secret: true,
   },
   {
-    name: 'govee' as const,
+    name: 'googleClientId',
+    label: 'Google client ID',
+    blurb: 'For mail and diary. Ends in .apps.googleusercontent.com.',
+    secret: true,
+  },
+  {
+    name: 'googleClientSecret',
+    label: 'Google client secret',
+    blurb: 'From the same screen. Starts with GOCSPX-.',
+    secret: true,
+  },
+  {
+    name: 'ownerEmail',
+    label: 'Your Google address',
+    blurb: 'Only this account may connect, so nobody else can attach theirs.',
+    secret: false,
+  },
+  {
+    name: 'govee',
     label: 'Govee',
     blurb: 'Her lights. From the Govee app: Settings → Apply for API Key.',
+    secret: true,
   },
 ];
 
@@ -32,7 +52,7 @@ export function Keys() {
     fetchKeys().then(setStatus).catch(() => {});
   }, []);
 
-  const save = async (name: 'gemini' | 'govee') => {
+  const save = async (name: KeyName) => {
     setSaving(name);
     setError(null);
     try {
@@ -63,7 +83,7 @@ export function Keys() {
             </p>
             <div className="flex gap-1.5">
               <input
-                type="password"
+                type={field.secret ? "password" : "text"}
                 autoComplete="off"
                 value={drafts[field.name] ?? ''}
                 onChange={(event) =>

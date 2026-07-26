@@ -18,6 +18,10 @@ import {Document} from './store/index';
 export interface StoredKeys {
   gemini?: string;
   govee?: string;
+  googleClientId?: string;
+  googleClientSecret?: string;
+  /** Only this Google account may connect. */
+  ownerEmail?: string;
 }
 
 export type KeyName = keyof StoredKeys;
@@ -58,6 +62,14 @@ export function goveeKey(): string {
   return cached?.govee ?? '';
 }
 
+export function googleClient(): {id: string; secret: string; owner: string} {
+  return {
+    id: cached?.googleClientId || process.env.GOOGLE_CLIENT_ID || '',
+    secret: cached?.googleClientSecret || process.env.GOOGLE_CLIENT_SECRET || '',
+    owner: cached?.ownerEmail || process.env.GRACE_OWNER_EMAIL || '',
+  };
+}
+
 /** Enough to recognise a key without revealing it. */
 function tail(value: string | undefined): string | null {
   if (!value) return null;
@@ -66,7 +78,26 @@ function tail(value: string | undefined): string | null {
 
 export async function keyStatus() {
   const keys = await loadKeys();
+  const google = googleClient();
   return {
+    googleClientId: {
+      set: Boolean(google.id),
+      pasted: Boolean(keys.googleClientId),
+      hint: tail(keys.googleClientId) ?? (google.id ? 'from the environment' : null),
+    },
+    googleClientSecret: {
+      set: Boolean(google.secret),
+      pasted: Boolean(keys.googleClientSecret),
+      hint:
+        tail(keys.googleClientSecret) ?? (google.secret ? 'from the environment' : null),
+    },
+    ownerEmail: {
+      set: Boolean(google.owner),
+      pasted: Boolean(keys.ownerEmail),
+      // Not a secret, so it is worth showing in full — it is the thing most
+      // likely to be typed wrong.
+      hint: google.owner || null,
+    },
     gemini: {
       set: Boolean(keys.gemini || config.apiKey),
       pasted: Boolean(keys.gemini),

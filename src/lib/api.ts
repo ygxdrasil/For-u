@@ -176,17 +176,24 @@ export async function webCheck(): Promise<Record<string, unknown>> {
   return response.json();
 }
 
-export interface KeyStatus {
-  gemini: {set: boolean; pasted: boolean; hint: string | null};
-  govee: {set: boolean; pasted: boolean; hint: string | null};
-}
+export type KeyName =
+  | 'gemini'
+  | 'govee'
+  | 'googleClientId'
+  | 'googleClientSecret'
+  | 'ownerEmail';
+
+export type KeyStatus = Record<
+  KeyName,
+  {set: boolean; pasted: boolean; hint: string | null}
+>;
 
 export async function fetchKeys(): Promise<KeyStatus> {
   const response = await expectOk(await fetch('/api/keys'));
   return response.json();
 }
 
-export async function saveKey(name: 'gemini' | 'govee', value: string): Promise<KeyStatus> {
+export async function saveKey(name: KeyName, value: string): Promise<KeyStatus> {
   const response = await expectOk(
     await fetch('/api/keys', {
       method: 'POST',

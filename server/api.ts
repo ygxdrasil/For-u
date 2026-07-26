@@ -228,8 +228,15 @@ export function createApi(): Express {
   api.post(
     '/keys',
     guard(async (req, res) => {
-      const name = String(req.body?.name ?? '');
-      if (name !== 'gemini' && name !== 'govee') {
+      const allowed = [
+        'gemini',
+        'govee',
+        'googleClientId',
+        'googleClientSecret',
+        'ownerEmail',
+      ] as const;
+      const name = String(req.body?.name ?? '') as (typeof allowed)[number];
+      if (!allowed.includes(name)) {
         res.status(400).json({error: 'unknown key'});
         return;
       }

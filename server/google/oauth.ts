@@ -1,4 +1,5 @@
 import {checkNonce, issueNonce} from '../auth';
+import {googleClient} from '../keys';
 import {Document} from '../store/index';
 
 /**
@@ -50,7 +51,8 @@ const store = new Document<Connection | null>('google', () => null);
 const accessTokens = new Map<string, {token: string; expiresAt: number}>();
 
 export function googleConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  const client = googleClient();
+  return Boolean(client.id && client.secret);
 }
 
 /**
@@ -75,7 +77,7 @@ export function authorizeUrl(): string {
   const state = issueNonce('google-oauth');
 
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? '',
+    client_id: googleClient().id,
     redirect_uri: redirectUri(),
     response_type: 'code',
     scope: SCOPES.join(' '),
@@ -145,8 +147,8 @@ export async function completeSignIn(
 
   const token = await postToken({
     code,
-    client_id: process.env.GOOGLE_CLIENT_ID ?? '',
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+    client_id: googleClient().id,
+    client_secret: googleClient().secret,
     redirect_uri: redirectUri(),
     grant_type: 'authorization_code',
   });
@@ -166,7 +168,7 @@ export async function completeSignIn(
   // own Google account would otherwise be written into the owner's slot. The
   // id_token comes straight from Google's token endpoint over TLS, so reading
   // it without verifying the signature is sound here.
-  const owner = process.env.GRACE_OWNER_EMAIL;
+  const owner = googleClient().owner;
   if (owner && email && email.toLowerCase() !== owner.toLowerCase()) {
     throw new GoogleError(
       `This is Grace's owner's account only. Signed in as ${email}, expected ${owner}.`,
@@ -208,8 +210,8 @@ export async function accessToken(): Promise<string> {
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
 
   const token = await postToken({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? '',
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+    client_id: googleClient().id,
+    client_secret: googleClient().secret,
     refresh_token: saved.refreshToken,
     grant_type: 'refresh_token',
   });

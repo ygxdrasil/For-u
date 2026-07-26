@@ -434,13 +434,38 @@ async function setKey(name, value) {
 function geminiKey() {
   return cached2?.gemini || config.apiKey;
 }
+function googleClient() {
+  return {
+    id: cached2?.googleClientId || process.env.GOOGLE_CLIENT_ID || "",
+    secret: cached2?.googleClientSecret || process.env.GOOGLE_CLIENT_SECRET || "",
+    owner: cached2?.ownerEmail || process.env.GRACE_OWNER_EMAIL || ""
+  };
+}
 function tail(value) {
   if (!value) return null;
   return value.length <= 4 ? "\u2022\u2022\u2022\u2022" : `\u2022\u2022\u2022\u2022${value.slice(-4)}`;
 }
 async function keyStatus() {
   const keys2 = await loadKeys();
+  const google = googleClient();
   return {
+    googleClientId: {
+      set: Boolean(google.id),
+      pasted: Boolean(keys2.googleClientId),
+      hint: tail(keys2.googleClientId) ?? (google.id ? "from the environment" : null)
+    },
+    googleClientSecret: {
+      set: Boolean(google.secret),
+      pasted: Boolean(keys2.googleClientSecret),
+      hint: tail(keys2.googleClientSecret) ?? (google.secret ? "from the environment" : null)
+    },
+    ownerEmail: {
+      set: Boolean(google.owner),
+      pasted: Boolean(keys2.ownerEmail),
+      // Not a secret, so it is worth showing in full — it is the thing most
+      // likely to be typed wrong.
+      hint: google.owner || null
+    },
     gemini: {
       set: Boolean(keys2.gemini || config.apiKey),
       pasted: Boolean(keys2.gemini),
@@ -897,7 +922,8 @@ var SCOPES = [
 var store4 = new Document("google", () => null);
 var accessTokens = /* @__PURE__ */ new Map();
 function googleConfigured() {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  const client = googleClient();
+  return Boolean(client.id && client.secret);
 }
 function redirectUri() {
   if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
@@ -907,7 +933,7 @@ function redirectUri() {
 function authorizeUrl() {
   const state = issueNonce("google-oauth");
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
+    client_id: googleClient().id,
     redirect_uri: redirectUri(),
     response_type: "code",
     scope: SCOPES.join(" "),
@@ -953,8 +979,8 @@ async function completeSignIn(code, state) {
   }
   const token = await postToken({
     code,
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+    client_id: googleClient().id,
+    client_secret: googleClient().secret,
     redirect_uri: redirectUri(),
     grant_type: "authorization_code"
   });
@@ -964,7 +990,7 @@ async function completeSignIn(code, state) {
     );
   }
   const email = emailFromIdToken(token.id_token);
-  const owner = process.env.GRACE_OWNER_EMAIL;
+  const owner = googleClient().owner;
   if (owner && email && email.toLowerCase() !== owner.toLowerCase()) {
     throw new GoogleError(
       `This is Grace's owner's account only. Signed in as ${email}, expected ${owner}.`
@@ -992,8 +1018,8 @@ async function accessToken() {
   const cached4 = accessTokens.get(saved.refreshToken);
   if (cached4 && cached4.expiresAt > Date.now() + 6e4) return cached4.token;
   const token = await postToken({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+    client_id: googleClient().id,
+    client_secret: googleClient().secret,
     refresh_token: saved.refreshToken,
     grant_type: "refresh_token"
   });
@@ -1628,8 +1654,15 @@ function createApi() {
   api.post(
     "/keys",
     guard(async (req, res) => {
+      const allowed = [
+        "gemini",
+        "govee",
+        "googleClientId",
+        "googleClientSecret",
+        "ownerEmail"
+      ];
       const name = String(req.body?.name ?? "");
-      if (name !== "gemini" && name !== "govee") {
+      if (!allowed.includes(name)) {
         res.status(400).json({ error: "unknown key" });
         return;
       }
