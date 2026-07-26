@@ -1,4 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
+import {acquire, MicError, type MicLease} from './mic';
 import {toWav, type EncodedAudio} from './wav';
 
 /** Anything shorter than this is a mis-tap rather than a sentence. */
@@ -13,44 +14,40 @@ const SPEECH_LEVEL = 0.06;
 /** Silence this long after speech means the sentence is finished. */
 const TRAILING_SILENCE_MS = 1400;
 
-/**
- * How long to wait for someone to start before giving up.
- *
- * Generous, because pressing the button and then thinking is normal.
- */
-const OPENING_PATIENCE_MS = 8000;
+/** How long to wait for someone to start before giving up. */
+const OPENING_PATIENCE_MS = 9000;
 
 export type RecorderState = 'idle' | 'starting' | 'recording' | 'working';
 
 interface RecorderOptions {
   onCaptured: (audio: EncodedAudio) => void;
+  /** Which microphone to use. Undefined means whichever the system prefers. */
+  deviceId?: string;
 }
 
 /**
  * Records from the microphone and hands back WAV audio.
  *
- * Deliberately built on getUserMedia and MediaRecorder, which exist in every
- * current browser — unlike speech recognition, which does not exist in Firefox
- * or on iOS at all. The level meter matters as much as the recording: it is the
+ * Built on getUserMedia and MediaRecorder, which exist in every current
+ * browser — unlike speech recognition, which does not exist in Firefox or on
+ * iOS at all. The level meter matters as much as the recording: it is the
  * difference between "she can't hear me" and knowing whether the microphone is
  * picking up sound in the first place.
  */
-export function useRecorder({onCaptured}: RecorderOptions) {
+export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
   const [state, setState] = useState<RecorderState>('idle');
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [heardSomething, setHeardSomething] = useState(false);
 
-  const streamRef = useRef<MediaStream | null>(null);
+  const leaseRef = useRef<MicLease | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const contextRef = useRef<AudioContext | null>(null);
   const frameRef = useRef<number | undefined>(undefined);
   const stopTimerRef = useRef<number | undefined>(undefined);
   const onCapturedRef = useRef(onCaptured);
-  /** Lets the level meter close the recording without a stale closure. */
   const stopRef = useRef<() => void>(() => {});
-  /** Read inside callbacks, where the state value would be a render behind. */
   const spokeRef = useRef(false);
 
   useEffect(() => {
@@ -66,11 +63,11 @@ export function useRecorder({onCaptured}: RecorderOptions) {
   const teardown = useCallback(() => {
     window.cancelAnimationFrame(frameRef.current ?? 0);
     window.clearTimeout(stopTimerRef.current);
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
     void contextRef.current?.close().catch(() => {});
     contextRef.current = null;
     recorderRef.current = null;
+    leaseRef.current?.release();
+    leaseRef.current = null;
     setLevel(0);
   }, []);
 
@@ -87,54 +84,45 @@ export function useRecorder({onCaptured}: RecorderOptions) {
   stopRef.current = stop;
 
   const start = useCallback(async () => {
-    if (!supported) {
-      setError(
-        'This browser cannot record audio. Chrome, Edge, Firefox and Safari all can — ' +
-          'if you are seeing this, the page may not be on a secure connection.',
-      );
-      return;
-    }
-
     setError(null);
     setHeardSomething(false);
     spokeRef.current = false;
     setState('starting');
 
-    let stream: MediaStream;
+    let lease: MicLease;
     try {
-      // Plain `audio: true`, deliberately. Asking for echo cancellation and
-      // noise suppression by name makes the whole request fail on any device
-      // that doesn't offer them, and a microphone that refuses to open is
-      // indistinguishable from an assistant who cannot hear you.
-      stream = await navigator.mediaDevices.getUserMedia({audio: true});
+      lease = await acquire(deviceId);
     } catch (cause) {
-      const name = (cause as Error).name;
       setState('idle');
-
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        setError(
-          'The microphone was blocked. Click the padlock beside the web address, ' +
-            'set Microphone to Allow, then reload the page.',
-        );
-      } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-        setError('No microphone was found. Check one is plugged in and enabled.');
-      } else if (name === 'NotReadableError') {
-        setError(
-          'Something else is using the microphone. Close other calls or recording ' +
-            'apps and try again.',
-        );
-      } else {
-        setError(`The microphone could not start: ${name || 'unknown error'}`);
-      }
+      setError(
+        cause instanceof MicError
+          ? cause.message
+          : `The microphone could not start: ${(cause as Error).message}`,
+      );
       return;
     }
 
-    streamRef.current = stream;
+    leaseRef.current = lease;
+    const {stream} = lease;
+
+    // A track that arrives already muted or ended is the classic silent
+    // failure: permission was granted, but nothing is coming through.
+    const track = stream.getAudioTracks()[0];
+    if (!track || track.readyState === 'ended') {
+      teardown();
+      setState('idle');
+      setError('The microphone opened but immediately closed. Try reloading the page.');
+      return;
+    }
 
     // Live level, so silence can be told apart from a dead microphone.
     try {
       const context = new AudioContext();
       contextRef.current = context;
+      // Chrome can hand back a suspended context; an analyser on a suspended
+      // context reads nothing but zeroes, which looks exactly like silence.
+      if (context.state === 'suspended') await context.resume();
+
       const analyser = context.createAnalyser();
       analyser.fftSize = 512;
       context.createMediaStreamSource(stream).connect(analyser);
@@ -194,10 +182,11 @@ export function useRecorder({onCaptured}: RecorderOptions) {
       const recording = new Blob(chunksRef.current, {
         type: recorder.mimeType || 'audio/webm',
       });
+      const spoke = spokeRef.current;
       teardown();
 
       if (recording.size === 0) {
-        setError('Nothing was recorded.');
+        setError('Nothing was recorded at all. Reload the page and try again.');
         setState('idle');
         return;
       }
@@ -205,10 +194,10 @@ export function useRecorder({onCaptured}: RecorderOptions) {
       // Never send an empty room off to be transcribed: it costs a request and
       // comes back with nothing, which reads as her failing to understand you
       // rather than never having heard you.
-      if (!spokeRef.current) {
+      if (!spoke) {
         setError(
-          'I didn’t pick up any sound. Check the right microphone is selected, ' +
-            'then try again — the bar beside the button should move while you talk.',
+          'No sound reached me. Open Sound check and confirm the right microphone ' +
+            'is selected — the level bar should move while you talk.',
         );
         setState('idle');
         return;
@@ -230,10 +219,12 @@ export function useRecorder({onCaptured}: RecorderOptions) {
       }
     };
 
+    // No timeslice: one blob at the end is all we want, and asking for periodic
+    // chunks is a documented way to get zero-length data on some builds.
     recorder.start();
     setState('recording');
-    stopTimerRef.current = window.setTimeout(stop, MAX_SECONDS * 1000);
-  }, [supported, stop, teardown]);
+    stopTimerRef.current = window.setTimeout(() => stopRef.current(), MAX_SECONDS * 1000);
+  }, [deviceId, teardown]);
 
   useEffect(() => teardown, [teardown]);
 

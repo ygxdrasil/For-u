@@ -27,6 +27,7 @@ export function useGrace() {
   const [voiceOn, setVoiceOn] = useState(true);
 
   const abortRef = useRef<AbortController | null>(null);
+  const handleRecordingRef = useRef<(audio: EncodedAudio) => void>(() => {});
   const speech = useSpeech(voiceOn);
 
   // Browsers hand out permission to play audio on the first real gesture and
@@ -166,10 +167,23 @@ export function useGrace() {
     [send],
   );
 
+  const [transcribing, setTranscribing] = useState(false);
+  const [misheard, setMisheard] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+
+  const recorder = useRecorder({
+    deviceId,
+    onCaptured: (audio) => void handleRecordingRef.current(audio),
+  });
+
   const listener = useListener({
     enabled: micOn,
-    // Deaf while she is thinking or talking, so she never answers herself.
-    paused: busy || speech.speaking,
+    // Deaf while she is thinking or talking, so she never answers herself —
+    // and, critically, whenever the recorder wants the microphone. Speech
+    // recognition holds the device for as long as it runs, so leaving it going
+    // during a recording is two consumers fighting over one microphone, which
+    // the recorder loses silently.
+    paused: busy || speech.speaking || recorder.state !== 'idle' || transcribing,
     onRequest: handleRequest,
   });
 
@@ -177,9 +191,6 @@ export function useGrace() {
    * The reliable route in. The browser records, the server transcribes, and
    * anything that goes wrong along the way says so.
    */
-  const [transcribing, setTranscribing] = useState(false);
-  const [misheard, setMisheard] = useState<string | null>(null);
-
   const handleRecording = useCallback(
     async (audio: EncodedAudio) => {
       setMisheard(null);
@@ -201,7 +212,10 @@ export function useGrace() {
     [send],
   );
 
-  const recorder = useRecorder({onCaptured: (audio) => void handleRecording(audio)});
+  // Held in a ref because the recorder is created before this callback exists:
+  // the listener has to know the recorder's state, and the recorder has to be
+  // able to hand its audio here.
+  handleRecordingRef.current = handleRecording;
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -269,6 +283,8 @@ export function useGrace() {
     recorder,
     transcribing,
     misheard,
+    deviceId,
+    setDeviceId,
     speech,
     setMicOn,
     setVoiceOn,

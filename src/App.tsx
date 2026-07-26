@@ -239,7 +239,13 @@ export default function App() {
         </p>
       )}
 
-      {soundCheckOpen && <VoiceCheck onClose={() => setSoundCheckOpen(false)} />}
+      {soundCheckOpen && (
+        <VoiceCheck
+          onClose={() => setSoundCheckOpen(false)}
+          deviceId={grace.deviceId}
+          onPickDevice={grace.setDeviceId}
+        />
+      )}
 
       {/* Speaking is interruptible: typing while she talks cuts her off, which
           is the point. Only an in-flight request actually blocks sending. */}

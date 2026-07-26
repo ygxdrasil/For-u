@@ -1,4 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
+import {registerYielder} from './mic';
 
 /** "Grace", plus whatever punctuation the transcriber tacks on after it. */
 const WAKE_WORD = /\bgrace\b[\s,.:;!?-]*/i;
@@ -153,7 +154,16 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
 
     recognitionRef.current = recognition;
 
+    // Hand the microphone over the moment anything else needs it. abort()
+    // rather than stop(), because stop() finishes the current utterance first
+    // and keeps the device meanwhile.
+    const unregister = registerYielder(() => {
+      shouldRunRef.current = false;
+      recognition.abort();
+    });
+
     return () => {
+      unregister();
       shouldRunRef.current = false;
       recognition.onend = null;
       recognition.abort();
@@ -177,7 +187,10 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
       }
     } else {
       sleep();
-      recognition.stop();
+      // abort(), not stop(): stop() lets the current utterance finish and holds
+      // the microphone until it does, which is exactly the wrong thing when the
+      // reason we are pausing is that something else wants the device.
+      recognition.abort();
     }
   }, [enabled, paused, sleep]);
 
