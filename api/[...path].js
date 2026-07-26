@@ -13,8 +13,23 @@ dotenv.config();
 import path from "node:path";
 var config = {
   apiKey: process.env.GEMINI_API_KEY ?? "",
-  /** Flash is the free-tier workhorse. Override to trade cost for depth. */
-  model: process.env.GRACE_MODEL ?? "gemini-2.5-flash",
+  /**
+   * The model she thinks with.
+   *
+   * Flash-Lite rather than Flash: conversation is the one place latency is
+   * felt directly, and it answers noticeably sooner. It is also one of only
+   * two models with free web grounding — the 3.x line has grounding marked
+   * "not available" on this tier, so moving up a generation would cost her
+   * the web.
+   */
+  model: process.env.GRACE_MODEL ?? "gemini-2.5-flash-lite",
+  /**
+   * The model that listens. Deliberately not the fast one.
+   *
+   * Mishearing a name is far more costly than half a second, and this runs
+   * once per spoken turn rather than on every token.
+   */
+  transcribeModel: process.env.GRACE_TRANSCRIBE_MODEL ?? "gemini-2.5-flash",
   /** The model that gives her a voice. Separate from the one that thinks. */
   speechModel: process.env.GRACE_SPEECH_MODEL ?? "gemini-2.5-flash-preview-tts",
   /**
@@ -383,6 +398,7 @@ var GeminiProvider = class {
         this.params(request)
       );
       for await (const chunk of response2) {
+        if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
         if (chunk.text) {
           spoken = true;
           yield chunk.text;
@@ -411,7 +427,7 @@ var GeminiProvider = class {
   }
   async transcribe(request) {
     const response = await this.client.models.generateContent({
-      model: this.model,
+      model: config.transcribeModel,
       contents: [
         {
           role: "user",
@@ -1144,6 +1160,10 @@ ${recent}`
   contextCache = { text, until: Date.now() + 3e4 };
   return text;
 }
+var TIME_SENSITIVE = /\b(news|weather|forecast|today|tonight|tomorrow|now|currently|latest|recent|price|cost|score|result|open|closed|opening|traffic|stock|shares|rate|release|launch|update|version|who is|what is|where is|when is|how much|how many|look up|search|google|find out|according to)\b/i;
+function worthSearching(text) {
+  return text.includes("?") || TIME_SENSITIVE.test(text);
+}
 var NO_KEY_MESSAGE = "No Gemini API key is configured, so I have no voice to think with. Add GEMINI_API_KEY and restart me.";
 function createApi() {
   const api = express();
@@ -1261,6 +1281,7 @@ function createApi() {
         briefing: await buildBriefing().catch(() => null)
       });
       let reply = "";
+      let grounded = false;
       try {
         for await (const delta of getProvider().stream({
           system,
@@ -1268,7 +1289,13 @@ function createApi() {
           signal: controller.signal,
           temperature: 0.7,
           fast: true,
-          search: true
+          search: worthSearching(text),
+          onGrounded: () => {
+            if (!grounded) {
+              grounded = true;
+              send({ type: "searched" });
+            }
+          }
         })) {
           reply += delta;
           send({ type: "delta", text: delta });

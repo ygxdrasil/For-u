@@ -33,6 +33,9 @@ const TRAILING_SILENCE_MS = 850;
 /** How long to wait for someone to start before giving up. */
 const OPENING_PATIENCE_MS = 9000;
 
+/** Below this much speech, a pause is hesitation rather than the end. */
+const MIN_SPEECH_MS = 700;
+
 /** No audio data at all by now means the capture is not really running. */
 const WATCHDOG_MS = 2800;
 
@@ -191,6 +194,7 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
       const samples = new Uint8Array(analyser.fftSize);
       const openedAt = performance.now();
       let spokeAt = 0;
+      let spokeSince = 0;
       /**
        * The room, measured rather than assumed. A fixed threshold is wrong on
        * a high-gain USB microphone and wrong again on a laptop array with
@@ -223,13 +227,18 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
         if (rms > threshold) {
           setHeardSomething(true);
           spokeRef.current = true;
+          if (spokeSince === 0) spokeSince = now;
           spokeAt = now;
         }
 
         // She closes the recording herself once you stop talking. Requiring a
         // second press is the single easiest thing to get wrong, and getting
         // it wrong looks exactly like an assistant who cannot hear you.
-        if (spokeAt > 0 && now - spokeAt > TRAILING_SILENCE_MS) {
+        // A pause after half a word is someone thinking, not someone finished.
+        // Without this, "Grace —" followed by a breath ends the recording and
+        // the rest of the sentence is simply lost.
+        const settled = spokeSince > 0 && now - spokeSince > MIN_SPEECH_MS;
+        if (settled && spokeAt > 0 && now - spokeAt > TRAILING_SILENCE_MS) {
           stopRef.current();
           return;
         }

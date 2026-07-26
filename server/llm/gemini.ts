@@ -77,6 +77,7 @@ export class GeminiProvider implements LlmProvider {
         this.params(request),
       );
       for await (const chunk of response) {
+        if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
         if (chunk.text) {
           spoken = true;
           yield chunk.text;
@@ -112,7 +113,7 @@ export class GeminiProvider implements LlmProvider {
 
   async transcribe(request: TranscribeRequest): Promise<string> {
     const response = await this.client.models.generateContent({
-      model: this.model,
+      model: config.transcribeModel,
       contents: [
         {
           role: 'user',

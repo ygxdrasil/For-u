@@ -323,14 +323,23 @@ try {
   // for alongside a forced JSON shape — providers reject the combination, and
   // that would take profile extraction down with it.
   await chat('What is the weather doing?');
-  assert.equal(stub.lastSearch, true, 'chat must offer her the web');
+  assert.equal(stub.lastSearch, true, 'a question must offer her the web');
+
+  // Grounding costs a beat on every request that carries it, so a remark that
+  // could not possibly need the internet should not pay for it.
+  await chat('I take my coffee black.');
+  assert.notEqual(stub.lastSearch, true, 'a plain statement should skip the web');
+
+  await chat('Any news this morning');
+  assert.equal(stub.lastSearch, true, 'and time-sensitive words should reach it');
+
   await reflect();
   assert.notEqual(
     stub.lastSearch,
     true,
     'extraction must not ask for search alongside a JSON shape',
   );
-  ok('web search offered on chat, withheld where it would break the call');
+  ok('web offered when it could help, withheld when it would only cost time');
 
   // ---- attention modes ---------------------------------------------------
   // These are not decoration: the mode has to reach the model, or "Focus" is

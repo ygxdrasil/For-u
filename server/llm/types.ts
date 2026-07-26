@@ -28,6 +28,14 @@ export interface GenerateRequest {
    * alongside a search tool.
    */
   search?: boolean;
+  /**
+   * Called if the provider actually consulted the web for this reply.
+   *
+   * Grace is told not to narrate her searching, which is right — but it left
+   * no way to tell a working connection from a broken one. The interface says
+   * so quietly instead.
+   */
+  onGrounded?: () => void;
 }
 
 export interface TranscribeRequest {

@@ -1,3 +1,4 @@
+import {Globe} from 'lucide-react';
 import {useEffect, useRef} from 'react';
 import type {Message} from '../../shared/types.ts';
 
@@ -60,11 +61,19 @@ const OPENERS: {group: string; items: string[]}[] = [
 interface TranscriptProps {
   messages: Message[];
   streaming: string;
+  /** She went to the web for the reply currently streaming in. */
+  searched: boolean;
   heard: string;
   onOpener?: (text: string) => void;
 }
 
-export function Transcript({messages, streaming, heard, onOpener}: TranscriptProps) {
+export function Transcript({
+  messages,
+  streaming,
+  searched,
+  heard,
+  onOpener,
+}: TranscriptProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -122,6 +131,17 @@ export function Transcript({messages, streaming, heard, onOpener}: TranscriptPro
           <div className="max-w-[85%] rounded-2xl border border-dashed border-ice/20 px-4 py-2.5 text-[0.95rem] italic text-mist/70">
             {heard}
           </div>
+        </div>
+      )}
+
+      {/* She is told not to narrate her searching, which is right — but that
+          left no way to tell a working connection from a broken one. */}
+      {searched && (
+        <div className="flex justify-start">
+          <span className="rise inline-flex items-center gap-1.5 rounded-full border border-ice/25 bg-ice/10 px-2.5 py-1 text-[0.65rem] text-ice/90">
+            <Globe size={11} />
+            Checked the web
+          </span>
         </div>
       )}
 

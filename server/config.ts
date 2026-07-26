@@ -8,8 +8,24 @@ import path from 'node:path';
 export const config = {
   apiKey: process.env.GEMINI_API_KEY ?? '',
 
-  /** Flash is the free-tier workhorse. Override to trade cost for depth. */
-  model: process.env.GRACE_MODEL ?? 'gemini-2.5-flash',
+  /**
+   * The model she thinks with.
+   *
+   * Flash-Lite rather than Flash: conversation is the one place latency is
+   * felt directly, and it answers noticeably sooner. It is also one of only
+   * two models with free web grounding — the 3.x line has grounding marked
+   * "not available" on this tier, so moving up a generation would cost her
+   * the web.
+   */
+  model: process.env.GRACE_MODEL ?? 'gemini-2.5-flash-lite',
+
+  /**
+   * The model that listens. Deliberately not the fast one.
+   *
+   * Mishearing a name is far more costly than half a second, and this runs
+   * once per spoken turn rather than on every token.
+   */
+  transcribeModel: process.env.GRACE_TRANSCRIBE_MODEL ?? 'gemini-2.5-flash',
 
   /** The model that gives her a voice. Separate from the one that thinks. */
   speechModel: process.env.GRACE_SPEECH_MODEL ?? 'gemini-2.5-flash-preview-tts',

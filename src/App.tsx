@@ -184,6 +184,7 @@ export default function App() {
             <Transcript
               messages={grace.messages}
               streaming={grace.streaming}
+              searched={grace.searched}
               heard={grace.micOn ? grace.listener.heard : ''}
               onOpener={(text) => void grace.send(text, 'text')}
             />

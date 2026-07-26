@@ -97,4 +97,5 @@ export type ChatEvent =
   | {type: 'delta'; text: string}
   | {type: 'done'; message: Message}
   | {type: 'learned'; entries: ProfileEntry[]}
+  | {type: 'searched'}
   | {type: 'error'; message: string};

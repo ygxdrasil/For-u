@@ -22,6 +22,8 @@ export function useGrace() {
   const [state, setState] = useState<GraceState | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState('');
+  /** She consulted the web for the reply currently arriving. */
+  const [searched, setSearched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [micOn, setMicOn] = useState(false);
@@ -101,6 +103,7 @@ export function useGrace() {
       setError(null);
       setBusy(true);
       setStreaming('');
+      setSearched(false);
       speech.cancel();
 
       setMessages((current) => [
@@ -134,6 +137,8 @@ export function useGrace() {
             setStreaming('');
             setMessages((current) => [...current, message]);
             landed = true;
+          } else if (event.type === 'searched') {
+            setSearched(true);
           } else if (event.type === 'learned') {
             addLearned(event.entries);
           } else if (event.type === 'error') {
@@ -286,6 +291,7 @@ export function useGrace() {
     state,
     messages,
     streaming,
+    searched,
     error,
     mode,
     micOn,
