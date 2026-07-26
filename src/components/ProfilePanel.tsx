@@ -53,6 +53,8 @@ interface ProfilePanelProps {
   onClear: () => void;
   /** Only present when a password is in use. */
   onSignOut?: () => void;
+  /** Something that depends on a key may have just started working. */
+  onKeysChanged?: () => void;
 }
 
 export function ProfilePanel({
@@ -64,6 +66,7 @@ export function ProfilePanel({
   onRename,
   onClear,
   onSignOut,
+  onKeysChanged,
 }: ProfilePanelProps) {
   const [address, setAddress] = useState(profile.addressAs ?? '');
   const [current, setCurrent] = useState(policies);
@@ -220,7 +223,7 @@ export function ProfilePanel({
         </Section>
 
         <Section title="Keys">
-          <Keys />
+          <Keys onSaved={onKeysChanged} />
         </Section>
 
         {onSignOut && (

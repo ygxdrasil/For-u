@@ -42,7 +42,7 @@ const FIELDS: {name: KeyName; label: string; blurb: string; secret: boolean}[] =
  * ten seconds and works from a phone. Nothing typed here is ever sent back —
  * only whether a key is present, and its last four characters.
  */
-export function Keys() {
+export function Keys({onSaved}: {onSaved?: () => void}) {
   const [status, setStatus] = useState<KeyStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
@@ -58,6 +58,9 @@ export function Keys() {
     try {
       setStatus(await saveKey(name, drafts[name] ?? ''));
       setDrafts((current) => ({...current, [name]: ''}));
+      // Anything that depends on a key has to be told, or the interface goes
+      // on showing "not configured" at something that now is.
+      onSaved?.();
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -103,6 +106,16 @@ export function Keys() {
           </div>
         );
       })}
+      {/* Right here, next to the credentials that make it possible. Burying it
+          elsewhere means pasting two keys and then hunting for the button. */}
+      {status?.googleClientId.set && status?.googleClientSecret.set && (
+        <a
+          href="/api/google-start"
+          className="block rounded-lg border border-ice/40 bg-ice/15 px-3 py-2 text-center text-xs text-ice transition hover:bg-ice/25">
+          Connect Gmail and Calendar
+        </a>
+      )}
+
       {error && <p className="text-xs text-rose-300">{error}</p>}
       <p className="text-[0.6rem] leading-relaxed text-mist/40">
         Stored encrypted, and never sent back to this page. Leave a box empty and

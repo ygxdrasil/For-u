@@ -202,6 +202,7 @@ export default function App() {
             onRename={grace.rename}
             onClear={grace.clear}
             onSignOut={session === 'ok' ? () => void grace.signOut() : undefined}
+            onKeysChanged={grace.refreshGoogle}
           />
         )}
       </main>
