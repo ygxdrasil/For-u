@@ -68,6 +68,45 @@
 .orb-spin { animation: orbSpin 3.4s linear infinite; }
 .orb-ring { animation: ringOut 2.6s ease-out infinite; }
 
+/* Satellites: the smaller orbs that carry each faculty's state. They drift on
+   long, uneven periods so the group never falls into lockstep — a ring of
+   things pulsing in unison reads as a loading spinner, not as something alive. */
+@keyframes satelliteDrift {
+  0%, 100% { transform: translate(0, 0); }
+  33% { transform: translate(2px, -3px); }
+  66% { transform: translate(-2px, 2px); }
+}
+
+@keyframes satellitePulse {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.25); }
+}
+
+@keyframes orbitSweep {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes traceDash {
+  to { stroke-dashoffset: -1000; }
+}
+
+.satellite { animation: satelliteDrift 11s ease-in-out infinite; }
+.satellite-live { animation: satellitePulse 3.2s ease-in-out infinite; }
+.orbit-sweep { animation: orbitSweep 48s linear infinite; }
+.orbit-sweep-slow { animation: orbitSweep 96s linear infinite reverse; }
+.trace { animation: traceDash 14s linear infinite; }
+
+/* A second, deeper wash of light behind the first, moving against it. */
+@keyframes ambientCounter {
+  0%, 100% { transform: translate(0, 0) scale(1.05); opacity: 0.35; }
+  50% { transform: translate(-5%, 5%) scale(1); opacity: 0.6; }
+}
+
+.ambient-deep {
+  background: radial-gradient(circle at 35% 70%, rgba(251, 191, 36, 0.07), transparent 55%);
+  animation: ambientCounter 31s ease-in-out infinite;
+}
+
 @keyframes caretBlink {
   0%, 45% { opacity: 1; }
   55%, 100% { opacity: 0; }
@@ -105,7 +144,13 @@
   .orb-speaking,
   .orb-spin,
   .orb-ring,
-  .rise {
+  .rise,
+  .satellite,
+  .satellite-live,
+  .orbit-sweep,
+  .orbit-sweep-slow,
+  .trace,
+  .ambient-deep {
     animation: none;
   }
 }

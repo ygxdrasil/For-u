@@ -8,14 +8,26 @@ const MIN_SECONDS = 0.3;
 /** Stop on our own terms rather than uploading a recording of an empty room. */
 const MAX_SECONDS = 60;
 
-/** Above this, someone is talking. Below it, room tone. */
-const SPEECH_LEVEL = 0.06;
+/**
+ * Floor for the speech threshold, as RMS of the normalised waveform.
+ *
+ * One per cent of full scale is the figure the web audio community has
+ * settled on for "definitely not silence". The live threshold is whichever is
+ * higher, this or a multiple of the measured room tone.
+ */
+const SPEECH_LEVEL = 0.01;
+
+/** Time spent measuring the room before any of it counts as speech. */
+const CALIBRATION_MS = 350;
 
 /** Silence this long after speech means the sentence is finished. */
 const TRAILING_SILENCE_MS = 1400;
 
 /** How long to wait for someone to start before giving up. */
 const OPENING_PATIENCE_MS = 9000;
+
+/** No audio data at all by now means the capture is not really running. */
+const WATCHDOG_MS = 2800;
 
 export type RecorderState = 'idle' | 'starting' | 'recording' | 'working';
 
@@ -44,6 +56,13 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const contextRef = useRef<AudioContext | null>(null);
+  /**
+   * Held deliberately. A MediaStreamAudioSourceNode kept only in a local
+   * variable can be garbage collected, after which the analyser goes silently
+   * dead and every reading is zero — indistinguishable from a dead microphone.
+   */
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const watchdogRef = useRef<number | undefined>(undefined);
   const frameRef = useRef<number | undefined>(undefined);
   const stopTimerRef = useRef<number | undefined>(undefined);
   const onCapturedRef = useRef(onCaptured);
@@ -63,6 +82,9 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
   const teardown = useCallback(() => {
     window.cancelAnimationFrame(frameRef.current ?? 0);
     window.clearTimeout(stopTimerRef.current);
+    window.clearTimeout(watchdogRef.current);
+    sourceRef.current?.disconnect();
+    sourceRef.current = null;
     void contextRef.current?.close().catch(() => {});
     contextRef.current = null;
     recorderRef.current = null;
@@ -106,12 +128,22 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
     const {stream} = lease;
 
     // A track that arrives already muted or ended is the classic silent
-    // failure: permission was granted, but nothing is coming through.
+    // failure: permission was granted, but nothing is coming through. Chrome
+    // is the one browser that reports this honestly, so it is worth asking.
     const track = stream.getAudioTracks()[0];
     if (!track || track.readyState === 'ended') {
       teardown();
       setState('idle');
       setError('The microphone opened but immediately closed. Try reloading the page.');
+      return;
+    }
+    if (track.muted) {
+      teardown();
+      setState('idle');
+      setError(
+        `“${track.label || 'That microphone'}” is muted at the system level. Check the ` +
+          'mute key or switch, and that it is not muted in your sound settings.',
+      );
       return;
     }
 
@@ -124,35 +156,59 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
       if (context.state === 'suspended') await context.resume();
 
       const analyser = context.createAnalyser();
-      analyser.fftSize = 512;
-      context.createMediaStreamSource(stream).connect(analyser);
+      // Larger window than a spectral read needs, because this is a
+      // time-domain RMS measurement and short windows are jumpy.
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.1;
+      sourceRef.current = context.createMediaStreamSource(stream);
+      sourceRef.current.connect(analyser);
 
-      const samples = new Uint8Array(analyser.frequencyBinCount);
+      const samples = new Uint8Array(analyser.fftSize);
       const openedAt = performance.now();
       let spokeAt = 0;
+      /**
+       * The room, measured rather than assumed. A fixed threshold is wrong on
+       * a high-gain USB microphone and wrong again on a laptop array with
+       * automatic gain, so the first moments set the floor.
+       */
+      let floor = 0;
+      let floorSamples = 0;
 
       const tick = () => {
         analyser.getByteTimeDomainData(samples);
-        let peak = 0;
+        let sum = 0;
         for (const sample of samples) {
-          peak = Math.max(peak, Math.abs(sample - 128) / 128);
+          const value = sample / 128 - 1;
+          sum += value * value;
         }
-        setLevel(peak);
-        if (peak > 0.04) {
+        const rms = Math.sqrt(sum / samples.length);
+        setLevel(rms);
+
+        const now = performance.now();
+        const elapsed = now - openedAt;
+
+        if (elapsed < CALIBRATION_MS) {
+          floor = (floor * floorSamples + rms) / (floorSamples + 1);
+          floorSamples += 1;
+          frameRef.current = window.requestAnimationFrame(tick);
+          return;
+        }
+
+        const threshold = Math.max(SPEECH_LEVEL, floor * 2.5);
+        if (rms > threshold) {
           setHeardSomething(true);
           spokeRef.current = true;
+          spokeAt = now;
         }
 
         // She closes the recording herself once you stop talking. Requiring a
         // second press is the single easiest thing to get wrong, and getting
         // it wrong looks exactly like an assistant who cannot hear you.
-        const now = performance.now();
-        if (peak > SPEECH_LEVEL) {
-          spokeAt = now;
-        } else if (spokeAt > 0 && now - spokeAt > TRAILING_SILENCE_MS) {
+        if (spokeAt > 0 && now - spokeAt > TRAILING_SILENCE_MS) {
           stopRef.current();
           return;
-        } else if (spokeAt === 0 && now - openedAt > OPENING_PATIENCE_MS) {
+        }
+        if (spokeAt === 0 && elapsed > OPENING_PATIENCE_MS) {
           stopRef.current();
           return;
         }
@@ -164,13 +220,39 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
       // Metering is a nicety; recording still works without it.
     }
 
-    const recorder = new MediaRecorder(stream);
+    // Never hard-code a container. audio/mp4 support depends on the machine
+    // having a platform encoder, so the same code can succeed on one Windows
+    // laptop and throw NotSupportedError on the next.
+    const format = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4;codecs=mp4a.40.2',
+      'audio/ogg;codecs=opus',
+    ].find((type) => MediaRecorder.isTypeSupported(type));
+
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, format ? {mimeType: format} : undefined);
+    } catch (cause) {
+      teardown();
+      setState('idle');
+      setError(`This browser refused to start a recording: ${(cause as Error).message}`);
+      return;
+    }
     recorderRef.current = recorder;
     chunksRef.current = [];
 
     recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunksRef.current.push(event.data);
+      if (event.data.size > 0) {
+        chunksRef.current.push(event.data);
+        // Data is arriving, so the capture is genuinely alive.
+        window.clearTimeout(watchdogRef.current);
+      }
     };
+
+    // The UI follows the recorder, not the click. A recorder that never
+    // actually starts should never look as though it did.
+    recorder.onstart = () => setState('recording');
 
     recorder.onerror = () => {
       setError('The recording stopped unexpectedly.');
@@ -219,10 +301,22 @@ export function useRecorder({onCaptured, deviceId}: RecorderOptions) {
       }
     };
 
-    // No timeslice: one blob at the end is all we want, and asking for periodic
-    // chunks is a documented way to get zero-length data on some builds.
-    recorder.start();
+    // A one-second timeslice doubles as a heartbeat. Without it the only data
+    // event arrives at stop(), so a capture that is producing nothing looks
+    // identical to one that is working right up until the moment it fails.
+    recorder.start(1000);
     setState('recording');
+
+    watchdogRef.current = window.setTimeout(() => {
+      if (recorderRef.current !== recorder) return;
+      setError(
+        'The microphone opened but sent no audio at all. This usually means the ' +
+          'selected input is a virtual device with nothing routed into it. Open ' +
+          'Sound check and pick a different microphone.',
+      );
+      stopRef.current();
+    }, WATCHDOG_MS);
+
     stopTimerRef.current = window.setTimeout(() => stopRef.current(), MAX_SECONDS * 1000);
   }, [deviceId, teardown]);
 

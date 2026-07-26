@@ -36,6 +36,8 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const shouldRunRef = useRef(false);
+  /** Read inside callbacks, where the state value would be a render behind. */
+  const runningRef = useRef(false);
   const awakeRef = useRef(false);
   const timerRef = useRef<number | undefined>(undefined);
   const onRequestRef = useRef(onRequest);
@@ -108,6 +110,7 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
     };
 
     recognition.onstart = () => {
+      runningRef.current = true;
       setRunning(true);
       setError(null);
     };
@@ -142,6 +145,7 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
 
     // Browsers stop recognition on their own schedule; pick it straight back up.
     recognition.onend = () => {
+      runningRef.current = false;
       setRunning(false);
       setHeard('');
       if (!shouldRunRef.current) return;
@@ -157,10 +161,32 @@ export function useListener({enabled, paused, onRequest}: ListenerOptions) {
     // Hand the microphone over the moment anything else needs it. abort()
     // rather than stop(), because stop() finishes the current utterance first
     // and keeps the device meanwhile.
-    const unregister = registerYielder(() => {
-      shouldRunRef.current = false;
-      recognition.abort();
-    });
+    const unregister = registerYielder(
+      () =>
+        new Promise<void>((resolve) => {
+          // Order matters. Clearing the restart flag first is what stops
+          // abort() from simply triggering our own onend handler and starting
+          // the whole thing again — fighting our own wake word forever.
+          shouldRunRef.current = false;
+
+          if (!runningRef.current) {
+            resolve();
+            return;
+          }
+
+          // Chrome does not always fire 'end', so the wait is capped.
+          const done = window.setTimeout(resolve, 600);
+          recognition.addEventListener(
+            'end',
+            () => {
+              window.clearTimeout(done);
+              resolve();
+            },
+            {once: true},
+          );
+          recognition.abort();
+        }),
+    );
 
     return () => {
       unregister();

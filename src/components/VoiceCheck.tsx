@@ -1,6 +1,13 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {speak, transcribe} from '../lib/api';
-import {acquire, listDevices, MicError, type MicDevice, type MicLease} from '../voice/mic';
+import {
+  acquire,
+  diagnostics,
+  listDevices,
+  MicError,
+  type MicDevice,
+  type MicLease,
+} from '../voice/mic';
 import {toWav} from '../voice/wav';
 
 const TEST_SECONDS = 4;
@@ -40,6 +47,7 @@ export function VoiceCheck({onClose, deviceId, onPickDevice}: VoiceCheckProps) {
   const [level, setLevel] = useState(0);
   const [peak, setPeak] = useState(0);
   const [monitorError, setMonitorError] = useState<string | null>(null);
+  const [diagnosis, setDiagnosis] = useState<string | null>(null);
 
   const leaseRef = useRef<MicLease | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -343,6 +351,33 @@ export function VoiceCheck({onClose, deviceId, onPickDevice}: VoiceCheckProps) {
             )}
           </div>
         ))}
+      </div>
+
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={() => {
+            setDiagnosis('Gathering…');
+            void diagnostics(deviceId).then(setDiagnosis, (cause: Error) =>
+              setDiagnosis(`Failed: ${cause.message}`),
+            );
+          }}
+          className="w-full rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-mist transition hover:border-ice/40 hover:text-ice">
+          Full diagnosis
+        </button>
+        {diagnosis && (
+          <>
+            <pre className="scroll-thin mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-edge/70 bg-black/40 p-2.5 font-mono text-[0.65rem] leading-relaxed text-slate-300">
+              {diagnosis}
+            </pre>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(diagnosis)}
+              className="mt-1.5 text-[0.65rem] text-mist underline underline-offset-2 hover:text-ice">
+              Copy this
+            </button>
+          </>
+        )}
       </div>
 
       {findings === null ? (

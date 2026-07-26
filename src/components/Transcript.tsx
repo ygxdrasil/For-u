@@ -35,13 +35,36 @@ function Bubble({message}: {message: Message}) {
   );
 }
 
+/**
+ * Openers, grouped so the first screen shows what she is actually for.
+ *
+ * An empty panel that says "nothing said yet" teaches nobody anything. These
+ * are all things she can genuinely do right now — nothing here depends on a
+ * connection that isn't built.
+ */
+const OPENERS: {group: string; items: string[]}[] = [
+  {
+    group: 'Try the web',
+    items: ['What’s the weather doing today?', 'What’s in the news this morning?'],
+  },
+  {
+    group: 'Tell her about you',
+    items: ['I take my coffee black, no sugar.', 'I work best early in the morning.'],
+  },
+  {
+    group: 'Ask her anything',
+    items: ['What can you actually do?', 'What do you know about me so far?'],
+  },
+];
+
 interface TranscriptProps {
   messages: Message[];
   streaming: string;
   heard: string;
+  onOpener?: (text: string) => void;
 }
 
-export function Transcript({messages, streaming, heard}: TranscriptProps) {
+export function Transcript({messages, streaming, heard, onOpener}: TranscriptProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,11 +73,39 @@ export function Transcript({messages, streaming, heard}: TranscriptProps) {
 
   if (messages.length === 0 && !streaming && !heard) {
     return (
-      <div className="flex h-full items-center justify-center px-8 text-center">
-        <p className="max-w-sm text-sm leading-relaxed text-mist/70">
-          Nothing said yet. Turn on the microphone and say{' '}
-          <span className="text-ice/90">“Grace”</span>, or simply type below.
-        </p>
+      <div className="scroll-thin flex h-full flex-col items-center justify-center gap-6 overflow-y-auto px-6 py-8">
+        <div className="text-center">
+          <p className="font-serif text-2xl tracking-wide text-slate-100">
+            Good to see you.
+          </p>
+          <p className="mt-1.5 text-sm text-mist/70">
+            Press the orb to talk, or start with one of these.
+          </p>
+        </div>
+
+        <div className="grid w-full max-w-2xl gap-4 sm:grid-cols-3">
+          {OPENERS.map((section, index) => (
+            <div
+              key={section.group}
+              className="rise"
+              style={{animationDelay: `${index * 0.08}s`}}>
+              <h3 className="mb-2 text-[0.6rem] uppercase tracking-[0.14em] text-mist/40">
+                {section.group}
+              </h3>
+              <div className="space-y-1.5">
+                {section.items.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => onOpener?.(item)}
+                    className="w-full rounded-xl border border-edge/70 bg-surface/40 px-3 py-2.5 text-left text-xs leading-relaxed text-slate-300 transition hover:border-ice/40 hover:bg-surface/80 hover:text-slate-100">
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

@@ -1,7 +1,17 @@
-import {Brain, Clock, Database, Radio, ShieldCheck} from 'lucide-react';
-import {useEffect, useState, type ReactNode} from 'react';
+import {
+  Brain,
+  CalendarDays,
+  Database,
+  Ear,
+  Globe,
+  Mail,
+  ShieldCheck,
+  Volume2,
+} from 'lucide-react';
+import {useEffect, useMemo, useState, type ReactNode} from 'react';
 import type {AttentionMode, GraceState} from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
+import {Faculties, type Faculty} from './Faculties';
 import {Orb} from './Orb';
 
 /** Kept in step with server/modes.ts, which is where the behaviour lives. */
@@ -24,8 +34,6 @@ const MODE_LABEL: Record<Mode, string> = {
 function useClock(): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    // Tick on the second boundary rather than every second from mount, so the
-    // display doesn't sit a fraction behind the real minute.
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
@@ -73,8 +81,12 @@ interface DashboardProps {
   mode: Mode;
   micLevel: number;
   recording: boolean;
+  micError: string | null;
   voiceSource: 'grace' | 'browser';
+  voiceOn: boolean;
   onSetAttention: (mode: AttentionMode) => void;
+  onTalk: () => void;
+  onOpenSoundCheck: () => void;
 }
 
 /**
@@ -90,8 +102,12 @@ export function Dashboard({
   mode,
   micLevel,
   recording,
+  micError,
   voiceSource,
+  voiceOn,
   onSetAttention,
+  onTalk,
+  onOpenSoundCheck,
 }: DashboardProps) {
   const now = useClock();
   const attention = state.mode.mode;
@@ -100,25 +116,69 @@ export function Dashboard({
   const spokenTurns = state.messages.filter((message) => message.via === 'voice').length;
   const latest = [...state.profile.entries].slice(-3).reverse();
 
-  return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto px-5 py-5">
-      <div className="flex flex-col items-center">
-        <Orb mode={mode} />
-        <p className="mt-3 text-sm text-slate-200">{MODE_LABEL[mode]}</p>
+  const faculties = useMemo<Faculty[]>(
+    () => [
+      {
+        id: 'hearing',
+        label: 'Hearing',
+        detail: micError
+          ? 'Needs a look'
+          : recording
+            ? 'Listening now'
+            : 'Ready',
+        health: micError ? 'degraded' : recording ? 'live' : 'idle',
+        icon: <Ear size={14} />,
+      },
+      {
+        id: 'voice',
+        label: 'Voice',
+        detail: !voiceOn
+          ? 'Muted'
+          : voiceSource === 'grace'
+            ? 'Her own'
+            : 'Browser’s',
+        health: !voiceOn ? 'idle' : voiceSource === 'grace' ? 'live' : 'degraded',
+        icon: <Volume2 size={14} />,
+      },
+      {
+        id: 'memory',
+        label: 'Memory',
+        detail: `${state.profile.entries.length} held`,
+        health: 'live',
+        icon: <Brain size={14} />,
+      },
+      {
+        id: 'web',
+        label: 'Web',
+        detail: 'Searches when needed',
+        health: 'live',
+        icon: <Globe size={14} />,
+      },
+      {
+        id: 'mail',
+        label: 'Mail',
+        detail: 'Not connected',
+        health: 'absent',
+        icon: <Mail size={14} />,
+      },
+      {
+        id: 'diary',
+        label: 'Diary',
+        detail: 'Not connected',
+        health: 'absent',
+        icon: <CalendarDays size={14} />,
+      },
+    ],
+    [micError, recording, state.profile.entries.length, voiceOn, voiceSource],
+  );
 
-        {/* What the microphone is hearing, right now. The single most useful
-            thing on screen when the complaint is that she can't hear you. */}
-        <div className="mt-3 h-1 w-40 overflow-hidden rounded-full bg-edge">
-          <div
-            className={`h-full rounded-full transition-[width] duration-75 ${
-              recording ? 'bg-ice' : 'bg-mist/30'
-            }`}
-            style={{width: `${Math.min(100, micLevel * 180)}%`}}
-          />
-        </div>
-        <p className="mt-1.5 text-[0.65rem] text-mist/40">
-          {recording ? 'Microphone live' : 'Microphone idle'}
-        </p>
+  return (
+    <div className="scroll-thin flex h-full flex-col gap-5 overflow-y-auto px-5 py-5">
+      <div className="flex flex-col items-center">
+        {/* The orb is the control now, not an ornament. Pressing it is the one
+            way in that cannot be got wrong. */}
+        <Orb mode={mode} level={micLevel} onPress={onTalk} />
+        <p className="mt-2 text-sm text-slate-200">{MODE_LABEL[mode]}</p>
       </div>
 
       <div className="text-center">
@@ -132,6 +192,18 @@ export function Dashboard({
             month: 'long',
           })}
         </p>
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
+          Faculties
+        </h3>
+        <Faculties
+          faculties={faculties}
+          onSelect={(id) => {
+            if (id === 'hearing' || id === 'voice') onOpenSoundCheck();
+          }}
+        />
       </div>
 
       <div>
@@ -169,17 +241,11 @@ export function Dashboard({
           }`}
         />
         <Readout
-          icon={<Clock size={11} />}
+          icon={<Ear size={11} />}
           label="Exchanges"
           value={`${Math.floor(state.messages.length / 2)}${
             spokenTurns > 0 ? ` · ${spokenTurns} spoken` : ''
           }`}
-        />
-        <Readout
-          icon={<Radio size={11} />}
-          label="Voice"
-          value={voiceSource === 'grace' ? 'Hers' : 'Browser'}
-          tone={voiceSource === 'grace' ? 'good' : 'normal'}
         />
         <Readout
           icon={<Database size={11} />}
@@ -192,7 +258,6 @@ export function Dashboard({
           value={state.storage.encrypted ? 'Encrypted' : 'Plain'}
           tone={state.storage.encrypted ? 'good' : 'bad'}
         />
-        <Readout icon={<Brain size={11} />} label="Model" value={state.model} />
       </div>
 
       {latest.length > 0 && (
@@ -204,7 +269,7 @@ export function Dashboard({
             {latest.map((entry) => (
               <li
                 key={entry.id}
-                className="rounded-lg border border-edge/60 bg-surface/30 px-3 py-2 text-xs leading-relaxed text-slate-300">
+                className="rise rounded-lg border border-edge/60 bg-surface/30 px-3 py-2 text-xs leading-relaxed text-slate-300">
                 {entry.text}
                 <span className="ml-1.5 text-[0.6rem] uppercase tracking-wider text-mist/40">
                   {entry.source}
@@ -225,6 +290,8 @@ export function Dashboard({
           </p>
         </div>
       )}
+
+      <p className="pb-2 text-center text-[0.6rem] text-mist/30">{state.model}</p>
     </div>
   );
 }

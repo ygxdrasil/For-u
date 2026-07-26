@@ -19,8 +19,25 @@ const CORE_GLOW: Record<Mode, string> = {
   speaking: 'from-ice/70 to-ice/10',
 };
 
-export function Orb({mode}: {mode: Mode}) {
-  return (
+interface OrbProps {
+  mode: Mode;
+  /**
+   * Live input level, 0 to 1. The orb swells with your voice, which is the
+   * quickest possible confirmation that she is actually hearing you — no
+   * reading a meter, no interpreting a message.
+   */
+  level?: number;
+  /** Press to talk. Given, the orb becomes the primary control. */
+  onPress?: () => void;
+}
+
+export function Orb({mode, level = 0, onPress}: OrbProps) {
+  // Damped, and floored at 1, so the orb never shrinks below its resting size
+  // and never lurches on a single loud sample.
+  const swell = 1 + Math.min(0.28, level * 0.5);
+  const reactive = mode === 'listening' && level > 0;
+
+  const body = (
     <div className="relative grid h-52 w-52 place-items-center">
       {/* Ripples out while she is taking something in. */}
       {mode === 'listening' && (
@@ -39,14 +56,40 @@ export function Orb({mode}: {mode: Mode}) {
       )}
 
       <span className="absolute h-40 w-40 rounded-full border border-edge/80" />
+      <span className="orbit-sweep absolute h-48 w-48 rounded-full border border-dashed border-edge/40" />
 
       <span
-        className={`absolute h-32 w-32 rounded-full bg-gradient-to-b blur-xl ${CORE_GLOW[mode]} ${CORE_ANIMATION[mode]}`}
+        className={`absolute h-32 w-32 rounded-full bg-gradient-to-b blur-xl ${CORE_GLOW[mode]} ${
+          reactive ? '' : CORE_ANIMATION[mode]
+        }`}
+        style={reactive ? {transform: `scale(${swell})`} : undefined}
       />
       <span
-        className={`absolute h-20 w-20 rounded-full bg-gradient-to-b ${CORE_GLOW[mode]} ${CORE_ANIMATION[mode]}`}
+        className={`absolute h-20 w-20 rounded-full bg-gradient-to-b ${CORE_GLOW[mode]} ${
+          reactive ? '' : CORE_ANIMATION[mode]
+        }`}
+        style={
+          reactive
+            ? {transform: `scale(${swell})`, transition: 'transform 60ms linear'}
+            : undefined
+        }
       />
       <span className="absolute h-3 w-3 rounded-full bg-slate-100/90 blur-[2px]" />
     </div>
+  );
+
+  if (!onPress) return body;
+
+  return (
+    <button
+      type="button"
+      onClick={onPress}
+      aria-label={mode === 'listening' ? 'Listening — speak now' : 'Press to speak'}
+      className="group rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-ice/50">
+      {body}
+      <span className="mt-1 block text-center text-[0.65rem] uppercase tracking-[0.18em] text-mist/40 transition group-hover:text-ice/70">
+        {mode === 'listening' ? 'Listening' : 'Press to speak'}
+      </span>
+    </button>
   );
 }

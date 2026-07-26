@@ -1,12 +1,11 @@
-import {Headphones, PanelRight} from 'lucide-react';
+import {Headphones, LayoutDashboard, MessagesSquare, PanelRight} from 'lucide-react';
 import {useState} from 'react';
 import {Composer} from './components/Composer';
 import {Dashboard} from './components/Dashboard';
 import {Lock} from './components/Lock';
-import {VoiceCheck} from './components/VoiceCheck';
-import {Orb} from './components/Orb';
 import {ProfilePanel} from './components/ProfilePanel';
 import {Transcript} from './components/Transcript';
+import {VoiceCheck} from './components/VoiceCheck';
 import type {Mode} from './hooks/useGrace';
 import {useGrace} from './hooks/useGrace';
 
@@ -32,6 +31,8 @@ export default function App() {
   const grace = useGrace();
   const [panelOpen, setPanelOpen] = useState(false);
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
+  /** Which half of the app a narrow screen is showing. */
+  const [tab, setTab] = useState<'grace' | 'talk'>('grace');
 
   const {session, state, mode} = grace;
 
@@ -71,35 +72,46 @@ export default function App() {
   if (session === 'required' || session === 'misconfigured') {
     return <Lock status={session} onSubmit={grace.signIn} />;
   }
-  // The microphone failing used to be silent: the listener recorded an error
-  // that nothing ever rendered, so a dead mic and a working one looked alike.
+
   const notice =
     mode === 'offline'
       ? 'No Gemini API key found. Set GEMINI_API_KEY where Grace is running, then restart or redeploy her.'
       : (grace.error ?? grace.listener.error);
 
-  const cannotListen = !grace.listener.supported;
+  /** One press: she opens the microphone and closes it when you stop talking. */
+  const talk = () => {
+    if (grace.recorder.state === 'recording') grace.recorder.stop();
+    else void grace.recorder.start();
+  };
+
+  const dashboard = state && (
+    <Dashboard
+      state={state}
+      mode={mode}
+      micLevel={grace.recorder.level}
+      recording={grace.recorder.state === 'recording'}
+      micError={grace.recorder.error}
+      voiceSource={grace.speech.source}
+      voiceOn={grace.voiceOn}
+      onSetAttention={(next) => void grace.setAttention(next)}
+      onTalk={talk}
+      onOpenSoundCheck={() => setSoundCheckOpen(true)}
+    />
+  );
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden">
       <div className="ambient pointer-events-none absolute inset-0 -z-10" />
+      <div className="ambient-deep pointer-events-none absolute inset-0 -z-10" />
 
-      <header className="flex items-center justify-between border-b border-edge/70 px-5 py-3">
-        <div className="flex items-baseline gap-3">
-          <h1 className="font-serif text-xl tracking-wide text-slate-100">Grace</h1>
-          <span className="hidden text-xs text-mist/50 sm:inline">
-            {state?.model ?? '—'}
-          </span>
-        </div>
+      <header className="flex items-center justify-between border-b border-edge/70 px-4 py-3 sm:px-5">
+        <h1 className="font-serif text-xl tracking-wide text-slate-100">Grace</h1>
 
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-2 text-xs text-mist">
+        <div className="flex items-center gap-2 sm:gap-4">
+          <span className="hidden items-center gap-2 text-xs text-mist sm:flex">
             <span className={`h-1.5 w-1.5 rounded-full ${MODE_DOT[mode]}`} />
             {MODE_LABEL[mode]}
           </span>
-          {/* This used to be the word "Mic" in dim ten-pixel text, which is a
-              fine way to hide the one control people go looking for when she
-              seems deaf. */}
           <button
             type="button"
             onClick={() => setSoundCheckOpen((open) => !open)}
@@ -110,7 +122,7 @@ export default function App() {
                 : 'border-edge bg-surface text-mist hover:border-ice/40 hover:text-ice'
             }`}>
             <Headphones size={14} />
-            Sound check
+            <span className="hidden sm:inline">Sound check</span>
           </button>
           <button
             type="button"
@@ -122,38 +134,51 @@ export default function App() {
         </div>
       </header>
 
+      {/* On a narrow screen the dashboard used to be hidden outright, so a phone
+          showed an orb and nothing else. It gets equal billing now. */}
+      <div className="flex shrink-0 border-b border-edge/70 lg:hidden">
+        {(
+          [
+            ['grace', 'Grace', <LayoutDashboard key="d" size={14} />],
+            ['talk', 'Conversation', <MessagesSquare key="t" size={14} />],
+          ] as const
+        ).map(([id, label, icon]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            aria-pressed={tab === id}
+            className={`flex flex-1 items-center justify-center gap-2 py-2.5 text-xs transition ${
+              tab === id
+                ? 'border-b-2 border-ice text-ice'
+                : 'border-b-2 border-transparent text-mist hover:text-slate-200'
+            }`}>
+            {icon}
+            {label}
+          </button>
+        ))}
+      </div>
+
       <main className="relative flex min-h-0 flex-1">
-        {/* This used to be the orb alone on an empty column, which is a lot of
-            screen saying nothing. */}
-        {state && (
-          <aside className="hidden w-80 shrink-0 border-r border-edge/70 lg:block">
-            <Dashboard
-              state={state}
-              mode={mode}
-              micLevel={grace.recorder.level}
-              recording={grace.recorder.state === 'recording'}
-              voiceSource={grace.speech.source}
-              onSetAttention={(next) => void grace.setAttention(next)}
-            />
-          </aside>
-        )}
+        <aside className="hidden w-80 shrink-0 border-r border-edge/70 lg:block">
+          {dashboard}
+        </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col">
-          {/* The orb rides along the top on narrow screens. The wrapper is sized
-              to the scaled-down orb, since a transform leaves the box behind. */}
-          <div className="flex h-28 shrink-0 items-center justify-center overflow-hidden border-b border-edge/70 lg:hidden">
-            <div className="scale-50">
-              <Orb mode={mode} />
-            </div>
-          </div>
+        {/* Narrow screens show one or the other. */}
+        <div className={`min-h-0 flex-1 lg:hidden ${tab === 'grace' ? '' : 'hidden'}`}>
+          {dashboard}
+        </div>
 
+        <section
+          className={`min-w-0 flex-1 flex-col lg:flex ${
+            tab === 'talk' ? 'flex' : 'hidden'
+          }`}>
           <div className="min-h-0 flex-1">
             <Transcript
               messages={grace.messages}
               streaming={grace.streaming}
-              // Shown whenever the microphone is on, not only once she has
-              // caught her name — otherwise there is no sign she can hear you.
               heard={grace.micOn ? grace.listener.heard : ''}
+              onOpener={(text) => void grace.send(text, 'text')}
             />
           </div>
         </section>
@@ -172,15 +197,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Only the wake word depends on the browser. Recording works regardless,
-          so this no longer claims she cannot hear you at all. */}
-      {cannotListen && (
-        <p className="border-t border-edge bg-surface/80 px-5 py-2 text-xs text-mist">
-          This browser has no wake word, so saying “Grace” won’t rouse her. Press
-          Speak instead — that works everywhere.
-        </p>
-      )}
-
       {notice && (
         <p className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
           {notice}
@@ -195,7 +211,7 @@ export default function App() {
             type="button"
             onClick={() => setSoundCheckOpen(true)}
             className="shrink-0 underline underline-offset-2 hover:text-rose-100">
-            Check microphone
+            Sound check
           </button>
         </p>
       )}
@@ -215,14 +231,11 @@ export default function App() {
         </p>
       )}
 
-      {/* Her own voice failed and the browser's took over. Worth saying: the
-          difference is audible, and the reason is usually fixable. */}
       {grace.speech.source === 'browser' && grace.voiceOn && (
         <p className="flex items-center justify-between gap-3 border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
           <span>
-            I’m speaking through the browser’s voice. Mine needs Gemini’s speech
-            model, which isn’t on the free tier
-            {grace.speech.error ? ` — ${grace.speech.error}` : '.'}
+            I’m speaking through the browser’s voice — my own wouldn’t come
+            through{grace.speech.error ? `: ${grace.speech.error}` : '.'}
           </span>
           <button
             type="button"
@@ -247,8 +260,6 @@ export default function App() {
         />
       )}
 
-      {/* Speaking is interruptible: typing while she talks cuts her off, which
-          is the point. Only an in-flight request actually blocks sending. */}
       <Composer
         busy={mode === 'thinking'}
         canStop={mode === 'thinking' || mode === 'speaking'}
@@ -264,7 +275,7 @@ export default function App() {
           grace.transcribing
         }
         level={grace.recorder.level}
-        onRecordStart={() => void grace.recorder.start()}
+        onRecordStart={talk}
         onRecordStop={grace.recorder.stop}
         onSend={(text) => void grace.send(text, 'text')}
         onStop={grace.stop}
