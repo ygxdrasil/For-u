@@ -770,22 +770,76 @@ function normalise(text) {
 async function remember(entries) {
   if (entries.length === 0) return [];
   const current = await profile.read();
-  const existing = new Set(current.entries.map((entry) => normalise(entry.text)));
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const byKey = new Map(current.entries.map((entry) => [normalise(entry.text), entry]));
   const added = [];
+  let reinforced = false;
   for (const entry of entries) {
     const key = normalise(entry.text);
-    if (!key || existing.has(key)) continue;
-    existing.add(key);
-    added.push({ ...entry, id: randomUUID(), learnedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    if (!key) continue;
+    const known = byKey.get(key);
+    if (known) {
+      byKey.set(key, {
+        ...known,
+        timesSeen: (known.timesSeen ?? 1) + 1,
+        lastSeenAt: now,
+        source: entry.source === "stated" ? "stated" : known.source,
+        supersededAt: void 0
+      });
+      reinforced = true;
+      continue;
+    }
+    const fresh = {
+      ...entry,
+      id: randomUUID(),
+      learnedAt: now,
+      lastSeenAt: now,
+      timesSeen: 1
+    };
+    byKey.set(key, fresh);
+    added.push(fresh);
   }
-  if (added.length > 0) {
+  if (added.length > 0 || reinforced) {
     await profile.write({
       ...current,
-      entries: [...current.entries, ...added],
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      entries: [...byKey.values()],
+      updatedAt: now
     });
   }
   return added;
+}
+async function supersedeEntry(text) {
+  const key = normalise(text);
+  if (!key) return false;
+  let found = false;
+  await profile.update((current) => ({
+    ...current,
+    entries: current.entries.map((entry) => {
+      if (normalise(entry.text) !== key || entry.supersededAt) return entry;
+      found = true;
+      return { ...entry, supersededAt: (/* @__PURE__ */ new Date()).toISOString() };
+    }),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }));
+  return found;
+}
+async function noteStyle(notes) {
+  if (notes.length === 0) return;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await profile.update((current) => {
+    const style = [...current.style ?? []];
+    for (const text of notes) {
+      const clean = text.trim();
+      if (!clean) continue;
+      const at = style.findIndex(
+        (note) => normalise(note.text) === normalise(clean)
+      );
+      if (at >= 0) style[at] = { ...style[at], timesSeen: style[at].timesSeen + 1 };
+      else style.push({ id: randomUUID(), text: clean, learnedAt: now, timesSeen: 1 });
+    }
+    style.sort((left, right) => right.timesSeen - left.timesSeen);
+    return { ...current, style: style.slice(0, 12), updatedAt: now };
+  });
 }
 function forget(id) {
   return profile.update((current) => ({
@@ -854,6 +908,16 @@ var SCHEMA = {
         },
         required: ["kind", "text", "source"]
       }
+    },
+    outdated: {
+      type: Type.ARRAY,
+      description: "Known entries this exchange contradicts, copied verbatim.",
+      items: { type: Type.STRING }
+    },
+    style: {
+      type: Type.ARRAY,
+      description: "How to deal with this person, learned from how they behave.",
+      items: { type: Type.STRING }
     }
   },
   required: ["entries"]
@@ -871,10 +935,17 @@ Rules:
 - Record nothing transient: passing moods, one-off questions, the weather, what they asked you to do just now.
 - Write each entry as a short third-person statement about the user, understandable on its own with no context. "Prefers to be called in the evening", not "said evening is fine".
 - Mark it "stated" only if they said it outright. Anything you worked out is "inferred".
-- Returning an empty list is the normal outcome. Do not reach.`;
+- Returning an empty list is the normal outcome. Do not reach.
+- If they say something again that is already known, list it again anyway. Repetition is evidence, and being told twice matters.
+
+Also return two other things when they apply, and empty lists when they do not.
+
+"outdated": anything in the known profile this exchange contradicts, copied word for word from the list you were given. If they used to work mornings and have just said they now work nights, the morning entry is outdated. Do not list something merely because it went unmentioned.
+
+"style": how to deal with this person, learned from how they actually behave rather than what they claim. Not facts about their life \u2014 habits of dealing with them. "Cuts you off when you give more than two sentences." "Asks follow-up questions rather than accepting the first answer." "Says thanks and moves on; does not want elaboration." "Prefers being given the answer before the reasoning." Only add one when the exchange genuinely showed it. Most exchanges show nothing, and an empty list is the right answer.`;
 async function learnFrom(userText, graceText) {
   if (!config.learnFromConversation) return [];
-  const known = (await getProfile()).entries;
+  const known = (await getProfile()).entries.filter((entry) => !entry.supersededAt);
   const knownList = known.length > 0 ? known.map((entry) => `- ${entry.text}`).join("\n") : "(nothing recorded yet)";
   try {
     const raw = await getProvider().complete({
@@ -896,6 +967,11 @@ Grace: ${graceText}`
     });
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed.entries)) return [];
+    for (const stale of parsed.outdated ?? []) {
+      await supersedeEntry(stale).catch(() => false);
+    }
+    await noteStyle(parsed.style ?? []).catch(() => {
+    });
     return remember(
       parsed.entries.filter((entry) => entry.text?.trim()).map((entry) => ({
         kind: entry.kind,
@@ -1658,7 +1734,7 @@ When they ask you to go and look \u2014 "check my mail", "what's on today", "any
 
 You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 function describeProfile(profile2) {
-  if (profile2.entries.length === 0) {
+  if (profile2.entries.filter((entry) => !entry.supersededAt).length === 0) {
     return `You have not learned anything about the user yet. This is early days \u2014 pay attention and remember what matters.`;
   }
   const byKind = {
@@ -1667,18 +1743,28 @@ function describeProfile(profile2) {
     routine: "Routines",
     goal: "Goals"
   };
+  const live = profile2.entries.filter((entry) => !entry.supersededAt);
   const sections = Object.keys(byKind).map((kind) => {
-    const entries = profile2.entries.filter((entry) => entry.kind === kind);
+    const entries = live.filter((entry) => entry.kind === kind);
     if (entries.length === 0) return null;
-    const lines = entries.map(
-      (entry) => `- ${entry.text}${entry.source === "inferred" ? " (inferred, not confirmed)" : ""}`
-    ).join("\n");
+    const lines = entries.map((entry) => {
+      const seen = entry.timesSeen ?? 1;
+      const weight = seen >= 4 ? " (well established)" : entry.source === "inferred" ? " (inferred, not confirmed)" : "";
+      return `- ${entry.text}${weight}`;
+    }).join("\n");
     return `${byKind[kind]}:
 ${lines}`;
   }).filter(Boolean);
   return `What you know about the user:
 
 ${sections.join("\n\n")}`;
+}
+function describeStyle(profile2) {
+  const style = (profile2.style ?? []).filter((note) => note.timesSeen >= 1);
+  if (style.length === 0) return null;
+  const lines = style.map((note) => `- ${note.text}${note.timesSeen >= 3 ? " (consistently)" : ""}`).join("\n");
+  return `What you have learned about dealing with them specifically. This is from watching how they actually behave, so it overrides your general habits \u2014 but they are observations, not orders, and a strong reason beats them:
+${lines}`;
 }
 function describePolicies(policies) {
   const described = policies.map((entry) => {
@@ -1717,6 +1803,7 @@ ${summary}` : null;
     JUDGEMENT,
     MEMORY_GUIDE,
     describeProfile(profile2),
+    describeStyle(profile2),
     recall,
     TOOLS_NOTE,
     describePolicies(policies),

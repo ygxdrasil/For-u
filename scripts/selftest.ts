@@ -418,6 +418,41 @@ try {
   await call('/keys', {method: 'POST', body: JSON.stringify({name: 'gemini', value: ''})});
   ok('unknown key names refused');
 
+  // ---- learning that accumulates -----------------------------------------
+  const {currentBeliefs, noteStyle, remember, supersedeEntry} = await import(
+    '../server/memory'
+  );
+
+  await remember([{kind: 'routine', text: 'Works early mornings', source: 'inferred'}]);
+  await remember([{kind: 'routine', text: 'Works early mornings', source: 'stated'}]);
+  const beliefs = await currentBeliefs();
+  const habit = beliefs.find((entry) => entry.text === 'Works early mornings');
+  assert.equal(habit?.timesSeen, 2, 'hearing it twice must count as twice');
+  assert.equal(habit?.source, 'stated', 'being told outright promotes a guess');
+  assert.equal(
+    beliefs.filter((entry) => entry.text === 'Works early mornings').length,
+    1,
+    'and must not duplicate',
+  );
+  ok('repeated observations reinforce rather than pile up');
+
+  assert.equal(await supersedeEntry('Works early mornings'), true);
+  assert.ok(
+    !(await currentBeliefs()).some((entry) => entry.text === 'Works early mornings'),
+    'superseded facts drop out of what she believes',
+  );
+  assert.ok(
+    (await getProfile()).entries.some((entry) => entry.text === 'Works early mornings'),
+    'but are kept — that they used to be true is itself a fact',
+  );
+  ok('contradicted facts are superseded, never deleted');
+
+  await noteStyle(['Stops reading after two sentences']);
+  await noteStyle(['Stops reading after two sentences']);
+  const style = (await getProfile()).style ?? [];
+  assert.equal(style[0]?.timesSeen, 2, 'style notes accumulate evidence too');
+  ok('she learns how to deal with you, not only facts about you');
+
   // ---- spending ----------------------------------------------------------
   // A cap that only tells you afterwards is not a cap, so it is checked before
   // the request goes out. Charged from reported token usage, not guessed.

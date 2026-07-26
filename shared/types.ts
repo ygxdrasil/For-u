@@ -28,12 +28,37 @@ export interface ProfileEntry {
   learnedAt: string;
   /** `stated` = you said it outright. `inferred` = Grace worked it out. */
   source: 'stated' | 'inferred';
+  /**
+   * How many times she has seen this hold true.
+   *
+   * Something noticed once and something noticed twenty times are not equally
+   * true, and she should not treat them as though they were.
+   */
+  timesSeen?: number;
+  lastSeenAt?: string;
+  /**
+   * Set when something later contradicted this.
+   *
+   * Superseded rather than deleted: that people change is itself worth
+   * knowing, and deleting is the one thing that cannot be undone.
+   */
+  supersededAt?: string;
+}
+
+/** How she has learned to deal with this particular person. */
+export interface StyleNote {
+  id: string;
+  text: string;
+  learnedAt: string;
+  timesSeen: number;
 }
 
 export interface Profile {
   /** How Grace addresses you, e.g. "sir". Null means no honorific. */
   addressAs: string | null;
   entries: ProfileEntry[];
+  /** Not what she knows about you — how she has learned to talk to you. */
+  style?: StyleNote[];
   updatedAt: string;
 }
 

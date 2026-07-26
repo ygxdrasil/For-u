@@ -72,7 +72,7 @@ When they ask you to go and look — "check my mail", "what's on today", "anythi
 You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
 
 function describeProfile(profile: Profile): string {
-  if (profile.entries.length === 0) {
+  if (profile.entries.filter((entry) => !entry.supersededAt).length === 0) {
     return `You have not learned anything about the user yet. This is early days — pay attention and remember what matters.`;
   }
 
@@ -83,21 +83,50 @@ function describeProfile(profile: Profile): string {
     goal: 'Goals',
   } as const;
 
+  const live = profile.entries.filter((entry) => !entry.supersededAt);
+
   const sections = (Object.keys(byKind) as (keyof typeof byKind)[])
     .map((kind) => {
-      const entries = profile.entries.filter((entry) => entry.kind === kind);
+      const entries = live.filter((entry) => entry.kind === kind);
       if (entries.length === 0) return null;
       const lines = entries
-        .map(
-          (entry) =>
-            `- ${entry.text}${entry.source === 'inferred' ? ' (inferred, not confirmed)' : ''}`,
-        )
+        .map((entry) => {
+          // How sure she is belongs beside the fact. Something seen once and
+          // something seen twenty times are not equally true, and she should
+          // hedge on the first and not on the second.
+          const seen = entry.timesSeen ?? 1;
+          const weight =
+            seen >= 4
+              ? ' (well established)'
+              : entry.source === 'inferred'
+                ? ' (inferred, not confirmed)'
+                : '';
+          return `- ${entry.text}${weight}`;
+        })
         .join('\n');
       return `${byKind[kind]}:\n${lines}`;
     })
     .filter(Boolean);
 
   return `What you know about the user:\n\n${sections.join('\n\n')}`;
+}
+
+/**
+ * How she has learned to deal with this person.
+ *
+ * Separate from what she knows about them, and more valuable: knowing someone
+ * takes their coffee black is a fact, and knowing they stop reading after two
+ * sentences changes every reply she writes.
+ */
+function describeStyle(profile: Profile): string | null {
+  const style = (profile.style ?? []).filter((note) => note.timesSeen >= 1);
+  if (style.length === 0) return null;
+
+  const lines = style
+    .map((note) => `- ${note.text}${note.timesSeen >= 3 ? ' (consistently)' : ''}`)
+    .join('\n');
+
+  return `What you have learned about dealing with them specifically. This is from watching how they actually behave, so it overrides your general habits — but they are observations, not orders, and a strong reason beats them:\n${lines}`;
 }
 
 function describePolicies(policies: ActionPolicy[]): string {
@@ -156,6 +185,7 @@ It reached you through transcription, so treat the exact wording as approximate.
     JUDGEMENT,
     MEMORY_GUIDE,
     describeProfile(profile),
+    describeStyle(profile),
     recall,
     TOOLS_NOTE,
     describePolicies(policies),

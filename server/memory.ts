@@ -105,25 +105,110 @@ export async function remember(
   if (entries.length === 0) return [];
 
   const current = await profile.read();
-  const existing = new Set(current.entries.map((entry) => normalise(entry.text)));
+  const now = new Date().toISOString();
+  const byKey = new Map(current.entries.map((entry) => [normalise(entry.text), entry]));
   const added: ProfileEntry[] = [];
+  let reinforced = false;
 
   for (const entry of entries) {
     const key = normalise(entry.text);
-    if (!key || existing.has(key)) continue;
-    existing.add(key);
-    added.push({...entry, id: randomUUID(), learnedAt: new Date().toISOString()});
+    if (!key) continue;
+
+    const known = byKey.get(key);
+    if (known) {
+      // Seen again. Something observed twenty times is not as tentative as
+      // something observed once, and she should be able to tell them apart.
+      // Hearing it said outright also promotes a guess to a known fact.
+      byKey.set(key, {
+        ...known,
+        timesSeen: (known.timesSeen ?? 1) + 1,
+        lastSeenAt: now,
+        source: entry.source === 'stated' ? 'stated' : known.source,
+        supersededAt: undefined,
+      });
+      reinforced = true;
+      continue;
+    }
+
+    const fresh: ProfileEntry = {
+      ...entry,
+      id: randomUUID(),
+      learnedAt: now,
+      lastSeenAt: now,
+      timesSeen: 1,
+    };
+    byKey.set(key, fresh);
+    added.push(fresh);
   }
 
-  if (added.length > 0) {
+  if (added.length > 0 || reinforced) {
     await profile.write({
       ...current,
-      entries: [...current.entries, ...added],
-      updatedAt: new Date().toISOString(),
+      entries: [...byKey.values()],
+      updatedAt: now,
     });
   }
 
   return added;
+}
+
+/**
+ * Mark something as no longer true, without losing it.
+ *
+ * People change their minds and their circumstances, and an assistant who
+ * keeps insisting on last month's version of them is worse than one who
+ * forgets. Nothing is deleted: that this used to be true is itself a fact.
+ */
+export async function supersedeEntry(text: string): Promise<boolean> {
+  const key = normalise(text);
+  if (!key) return false;
+
+  let found = false;
+  await profile.update((current) => ({
+    ...current,
+    entries: current.entries.map((entry) => {
+      if (normalise(entry.text) !== key || entry.supersededAt) return entry;
+      found = true;
+      return {...entry, supersededAt: new Date().toISOString()};
+    }),
+    updatedAt: new Date().toISOString(),
+  }));
+  return found;
+}
+
+/** What she currently believes — everything not overtaken by something newer. */
+export async function currentBeliefs(): Promise<ProfileEntry[]> {
+  const {entries} = await profile.read();
+  return entries.filter((entry) => !entry.supersededAt);
+}
+
+/**
+ * How she has learned to deal with this person, as opposed to what she knows
+ * about them. Kept short on purpose: a long list of stylistic rules stops
+ * being style and starts being noise.
+ */
+export async function noteStyle(notes: string[]): Promise<void> {
+  if (notes.length === 0) return;
+  const now = new Date().toISOString();
+
+  await profile.update((current) => {
+    const style = [...(current.style ?? [])];
+
+    for (const text of notes) {
+      const clean = text.trim();
+      if (!clean) continue;
+      const at = style.findIndex(
+        (note) => normalise(note.text) === normalise(clean),
+      );
+      if (at >= 0) style[at] = {...style[at], timesSeen: style[at].timesSeen + 1};
+      else style.push({id: randomUUID(), text: clean, learnedAt: now, timesSeen: 1});
+    }
+
+    // The best-evidenced dozen. Anything beyond that is not a habit she has
+    // noticed, it is a list she is accumulating.
+    style.sort((left, right) => right.timesSeen - left.timesSeen);
+    return {...current, style: style.slice(0, 12), updatedAt: now};
+  });
 }
 
 export function forget(id: string): Promise<Profile> {
