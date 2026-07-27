@@ -498,9 +498,10 @@ async function requireBudget() {
   const current = await spend();
   if (current.dollars >= monthlyCap()) throw new OverBudget(current.dollars);
 }
-async function record(model, inputTokens, outputTokens) {
+async function record(model, inputTokens, outputTokens, cachedTokens = 0) {
   const rate = RATES[model] ?? FALLBACK;
-  const cost = (inputTokens * rate.in + outputTokens * rate.out) / 1e6;
+  const fresh2 = Math.max(0, inputTokens - cachedTokens);
+  const cost = (fresh2 * rate.in + cachedTokens * rate.in * 0.25 + outputTokens * rate.out) / 1e6;
   const current = await spend();
   const next = {
     ...current,
@@ -634,7 +635,12 @@ Return only the words spoken, with ordinary punctuation. No preamble, no quotes,
 var MAX_TOOL_ROUNDS = 5;
 function meter(model, usage) {
   if (!usage) return;
-  void record(model, usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0).catch(() => {
+  void record(
+    model,
+    usage.promptTokenCount ?? 0,
+    usage.candidatesTokenCount ?? 0,
+    usage.cachedContentTokenCount ?? 0
+  ).catch(() => {
   });
 }
 var SPEAK_DIRECTION = "Read the following aloud in a calm, warm, unhurried voice, the way a composed personal assistant would speak to someone they know well. Read only the text itself:";
@@ -680,9 +686,10 @@ var GeminiProvider = class {
           contents: history
         });
         const calls = [];
+        let usage2;
         for await (const chunk of response2) {
           if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
-          meter(this.model, chunk.usageMetadata);
+          if (chunk.usageMetadata) usage2 = chunk.usageMetadata;
           for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
             if (part.functionCall?.name) {
               calls.push({
@@ -696,6 +703,7 @@ var GeminiProvider = class {
             yield chunk.text;
           }
         }
+        meter(this.model, usage2);
         if (calls.length === 0 || !request.onToolCall) return;
         history.push({
           role: "model",
@@ -725,9 +733,12 @@ var GeminiProvider = class {
     const response = await this.client.models.generateContentStream(
       this.params({ ...request, search: false })
     );
+    let usage;
     for await (const chunk of response) {
+      if (chunk.usageMetadata) usage = chunk.usageMetadata;
       if (chunk.text) yield chunk.text;
     }
+    meter(this.model, usage);
   }
   async complete(request) {
     await requireBudget();

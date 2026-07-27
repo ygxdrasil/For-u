@@ -41,6 +41,7 @@ import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
 import {worthLearningFrom} from '../server/learn';
+import {record as bill, spend as readSpend} from '../server/budget';
 import {parseDuration} from '../server/tools/timers';
 import {allReminders, outstanding} from '../server/tools/reminders';
 import type {Backend} from '../server/store/types';
@@ -718,6 +719,21 @@ try {
   const noN8n = await runTool({name: 'check_workflows', args: {}});
   assert.match(noN8n.result, /not connected/i);
   ok('github and n8n say what is missing rather than guessing');
+
+  // ---- billing: cached tokens cost a quarter, and nothing double-counts -----
+  // The meter-once fix lives in the real provider, which the stub can't
+  // exercise; the cost maths it feeds, though, is exact and worth pinning.
+  const spent0 = (await readSpend()).dollars;
+  await bill('gemini-2.5-flash', 1_000_000, 0, 0);
+  const full = (await readSpend()).dollars - spent0;
+  await bill('gemini-2.5-flash', 1_000_000, 0, 1_000_000);
+  const cached = (await readSpend()).dollars - spent0 - full;
+  assert.ok(Math.abs(full - 0.3) < 1e-6, 'a million fresh input tokens is thirty cents');
+  assert.ok(
+    Math.abs(cached - 0.075) < 1e-6,
+    'the same million served from cache is a quarter of that',
+  );
+  ok('cached input is billed at a quarter, and usage is counted once');
 
   // ---- correcting and editing what she keeps -------------------------------
   // The user's hand on her memory: supersede a fact without deleting it, and

@@ -38,10 +38,22 @@ const MAX_TOOL_ROUNDS = 5;
  * Fire-and-forget: what she spent is worth knowing, but a failure to write it
  * down must never cost the user their answer.
  */
-function meter(model: string, usage: {promptTokenCount?: number; candidatesTokenCount?: number} | undefined): void {
+interface Usage {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  /** The slice of the prompt served from cache, billed at a quarter. */
+  cachedContentTokenCount?: number;
+}
+
+function meter(model: string, usage: Usage | undefined): void {
   if (!usage) return;
   void budget
-    .record(model, usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0)
+    .record(
+      model,
+      usage.promptTokenCount ?? 0,
+      usage.candidatesTokenCount ?? 0,
+      usage.cachedContentTokenCount ?? 0,
+    )
     .catch(() => {});
 }
 
@@ -112,10 +124,16 @@ export class GeminiProvider implements LlmProvider {
         });
 
         const calls: {name: string; args: Record<string, unknown>}[] = [];
+        // Usage is metered once, after the stream drains — never per chunk.
+        // Gemini reports usageMetadata cumulatively on every chunk it sends,
+        // so metering inside the loop billed a ten-chunk reply something like
+        // ten times over. That single line was most of why she seemed to
+        // spend so fast. The last chunk carries the final total; keep it.
+        let usage: Usage | undefined;
 
         for await (const chunk of response) {
           if (chunk.candidates?.[0]?.groundingMetadata) request.onGrounded?.();
-          meter(this.model, chunk.usageMetadata);
+          if (chunk.usageMetadata) usage = chunk.usageMetadata;
 
           for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
             if (part.functionCall?.name) {
@@ -131,6 +149,8 @@ export class GeminiProvider implements LlmProvider {
             yield chunk.text;
           }
         }
+
+        meter(this.model, usage);
 
         // Nothing to do: that was her answer.
         if (calls.length === 0 || !request.onToolCall) return;
@@ -172,9 +192,12 @@ export class GeminiProvider implements LlmProvider {
     const response = await this.client.models.generateContentStream(
       this.params({...request, search: false}),
     );
+    let usage: Usage | undefined;
     for await (const chunk of response) {
+      if (chunk.usageMetadata) usage = chunk.usageMetadata;
       if (chunk.text) yield chunk.text;
     }
+    meter(this.model, usage);
   }
 
   async complete(request: GenerateRequest): Promise<string> {

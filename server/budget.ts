@@ -79,9 +79,14 @@ export async function record(
   model: string,
   inputTokens: number,
   outputTokens: number,
+  /** The slice of input served from Gemini's implicit cache, billed at 25%. */
+  cachedTokens = 0,
 ): Promise<void> {
   const rate = RATES[model] ?? FALLBACK;
-  const cost = (inputTokens * rate.in + outputTokens * rate.out) / 1_000_000;
+  const fresh = Math.max(0, inputTokens - cachedTokens);
+  const cost =
+    (fresh * rate.in + cachedTokens * rate.in * 0.25 + outputTokens * rate.out) /
+    1_000_000;
 
   const current = await spend();
   const next: Spend = {
