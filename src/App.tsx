@@ -370,6 +370,9 @@ export default function App() {
             onVoiceMode={grace.setVoiceMode}
             volume={grace.volume}
             onVolume={grace.setVolume}
+            outputs={grace.outputs}
+            output={grace.output}
+            onOutput={grace.setOutput}
           />
         )}
       </main>

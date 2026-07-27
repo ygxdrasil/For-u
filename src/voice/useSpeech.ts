@@ -70,6 +70,65 @@ export function useSpeech(enabled: boolean) {
     // audible as you drag it rather than at the start of the next sentence.
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
+  /**
+   * Which speaker she comes out of.
+   *
+   * The answer to "can she talk through the television". A browser can send one
+   * element's audio to a specific output while everything else on the machine
+   * carries on where it was — so with the television connected over HDMI, or a
+   * speaker paired over Bluetooth, she can be told to use that and only that.
+   * Her voice fills the room; the film you were watching does not move.
+   *
+   * Per device, like the volume, because "which speaker" is a fact about where
+   * a machine is sitting rather than about the person using it.
+   */
+  const [outputs, setOutputs] = useState<{id: string; label: string}[]>([]);
+  const [output, setOutput] = useState(
+    () => localStorage.getItem('grace-output') ?? '',
+  );
+  const outputRef = useRef(output);
+
+  /** Chrome and Edge have had this for years; Safari and Firefox have not. */
+  const canRoute =
+    typeof window !== 'undefined' &&
+    typeof HTMLMediaElement !== 'undefined' &&
+    'setSinkId' in HTMLMediaElement.prototype;
+
+  const listOutputs = useCallback(async () => {
+    if (!canRoute || !navigator.mediaDevices?.enumerateDevices) return;
+    const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    setOutputs(
+      devices
+        .filter((device) => device.kind === 'audiooutput')
+        .map((device, index) => ({
+          id: device.deviceId,
+          // Labels are blank until the microphone has been allowed once, which
+          // she asks for anyway — but a numbered fallback beats an empty menu.
+          label: device.label || `Output ${index + 1}`,
+        })),
+    );
+  }, [canRoute]);
+
+  useEffect(() => {
+    void listOutputs();
+    if (!navigator.mediaDevices) return;
+    // A television switched on, or a speaker paired, mid-session.
+    navigator.mediaDevices.addEventListener('devicechange', listOutputs);
+    return () =>
+      navigator.mediaDevices.removeEventListener('devicechange', listOutputs);
+  }, [listOutputs]);
+
+  useEffect(() => {
+    outputRef.current = output;
+    localStorage.setItem('grace-output', output);
+    const element = audioRef.current as (HTMLAudioElement & {
+      setSinkId?: (id: string) => Promise<void>;
+    }) | null;
+    // Moves what is playing right now, so choosing a speaker is audible
+    // immediately rather than at the next thing she says.
+    if (element?.setSinkId) void element.setSinkId(output).catch(() => {});
+  }, [output]);
+
   const [blocked, setBlocked] = useState(false);
   const [source, setSource] = useState<VoiceSource>('grace');
   const [error, setError] = useState<string | null>(null);
@@ -212,6 +271,16 @@ export function useSpeech(enabled: boolean) {
         element.preservesPitch = true;
         element.playbackRate = 1.08;
         element.volume = volumeRef.current;
+        // Set per play rather than once: the element is reused, and a sink
+        // that has gone away (television off, speaker unpaired) throws here
+        // rather than at selection time. Falling back to the default output is
+        // the right answer — she should still be audible somewhere.
+        const routable = element as HTMLAudioElement & {
+          setSinkId?: (id: string) => Promise<void>;
+        };
+        if (routable.setSinkId && outputRef.current) {
+          void routable.setSinkId(outputRef.current).catch(() => {});
+        }
 
         const url = URL.createObjectURL(blob);
         let settled = false;
@@ -432,6 +501,10 @@ export function useSpeech(enabled: boolean) {
     error,
     volume,
     setVolume,
+    outputs,
+    output,
+    setOutput,
+    canRoute,
     unlock,
     say,
     push,

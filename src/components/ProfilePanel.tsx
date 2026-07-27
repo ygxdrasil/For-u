@@ -3,7 +3,17 @@ import {VoicePicker} from './VoicePicker';
 import {WorkspaceEditor} from './WorkspaceEditor';
 import {Keys} from './Keys';
 import {Notifications} from './Notifications';
-import {Clock, Fingerprint, Lock, Moon, Sun, Trash2, Volume2, X} from 'lucide-react';
+import {
+  Clock,
+  Fingerprint,
+  Lock,
+  Moon,
+  Speaker,
+  Sun,
+  Trash2,
+  Volume2,
+  X,
+} from 'lucide-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import type {
   ActionCategory,
@@ -70,6 +80,10 @@ interface ProfilePanelProps {
   onVoiceMode?: (mode: 'all' | 'answers' | 'off') => void;
   volume?: number;
   onVolume?: (volume: number) => void;
+  /** Speakers this device can send her to — the television among them. */
+  outputs?: {id: string; label: string}[];
+  output?: string;
+  onOutput?: (id: string) => void;
 }
 
 export function ProfilePanel({
@@ -91,6 +105,9 @@ export function ProfilePanel({
   onVoiceMode,
   volume,
   onVolume,
+  outputs,
+  output,
+  onOutput,
 }: ProfilePanelProps) {
   const [address, setAddress] = useState(profile.addressAs ?? '');
   const [current, setCurrent] = useState(policies);
@@ -370,6 +387,27 @@ export function ProfilePanel({
                 <span className="figure w-8 shrink-0 text-right text-mist/60">
                   {Math.round(volume * 100)}%
                 </span>
+              </label>
+            )}
+
+            {/* Her voice, and only her voice, sent to one speaker. Whatever
+                else this machine is playing stays where it was. */}
+            {outputs && outputs.length > 1 && onOutput && (
+              <label className="mt-1 flex items-center gap-2 text-xs text-mist">
+                <Speaker size={13} className="shrink-0" />
+                <select
+                  value={output ?? ''}
+                  onChange={(event) => onOutput(event.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-edge bg-void px-2 py-1.5 text-xs text-slate-200 focus:border-ice/40 focus:outline-none">
+                  <option value="">This device’s usual speaker</option>
+                  {outputs
+                    .filter((one) => one.id && one.id !== 'default')
+                    .map((one) => (
+                      <option key={one.id} value={one.id}>
+                        {one.label}
+                      </option>
+                    ))}
+                </select>
               </label>
             )}
           </Section>
