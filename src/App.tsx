@@ -9,6 +9,7 @@ import {Transcript} from './components/Transcript';
 import {VoiceCheck} from './components/VoiceCheck';
 import type {Mode} from './hooks/useGrace';
 import {useGrace} from './hooks/useGrace';
+import {useFreshness} from './hooks/useFreshness';
 import {useRooms} from './hooks/useRooms';
 
 const MODE_LABEL: Record<Mode, string> = {
@@ -32,6 +33,7 @@ const MODE_DOT: Record<Mode, string> = {
 export default function App() {
   const grace = useGrace();
   const rooms = useRooms();
+  const freshness = useFreshness();
   const [panelOpen, setPanelOpen] = useState(false);
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
   /** Which half of the app a narrow screen is showing. */
@@ -240,6 +242,15 @@ export default function App() {
           />
         )}
       </main>
+
+      {freshness.stale && (
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="w-full border-t border-ice/25 bg-ice/10 px-5 py-2 text-left text-xs text-ice">
+          There is a newer version of me. Tap to reload.
+        </button>
+      )}
 
       {rooms.blocked.length > 0 && (
         <div className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">

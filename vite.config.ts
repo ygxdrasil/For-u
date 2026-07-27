@@ -18,9 +18,33 @@ function graceApi(): Plugin {
   };
 }
 
+/**
+ * A stamp for this build, baked into the bundle and written beside it.
+ *
+ * The app compares the two and offers a reload when they differ. Without it
+ * there is no way for anyone — the user or me — to tell a stale page from a
+ * current one, and "nothing changed" is indistinguishable from "the change
+ * didn't work". That cost two rounds of confusion before this existed.
+ */
+const BUILD = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
+
+function buildStamp(): Plugin {
+  return {
+    name: 'grace-build-stamp',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'build.json',
+        source: JSON.stringify({build: BUILD}),
+      });
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), graceApi()],
+    define: {__BUILD__: JSON.stringify(BUILD)},
+    plugins: [react(), tailwindcss(), graceApi(), buildStamp()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

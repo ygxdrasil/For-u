@@ -40,6 +40,8 @@ const MODE_LABEL: Record<Mode, string> = {
   speaking: 'Speaking',
 };
 
+declare const __BUILD__: string;
+
 function useClock(): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -391,7 +393,9 @@ export function Dashboard({
         </div>
       )}
 
-      <p className="pb-2 text-center text-[0.6rem] text-mist/30">{state.model}</p>
+      <p className="pb-2 text-center text-[0.6rem] text-mist/30">
+        {state.model} · build {typeof __BUILD__ === 'string' ? __BUILD__ : 'dev'}
+      </p>
     </div>
   );
 }
