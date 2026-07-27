@@ -41,6 +41,7 @@ import {getMode, setMode} from '../server/modes';
 import {workspaces} from '../server/workspaces';
 import {buildSystemPrompt} from '../server/persona';
 import {BANDS} from '../shared/voiceprint';
+import {trimTrailingSilence} from '../shared/trim';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
@@ -1111,6 +1112,64 @@ try {
   // zero, with no way back because the window had passed.
   assert.match(ambient, /if \(openedAt === 0\) openedAt = now;/);
   ok('listening falls back rather than failing silently, and calibrates late');
+
+  // ---- she should not pause at every full stop ---------------------------
+  // The speech model pads the end of every clip with silence. One clip, nobody
+  // notices; a reply is three or four clips, so it is three or four pauses,
+  // each landing exactly on a full stop — which a listener hears as her
+  // hesitating rather than as an encoder finishing up.
+  const wavOf = (frames: number[]) => {
+    const bytes = new Uint8Array(44 + frames.length * 2);
+    const view = new DataView(bytes.buffer);
+    const put = (at: number, text: string) => {
+      for (let i = 0; i < text.length; i += 1) bytes[at + i] = text.charCodeAt(i);
+    };
+    put(0, 'RIFF');
+    view.setUint32(4, bytes.length - 8, true);
+    put(8, 'WAVE');
+    put(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, 24_000, true);
+    view.setUint32(28, 48_000, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    put(36, 'data');
+    view.setUint32(40, frames.length * 2, true);
+    frames.forEach((value, i) => view.setInt16(44 + i * 2, value, true));
+    return bytes;
+  };
+
+  // Half a second of speech, then a full second of the encoder's padding.
+  const speech = Array.from({length: 12_000}, (_, i) => Math.round(8000 * Math.sin(i / 4)));
+  const padded = wavOf([...speech, ...new Array(24_000).fill(0)]);
+  const tightened = trimTrailingSilence(padded);
+
+  assert.ok(tightened.byteLength < padded.byteLength, 'the padding should come off');
+  assert.ok(
+    tightened.byteLength > 44 + speech.length * 2,
+    'and the words themselves must survive it',
+  );
+
+  // The two length fields a player actually reads. Left stale, every player
+  // either reads past the end of the file or refuses it outright — which is
+  // why this is trimmed by arithmetic and asserted rather than eyeballed.
+  const check = new DataView(
+    tightened.buffer,
+    tightened.byteOffset,
+    tightened.byteLength,
+  );
+  assert.equal(check.getUint32(4, true), tightened.byteLength - 8, 'RIFF size');
+  assert.equal(check.getUint32(40, true), tightened.byteLength - 44, 'data size');
+
+  // Anything it does not fully understand comes back untouched, because the
+  // cost of guessing here is a file that will not play at all.
+  assert.equal(trimTrailingSilence(wavOf(new Array(2000).fill(0))).byteLength,
+    wavOf(new Array(2000).fill(0)).byteLength, 'silence throughout is left alone');
+  const garbage = new Uint8Array([1, 2, 3, 4, 5]);
+  assert.equal(trimTrailingSilence(garbage), garbage, 'a non-WAV is left alone');
+  ok('trailing silence is cut from her speech, and only when it is understood');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach

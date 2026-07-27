@@ -4294,6 +4294,66 @@ function forgetAvailable() {
   cached4 = null;
 }
 
+// shared/trim.ts
+var FLOOR = 150;
+var TAIL_MS = 60;
+function describe3(bytes) {
+  if (bytes.length < 12) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = (at2) => String.fromCharCode(...bytes.subarray(at2, at2 + 4));
+  if (tag(0) !== "RIFF" || tag(8) !== "WAVE") return null;
+  let at = 12;
+  let channels = 1;
+  let rate = 24e3;
+  let bits = 16;
+  while (at + 8 <= bytes.length) {
+    const id = tag(at);
+    const size = view.getUint32(at + 4, true);
+    const body = at + 8;
+    if (id === "fmt " && body + 16 <= bytes.length) {
+      channels = view.getUint16(body + 2, true) || 1;
+      rate = view.getUint32(body + 4, true) || 24e3;
+      bits = view.getUint16(body + 14, true) || 16;
+    }
+    if (id === "data") {
+      return { start: body, channels, rate, bits, length: Math.min(size, bytes.length - body) };
+    }
+    at = body + size + size % 2;
+  }
+  return null;
+}
+function trimTrailingSilence(input) {
+  const wav = describe3(input);
+  if (!wav || wav.bits !== 16 || wav.length < 4) return input;
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  const bytesPerFrame = 2 * wav.channels;
+  const frames = Math.floor(wav.length / bytesPerFrame);
+  if (frames === 0) return input;
+  let lastLoud = -1;
+  for (let frame = frames - 1; frame >= 0; frame -= 1) {
+    let loudest = 0;
+    for (let channel = 0; channel < wav.channels; channel += 1) {
+      const at = wav.start + frame * bytesPerFrame + channel * 2;
+      if (at + 2 > input.byteLength) continue;
+      loudest = Math.max(loudest, Math.abs(view.getInt16(at, true)));
+    }
+    if (loudest > FLOOR) {
+      lastLoud = frame;
+      break;
+    }
+  }
+  if (lastLoud < 0) return input;
+  const tail2 = Math.round(TAIL_MS / 1e3 * wav.rate);
+  const keepFrames = Math.min(frames, lastLoud + 1 + tail2);
+  if (keepFrames >= frames) return input;
+  const keepBytes = keepFrames * bytesPerFrame;
+  const output = input.slice(0, wav.start + keepBytes);
+  const out = new DataView(output.buffer, output.byteOffset, output.byteLength);
+  out.setUint32(4, output.byteLength - 8, true);
+  out.setUint32(wav.start - 4, keepBytes, true);
+  return output;
+}
+
 // shared/voiceprint.ts
 var BANDS = 24;
 
@@ -5381,7 +5441,14 @@ function createApi() {
       }
       const voice = String(req.body?.voice ?? "").replace(/[^a-zA-Z]/g, "").slice(0, 24);
       try {
-        res.json(await getProvider().speak({ text, ...voice ? { voice } : {} }));
+        const spoken = await getProvider().speak({ text, ...voice ? { voice } : {} });
+        const trimmed = trimTrailingSilence(
+          Buffer.from(spoken.audio, "base64")
+        );
+        res.json({
+          ...spoken,
+          audio: Buffer.from(trimmed).toString("base64")
+        });
       } catch (error) {
         const detail = error.message ?? "unknown error";
         console.error("[grace] speech failed:", detail);

@@ -51,6 +51,7 @@ import {onOpen} from './tools/open';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {available, forgetAvailable} from './available';
+import {trimTrailingSilence} from '../shared/trim';
 import {enrol, forgetVoice, isEnrolment, setGuard, voiceGuard} from './voiceguard';
 import {getMode, isMode, setMode} from './modes';
 import {
@@ -1153,7 +1154,26 @@ export function createApi(): Express {
       const voice = String(req.body?.voice ?? '').replace(/[^a-zA-Z]/g, '').slice(0, 24);
 
       try {
-        res.json(await getProvider().speak({text, ...(voice ? {voice} : {})}));
+        const spoken = await getProvider().speak({text, ...(voice ? {voice} : {})});
+
+        /*
+         * The padding comes off before it is sent.
+         *
+         * The speech model hands back the better part of a second of silence
+         * after the last word. On one clip nobody notices; a reply is spoken in
+         * three or four clips, so it is three or four pauses, each landing
+         * exactly on a full stop — which is where a listener hears hesitation
+         * rather than an encoder finishing up. Done here rather than in the
+         * browser so it costs nothing to play and shrinks what goes over the
+         * wire as well.
+         */
+        const trimmed = trimTrailingSilence(
+          Buffer.from(spoken.audio, 'base64'),
+        );
+        res.json({
+          ...spoken,
+          audio: Buffer.from(trimmed).toString('base64'),
+        });
       } catch (error) {
         const detail = (error as Error).message ?? 'unknown error';
         console.error('[grace] speech failed:', detail);

@@ -179,6 +179,18 @@ export function useSpeech(enabled: boolean) {
         const element = audioRef.current ?? new Audio();
         audioRef.current = element;
 
+        /*
+         * A shade quicker than recorded, which is what "fast and clear" wants.
+         *
+         * Eight per cent is the useful part of the range: enough that she reads
+         * as brisk rather than measured, and under the point where speech
+         * starts sounding rushed or the artefacts of time-stretching become
+         * audible. preservesPitch keeps her voice hers — without it, speeding
+         * up raises the pitch and she arrives somewhere near a chipmunk.
+         */
+        element.preservesPitch = true;
+        element.playbackRate = 1.08;
+
         const url = URL.createObjectURL(blob);
         let settled = false;
         const done = (failure?: Error) => {
@@ -210,15 +222,30 @@ export function useSpeech(enabled: boolean) {
   );
 
   /**
-   * Works through the queue in order: ask the server for the audio, play it,
-   * move on. Anything that goes wrong drops that line to the browser's own
-   * voice rather than losing it.
+   * Works through the queue in order, fetching ahead as it plays.
+   *
+   * This used to be strictly one thing at a time: ask for the audio, play it,
+   * then ask for the next. Which meant a full round trip of dead silence at
+   * every sentence boundary — she would say a sentence, stop, wait a second or
+   * two, and carry on. It read as hesitancy, and it was actually the network.
+   *
+   * So the request for the *next* line goes out before the current one starts
+   * playing. The two overlap, the audio for the next piece is almost always
+   * sitting ready by the time the current finishes, and she runs the sentences
+   * together the way a person does. Nothing else changed: still in order, still
+   * one request per piece, still the same fallback.
    */
   const pump = useCallback(async () => {
     if (pumpingRef.current) return;
     pumpingRef.current = true;
     const run = runRef.current;
     pumpRunRef.current = run;
+
+    /** The audio for the line after this one, already on its way. */
+    let ahead: {text: string; audio: Promise<Blob>} | null = null;
+
+    const fetchAudio = (text: string): Promise<Blob> =>
+      api.speak(text).then((spoken) => base64ToBlob(spoken.audio, spoken.mimeType));
 
     try {
       while (queueRef.current.length > 0 && run === runRef.current) {
@@ -230,10 +257,29 @@ export function useSpeech(enabled: boolean) {
           continue;
         }
 
+        // Either the one we started during the last line, or a fresh one.
+        const audio =
+          ahead && ahead.text === text ? ahead.audio : fetchAudio(text);
+        ahead = null;
+
         try {
-          const spoken = await api.speak(text);
+          const blob = await audio;
           if (run !== runRef.current) return;
-          await playAudio(base64ToBlob(spoken.audio, spoken.mimeType));
+
+          /*
+           * Start the next request now, before playing this one — the whole
+           * point. A rejection here would be unhandled until the next turn of
+           * the loop reaches it, which the browser reports as an unhandled
+           * rejection, so it is caught immediately and re-thrown when awaited.
+           */
+          const following = queueRef.current[0];
+          if (following) {
+            const started = fetchAudio(following);
+            started.catch(() => {});
+            ahead = {text: following, audio: started};
+          }
+
+          await playAudio(blob);
           serverVoiceRef.current = true;
           setSource('grace');
           setError(null);
