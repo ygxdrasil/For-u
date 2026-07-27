@@ -42,7 +42,7 @@ import {workspaces} from '../server/workspaces';
 import {buildSystemPrompt} from '../server/persona';
 import {BANDS} from '../shared/voiceprint';
 import {trimTrailingSilence} from '../shared/trim';
-import {heardName, toldToSleep} from '../shared/wake';
+import {heardName, isPhantom, toldToSleep} from '../shared/wake';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
@@ -1245,6 +1245,38 @@ try {
     assert.equal(toldToSleep(said), false, `"${said}" must not silence her`);
   }
   ok('she can be told to leave it, and only when she was actually told');
+
+  // ---- what a transcriber says when it was given nothing -----------------
+  // Every speech model trained on captioned video does this: handed a second
+  // of room tone it does not answer "nothing", it answers with whatever phrase
+  // most often accompanied silence in its training data, confidently. Which is
+  // why they are so oddly specific — they are the end-credits of a million
+  // videos, and "I created" was arriving from an empty room.
+  for (const phantom of [
+    'I created',
+    'Thank you.',
+    'Thanks for watching!',
+    'you',
+    'Subtitles by the Amara.org community',
+    '  ',
+    'Okay.',
+  ]) {
+    assert.equal(isPhantom(phantom), true, `"${phantom}" is the model filling a gap`);
+  }
+
+  // The whole point is that this must not deafen her to real speech. Anything
+  // longer than a few words is real regardless, and a phantom phrase inside a
+  // real sentence is real too.
+  for (const real of [
+    'thank you for sorting that out',
+    'okay do it',
+    'you were right about the invoice',
+    'I created a new workflow yesterday, remind me to check it',
+    'lights off',
+  ]) {
+    assert.equal(isPhantom(real), false, `"${real}" is somebody talking`);
+  }
+  ok('a transcriber inventing words into a silence is caught, and speech is not');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach

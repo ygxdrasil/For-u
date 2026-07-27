@@ -3,7 +3,8 @@ import * as api from '../lib/api';
 import {acquire, MicError, type MicLease} from './mic';
 import {wavFromSamples} from './wav';
 import {keepUpWithSamples, wasYouSamples, type GuardState} from './voiceprint';
-import {heardName, toldToSleep} from '../../shared/wake';
+import {printOf} from '../../shared/voiceprint';
+import {heardName, isPhantom, toldToSleep} from '../../shared/wake';
 
 /**
  * Always-on listening.
@@ -259,6 +260,27 @@ export function useAmbient({
   const consider = useCallback(async (samples: Float32Array, rate: number) => {
     setState('working');
     try {
+      /*
+       * Was that a voice at all?
+       *
+       * Asked here, before anything is sent, because a transcriber handed a
+       * second of room tone does not answer "nothing" — it answers with
+       * whatever phrase most often accompanied silence in its training data,
+       * confidently. That is where "I created" comes from: nobody said it, and
+       * no amount of filtering afterwards is as good as not asking.
+       *
+       * The test is periodicity. A voice has a pitch because vocal folds open
+       * and close at a rate; a fan, a road, a keyboard and a room have none.
+       * Long clips are let through regardless of pitch, because a whisper and
+       * a sigh are real speech with little periodicity in them, and by then
+       * there is enough evidence that something happened.
+       */
+      const shape = printOf(samples, rate);
+      if (shape.pitch === 0 && shape.seconds < 1.2) {
+        setState('listening');
+        return;
+      }
+
       const wav = wavFromSamples(samples, rate);
 
       /*
@@ -289,6 +311,13 @@ export function useAmbient({
 
       const text = (await api.transcribe(wav.base64, wav.mimeType)).trim();
       if (!text) return;
+
+      // The last line of defence, for when something did get through that
+      // sounded periodic enough. Whole-utterance only, so "thank you" said to
+      // her still reaches her while a lone "Thank you." from an empty room
+      // does not — and it is not even shown, because a phantom appearing in
+      // "last words she made out" is how this got noticed as a fault at all.
+      if (isPhantom(text)) return;
 
       setHeard(text);
 

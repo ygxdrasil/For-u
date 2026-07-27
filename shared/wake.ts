@@ -111,6 +111,70 @@ export function toldToSleep(request: string): boolean {
   return SLEEP.test(request.trim());
 }
 
+/**
+ * Things a transcriber says when it was given nothing.
+ *
+ * Not a quirk of one model — every speech model trained on captioned video
+ * does this. Handed a second of room tone it does not answer "nothing"; it
+ * answers with whatever phrase most often accompanied silence in its training
+ * data, with complete confidence. Which is why the phrases are so oddly
+ * specific: they are the end-credits of a million videos.
+ *
+ * The list is matched against the *whole* utterance, never a part of it, so
+ * "thank you" said to her is still heard while a lone "Thank you." out of an
+ * empty room is not. That distinction is the only thing keeping this from
+ * being a filter that deafens her to politeness.
+ */
+const PHANTOMS = new Set([
+  'i created',
+  'i created a',
+  'thank you',
+  'thanks',
+  'thank you very much',
+  'thanks for watching',
+  'thank you for watching',
+  'subtitles by the amaraorg community',
+  'subscribe',
+  'please subscribe',
+  'bye',
+  'bye bye',
+  'you',
+  'the',
+  'so',
+  'okay',
+  'oh',
+  'mm',
+  'hmm',
+  'uh',
+  'um',
+  'yeah',
+  'silence',
+  'music',
+  'applause',
+  'transcription by castingwordscom',
+  'transcribed by httpsotterai',
+]);
+
+/**
+ * Was that a real thing said, or the transcriber filling a silence?
+ *
+ * Deliberately whole-utterance only. Anything longer than a few words is
+ * treated as real regardless — the phantoms are always short, and refusing a
+ * genuine sentence because it happens to start with "so" would be a far worse
+ * failure than occasionally letting one through.
+ */
+export function isPhantom(text: string): boolean {
+  const bare = text
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!bare) return true;
+  if (bare.split(' ').length > 5) return false;
+  return PHANTOMS.has(bare);
+}
+
 export interface Heard {
   /** Whether her name was in it at all. */
   called: boolean;

@@ -119,10 +119,20 @@ function normalise(samples: Float32Array): Float32Array {
   let peak = 0;
   for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
 
-  // Nothing worth lifting, or already loud enough to leave alone.
-  if (peak < 0.0015 || peak >= 0.7) return samples;
+  /*
+   * Below this, whatever it is, it is not being amplified.
+   *
+   * Set from experience rather than theory: at 0.0015 this was lifting room
+   * tone twelve-fold into something a transcriber would confidently put words
+   * to, and it did — "I created", from an empty room. A real voice from across
+   * a room peaks an order of magnitude above this even on a poor microphone,
+   * so the quiet speech this exists for is untouched by the change.
+   */
+  if (peak < 0.012 || peak >= 0.7) return samples;
 
-  const gain = Math.min(12, 0.85 / peak);
+  // Eight rather than twelve, for the same reason: the top of that range was
+  // only ever reached by material too quiet to be speech in the first place.
+  const gain = Math.min(8, 0.85 / peak);
   const lifted = new Float32Array(samples.length);
   for (let i = 0; i < samples.length; i += 1) lifted[i] = samples[i] * gain;
   return lifted;
