@@ -27,6 +27,15 @@ interface VoiceCheckProps {
   onPickDevice: (deviceId: string | undefined) => void;
   /** Opens voice recognition, which belongs wherever the microphone is. */
   onOpenVoiceLock?: () => void;
+  /** Live always-listening state, so a diagnosis needs no guesswork. */
+  ambient?: {
+    state: string;
+    level: number;
+    ear: string;
+    heard: string;
+    strangers: number;
+    lastScore: number | null;
+  };
 }
 
 /**
@@ -42,6 +51,7 @@ export function VoiceCheck({
   deviceId,
   onPickDevice,
   onOpenVoiceLock,
+  ambient,
 }: VoiceCheckProps) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [devices, setDevices] = useState<MicDevice[]>([]);
@@ -297,6 +307,72 @@ export function VoiceCheck({
           </button>
         </div>
       </div>
+
+      {/*
+        Always-listening, laid open.
+
+        "She doesn't hear me" has four completely different causes with the
+        same symptom — the microphone is not open, the level never crosses the
+        threshold, the words never reach her name, or the speaker check turned
+        you away. Guessing between them by changing things and asking is slow
+        and it has been wrong twice. Each has a distinct reading here.
+      */}
+      {ambient && (
+        <div className="mb-4 rounded-xl border border-edge/70 bg-black/20 p-3">
+          <p className="label mb-2">Always-listening</p>
+          <dl className="space-y-1 text-xs">
+            <div className="flex justify-between gap-3">
+              <dt className="text-mist/60">Doing</dt>
+              <dd className="text-slate-300">
+                {ambient.state === 'off' ? 'not running' : ambient.state}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-mist/60">Driven by</dt>
+              <dd className={ambient.ear === 'worklet' ? 'text-ice' : 'text-slate-300'}>
+                {ambient.ear === 'worklet'
+                  ? 'the audio thread — hears you on any tab'
+                  : ambient.ear === 'frames'
+                    ? 'the frame clock — only while this tab is visible'
+                    : '—'}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-mist/60">Level now</dt>
+              <dd
+                className={
+                  ambient.level > 0.012 ? 'figure text-ice' : 'figure text-slate-300'
+                }>
+                {ambient.level.toFixed(3)}{' '}
+                <span className="text-mist/45">needs 0.012+</span>
+              </dd>
+            </div>
+            {ambient.lastScore !== null && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-mist/60">Last voice match</dt>
+                <dd className="figure text-slate-300">{ambient.lastScore.toFixed(2)}</dd>
+              </div>
+            )}
+            {ambient.strangers > 0 && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-mist/60">Turned away</dt>
+                <dd className="text-ember/90">{ambient.strangers} in a row</dd>
+              </div>
+            )}
+            {ambient.heard && (
+              <div className="pt-1">
+                <dt className="text-mist/60">Last words she made out</dt>
+                <dd className="mt-0.5 text-slate-300">“{ambient.heard}”</dd>
+              </div>
+            )}
+          </dl>
+          {ambient.state === 'off' && (
+            <p className="mt-2 text-[0.65rem] leading-relaxed text-mist/50">
+              Not running. Turn on always-listening from the microphone button.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* The live meter. Everything else on this panel is secondary to it. */}
       <div className="mb-4 rounded-xl border border-edge/70 bg-black/20 p-3">

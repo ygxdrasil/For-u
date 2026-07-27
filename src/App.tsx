@@ -477,6 +477,7 @@ export default function App() {
             setSoundCheckOpen(false);
             setVoiceLockOpen(true);
           }}
+          ambient={grace.ambient}
         />
       )}
 

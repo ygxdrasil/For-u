@@ -118,6 +118,10 @@ export function useAmbient({
   const [heard, setHeard] = useState('');
   /** Voices turned away in a row. Reset the moment she recognises you. */
   const [strangers, setStrangers] = useState(0);
+  /** Which clock is driving detection, so a diagnosis needs no guesswork. */
+  const [ear, setEar] = useState<'none' | 'worklet' | 'frames'>('none');
+  /** The last speaker verdict, for the same reason. */
+  const [lastScore, setLastScore] = useState<number | null>(null);
 
   const leaseRef = useRef<MicLease | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -163,6 +167,7 @@ export function useAmbient({
     setState('off');
     setLevel(0);
     setAwake(false);
+    setEar('none');
   }, []);
 
   /**
@@ -189,6 +194,7 @@ export function useAmbient({
         strictness: 'normal' as const,
       };
       const speaker = await wasYou(guarding, audio);
+      if (guarding.on && guarding.enrolment) setLastScore(speaker.score);
       if (!speaker.ok) {
         // Counted, not just noted. One refusal is the television; several in a
         // row is the owner being locked out of their own house, and the
@@ -262,12 +268,23 @@ export function useAmbient({
     sourceRef.current.connect(analyser);
 
     const samples = new Uint8Array(analyser.fftSize);
-    const openedAt = performance.now();
+    /*
+     * Set by the first reading, not by the clock.
+     *
+     * Loading the worklet module takes a moment, and calibration used to start
+     * counting the instant the microphone opened — so on a slow load the whole
+     * calibration window elapsed before a single reading arrived, leaving the
+     * measured room floor at zero. It then never recalibrated, because the
+     * window had passed.
+     */
+    let openedAt = 0;
     let floor = 0;
     let floorSamples = 0;
     let speakingSince = 0;
     let quietSince = 0;
     let chunks: BlobPart[] = [];
+    /** Has any reading arrived at all? The watchdog below turns on this. */
+    let heardSomething = false;
 
     setState('listening');
 
@@ -305,12 +322,15 @@ export function useAmbient({
     const onLevel = (rms: number) => {
       if (!runningRef.current) return;
 
+      heardSomething = true;
+
       // Nobody is watching the meter on a tab nobody is looking at, and a
       // React render twenty times a second to move a bar that is not on screen
       // is the one part of this that genuinely wastes a laptop's battery.
       if (!document.hidden) setLevel(rms);
 
       const now = performance.now();
+      if (openedAt === 0) openedAt = now;
 
       // Measure the room first, so a noisy one doesn't trigger constantly.
       if (now - openedAt < CALIBRATION_MS) {
@@ -391,6 +411,29 @@ export function useAmbient({
       sourceRef.current.connect(ears);
       ears.connect(silent);
       silent.connect(context.destination);
+      setEar('worklet');
+
+      /*
+       * The watchdog, and the reason this exists is worth writing down.
+       *
+       * A worklet can load without objecting and then never be called — a
+       * suspended context, an autoplay policy that will not let the graph
+       * start, a browser that quietly declines to pull a node whose output
+       * goes nowhere audible. Every one of those throws nothing and reports
+       * nothing. She simply never hears anything, for ever, and the interface
+       * shows a microphone that is on.
+       *
+       * So: if no reading has arrived in a second and a half, stop believing
+       * it and use the frame clock instead. Listening only while the tab is
+       * visible is a poor outcome; listening never is a broken one.
+       */
+      window.setTimeout(() => {
+        if (!runningRef.current || heardSomething) return;
+        console.warn('[grace] the audio thread produced nothing; falling back');
+        void context.resume().catch(() => {});
+        setEar('frames');
+        watchOnScreen();
+      }, 1500);
     } catch (cause) {
       // Every browser worth naming has had AudioWorklet for years, but a
       // failure here would mean she cannot hear at all, and hearing you only
@@ -399,6 +442,7 @@ export function useAmbient({
         '[grace] audio worklet unavailable, listening only while visible:',
         (cause as Error).message,
       );
+      setEar('frames');
       watchOnScreen();
     }
   }, [consider, deviceId]);
@@ -412,5 +456,5 @@ export function useAmbient({
     };
   }, [enabled, start, stop]);
 
-  return {state, level, error, awake, heard, strangers};
+  return {state, level, error, awake, heard, strangers, ear, lastScore};
 }
