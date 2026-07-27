@@ -4009,6 +4009,47 @@ function forgetAvailable() {
   cached4 = null;
 }
 
+// shared/voiceprint.ts
+var BANDS = 24;
+
+// server/voiceguard.ts
+var EMPTY = { enrolment: null, on: false, strictness: "normal" };
+var store16 = new Document("voiceguard", () => EMPTY);
+function voiceGuard() {
+  return store16.read();
+}
+function isEnrolment(value) {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value;
+  const print = candidate.print;
+  return Boolean(print) && Array.isArray(print?.bands) && print.bands.length === BANDS && print.bands.every((band) => typeof band === "number" && Number.isFinite(band)) && typeof print.pitch === "number" && Number.isFinite(print.pitch) && typeof print.voiced === "number" && print.voiced > 0 && typeof candidate.tightness === "number" && candidate.tightness > 0 && candidate.tightness <= 1 && typeof candidate.samples === "number" && candidate.samples > 0;
+}
+async function enrol(enrolment) {
+  const current = await store16.read();
+  const next = {
+    ...current,
+    enrolment: { ...enrolment, at: (/* @__PURE__ */ new Date()).toISOString() }
+  };
+  await store16.write(next);
+  return next;
+}
+async function setGuard(patch) {
+  const current = await store16.read();
+  const next = {
+    ...current,
+    ...patch.strictness ? { strictness: patch.strictness } : {},
+    // Refusing everyone because nothing is enrolled would be a lockout, so
+    // turning it on without a print is quietly a no.
+    ...patch.on !== void 0 ? { on: patch.on && Boolean(current.enrolment) } : {}
+  };
+  await store16.write(next);
+  return next;
+}
+async function forgetVoice() {
+  await store16.write(EMPTY);
+  return EMPTY;
+}
+
 // server/persona.ts
 var IDENTITY = `You are Grace, a personal assistant to one person \u2014 the user you are speaking with.
 
@@ -4187,7 +4228,7 @@ ${summary}` : null;
 }
 
 // server/style.ts
-var store16 = new Document("style", () => ({
+var store17 = new Document("style", () => ({
   description: null,
   samples: 0,
   builtAt: null
@@ -4195,14 +4236,14 @@ var store16 = new Document("style", () => ({
 var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
 var SAMPLES = 8;
 async function writingStyle() {
-  return (await store16.read()).description;
+  return (await store17.read()).description;
 }
 function fresh(style) {
   if (!style.description || !style.builtAt) return false;
   return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
 }
 async function learnWritingStyle(force = false) {
-  const current = await store16.read();
+  const current = await store17.read();
   if (!force && fresh(current)) return false;
   const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
   if (sent.length < 3) return false;
@@ -4226,7 +4267,7 @@ ${body}`).join("\n\n")
     fast: true
   }).catch(() => "");
   if (!description.trim()) return false;
-  await store16.write({
+  await store17.write({
     description: description.trim(),
     samples: bodies.length,
     builtAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -4778,6 +4819,41 @@ function createApi() {
     "/watches",
     guard(async (_req, res) => {
       res.json({ watches: await liveWatches() });
+    })
+  );
+  api.get(
+    "/voice-guard",
+    guard(async (_req, res) => {
+      res.json(await voiceGuard());
+    })
+  );
+  api.post(
+    "/voice-enrol",
+    guard(async (req, res) => {
+      const enrolment = req.body?.enrolment;
+      if (!isEnrolment(enrolment)) {
+        res.status(400).json({ error: "that is not a usable voiceprint" });
+        return;
+      }
+      res.json(await enrol(enrolment));
+    })
+  );
+  api.post(
+    "/voice-set",
+    guard(async (req, res) => {
+      const strictness = req.body?.strictness;
+      res.json(
+        await setGuard({
+          ...typeof req.body?.on === "boolean" ? { on: req.body.on } : {},
+          ...strictness === "lenient" || strictness === "normal" || strictness === "strict" ? { strictness } : {}
+        })
+      );
+    })
+  );
+  api.post(
+    "/voice-forget",
+    guard(async (_req, res) => {
+      res.json(await forgetVoice());
     })
   );
   api.get(

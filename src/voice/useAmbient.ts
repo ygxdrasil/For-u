@@ -2,6 +2,7 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import * as api from '../lib/api';
 import {acquire, MicError, type MicLease} from './mic';
 import {toWav} from './wav';
+import {wasYou, type GuardState} from './voiceprint';
 
 /**
  * Always-on listening.
@@ -98,15 +99,25 @@ interface AmbientOptions {
   paused: boolean;
   deviceId?: string;
   onRequest: (text: string) => void;
+  /** Whose voice she answers to, when that has been set up. */
+  guard?: GuardState | null;
 }
 
-export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOptions) {
+export function useAmbient({
+  enabled,
+  paused,
+  deviceId,
+  onRequest,
+  guard,
+}: AmbientOptions) {
   const [state, setState] = useState<AmbientState>('off');
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [awake, setAwake] = useState(false);
   /** The last thing she heard, whether or not it was for her. */
   const [heard, setHeard] = useState('');
+  /** When she last turned someone away, so the interface can say so. */
+  const [stranger, setStranger] = useState(0);
 
   const leaseRef = useRef<MicLease | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -118,6 +129,7 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
   const onRequestRef = useRef(onRequest);
   const pausedRef = useRef(paused);
   const runningRef = useRef(false);
+  const guardRef = useRef<GuardState | null>(null);
 
   useEffect(() => {
     onRequestRef.current = onRequest;
@@ -125,6 +137,11 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+  // Held in a ref for the same reason as the rest: `consider` is created once
+  // and must see the current setting, not the one in force when it was made.
+  useEffect(() => {
+    guardRef.current = guard ?? null;
+  }, [guard]);
 
   const stop = useCallback(() => {
     runningRef.current = false;
@@ -158,6 +175,20 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
   const consider = useCallback(async (audio: Blob) => {
     setState('working');
     try {
+      /*
+       * Whose voice it was, decided here, before anything leaves the machine.
+       *
+       * Deliberately ahead of transcription rather than after it. Checking
+       * afterwards would mean every word the television says is sent away and
+       * paid for before being thrown out — this way somebody else's voice
+       * costs nothing at all, which makes the guard cheaper than not having it.
+       */
+      const speaker = await wasYou(guardRef.current ?? {enrolment: null, on: false, strictness: 'normal'}, audio);
+      if (!speaker.ok) {
+        setStranger(Date.now());
+        return;
+      }
+
       const wav = await toWav(audio);
       const text = (await api.transcribe(wav.base64, wav.mimeType)).trim();
       if (!text) return;
@@ -370,5 +401,5 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
     };
   }, [enabled, start, stop]);
 
-  return {state, level, error, awake, heard};
+  return {state, level, error, awake, heard, stranger};
 }

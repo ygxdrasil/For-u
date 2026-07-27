@@ -51,6 +51,7 @@ import {onOpen} from './tools/open';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {available, forgetAvailable} from './available';
+import {enrol, forgetVoice, isEnrolment, setGuard, voiceGuard} from './voiceguard';
 import {getMode, isMode, setMode} from './modes';
 import {
   clearConversation,
@@ -775,6 +776,57 @@ export function createApi(): Express {
     '/watches',
     guard(async (_req, res) => {
       res.json({watches: await liveWatches()});
+    }),
+  );
+
+  /**
+   * Whose voice she answers to.
+   *
+   * The print goes out to the browser deliberately: the comparison happens
+   * there, on audio it already holds, so nothing said in the room ever travels
+   * to be identified. Two dozen numbers describing the shape of a voice cannot
+   * be turned back into a recording, and the alternative — uploading every
+   * sound in the room to ask whether it was you — is a far worse bargain than
+   * the problem it solves.
+   */
+  api.get(
+    '/voice-guard',
+    guard(async (_req, res) => {
+      res.json(await voiceGuard());
+    }),
+  );
+
+  api.post(
+    '/voice-enrol',
+    guard(async (req, res) => {
+      const enrolment = req.body?.enrolment;
+      if (!isEnrolment(enrolment)) {
+        res.status(400).json({error: 'that is not a usable voiceprint'});
+        return;
+      }
+      res.json(await enrol(enrolment));
+    }),
+  );
+
+  api.post(
+    '/voice-set',
+    guard(async (req, res) => {
+      const strictness = req.body?.strictness;
+      res.json(
+        await setGuard({
+          ...(typeof req.body?.on === 'boolean' ? {on: req.body.on} : {}),
+          ...(strictness === 'lenient' || strictness === 'normal' || strictness === 'strict'
+            ? {strictness}
+            : {}),
+        }),
+      );
+    }),
+  );
+
+  api.post(
+    '/voice-forget',
+    guard(async (_req, res) => {
+      res.json(await forgetVoice());
     }),
   );
 

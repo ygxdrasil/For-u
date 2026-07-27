@@ -19,6 +19,7 @@ import {ProfilePanel} from './components/ProfilePanel';
 import {Timers} from './components/Timers';
 import {Transcript} from './components/Transcript';
 import {VoiceCheck} from './components/VoiceCheck';
+import {VoiceLock} from './components/VoiceLock';
 import type {Mode} from './hooks/useGrace';
 import {useGrace} from './hooks/useGrace';
 import type {DayView} from '../shared/types';
@@ -65,6 +66,7 @@ export default function App() {
   const freshness = useFreshness();
   const [panelOpen, setPanelOpen] = useState(false);
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
+  const [voiceLockOpen, setVoiceLockOpen] = useState(false);
   /** Which half of the app a narrow screen is showing. */
   const [tab, setTab] = useState<'grace' | 'talk'>('grace');
   /** Her, taking over the screen. */
@@ -181,6 +183,12 @@ export default function App() {
     {id: 'stage', label: 'Full screen', hint: 'view', run: () => setStage(true)},
     {id: 'holo', label: 'Projection mode', hint: 'view', run: () => setHolo(true)},
     {id: 'sound', label: 'Sound check', hint: 'audio', run: () => setSoundCheckOpen(true)},
+    {
+      id: 'voicelock',
+      label: 'Only answer to me',
+      hint: 'audio',
+      run: () => setVoiceLockOpen(true),
+    },
     {id: 'panel', label: 'What Grace knows', hint: 'settings', run: () => setPanelOpen(true)},
   ];
 
@@ -460,6 +468,20 @@ export default function App() {
           onClose={() => setSoundCheckOpen(false)}
           deviceId={grace.deviceId}
           onPickDevice={grace.setDeviceId}
+        />
+      )}
+
+      {voiceLockOpen && (
+        <VoiceLock
+          guard={grace.guard}
+          deviceId={grace.deviceId}
+          onSave={async (patch) => {
+            grace.setGuard(await api.saveVoice(patch));
+          }}
+          onForget={async () => {
+            grace.setGuard(await api.forgetVoice());
+          }}
+          onClose={() => setVoiceLockOpen(false)}
         />
       )}
 

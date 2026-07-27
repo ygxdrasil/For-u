@@ -14,6 +14,7 @@ import type {
   PulseResult,
   Workspace,
 } from '../../shared/types.ts';
+import type {Enrolment, Strictness} from '../../shared/voiceprint.ts';
 
 export type SessionStatus = 'open' | 'ok' | 'required' | 'misconfigured';
 
@@ -270,6 +271,52 @@ export async function supersede(text: string): Promise<Profile> {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({text}),
     }),
+  );
+  return response.json();
+}
+
+export interface VoiceGuard {
+  enrolment: Enrolment | null;
+  on: boolean;
+  strictness: Strictness;
+}
+
+export async function voiceGuard(): Promise<VoiceGuard> {
+  const response = await expectOk(await fetch('/api/voice-guard'));
+  return response.json();
+}
+
+export async function saveVoice(patch: {
+  enrolment?: unknown;
+  on?: boolean;
+  strictness?: Strictness;
+}): Promise<VoiceGuard> {
+  // Two routes rather than one: enrolling carries a body that has to be
+  // validated in its own right, and the settings must stay changeable even
+  // when a browser sends a print the server will not accept.
+  if (patch.enrolment) {
+    await expectOk(
+      await fetch('/api/voice-enrol', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enrolment: patch.enrolment}),
+      }),
+    );
+  }
+
+  const response = await expectOk(
+    await fetch('/api/voice-set', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({on: patch.on, strictness: patch.strictness}),
+    }),
+  );
+  return response.json();
+}
+
+export async function forgetVoice(): Promise<VoiceGuard> {
+  const response = await expectOk(
+    await fetch('/api/voice-forget', {method: 'POST'}),
   );
   return response.json();
 }

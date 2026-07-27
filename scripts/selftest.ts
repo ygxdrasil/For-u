@@ -40,6 +40,8 @@ import {labelMail} from '../server/google/gmail';
 import {getMode, setMode} from '../server/modes';
 import {workspaces} from '../server/workspaces';
 import {buildSystemPrompt} from '../server/persona';
+import {BANDS} from '../shared/voiceprint';
+import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
@@ -1488,6 +1490,74 @@ try {
     'and the narrowing should be worth doing',
   );
   ok('the prompt describes only the powers she actually has');
+
+  // ---- whose voice she answers to ----------------------------------------
+  // The maths, proved against synthesised voices with known fundamentals and
+  // known formants. A recording of a real person would be worse on every
+  // count: it would commit someone's voice to the repository, and when it
+  // failed nobody could say which property had failed.
+  voiceChecks(assert);
+  ok('the speaker check separates one voice from another, and refuses silence');
+
+  const fresh = await call('/voice-guard');
+  assert.equal(fresh.status, 200);
+  const atFirst = (await fresh.json()) as {enrolment: unknown; on: boolean};
+  assert.equal(atFirst.enrolment, null, 'nothing enrolled to begin with');
+  assert.equal(atFirst.on, false, 'and never guarding by default');
+
+  // Turning the guard on with no print would mean refusing every voice
+  // including the owner's — a lockout, so it is quietly refused.
+  const premature = await call('/voice-set', {
+    method: 'POST',
+    body: JSON.stringify({on: true}),
+  });
+  assert.equal(((await premature.json()) as {on: boolean}).on, false);
+  ok('she cannot be set to refuse everyone, which is what a lockout would be');
+
+  // A print is numbers arriving from a browser, so it is checked rather than
+  // trusted: wrong length, missing pitch, and impossible tightness all bounce.
+  for (const bad of [
+    {print: {bands: [1, 2, 3], pitch: 120, voiced: 1}, samples: 3, tightness: 0.9},
+    {print: {bands: new Array(BANDS).fill(0), pitch: 120, voiced: 0}, samples: 3, tightness: 0.9},
+    {print: {bands: new Array(BANDS).fill(0), pitch: 120, voiced: 1}, samples: 3, tightness: 5},
+    'not an object',
+  ]) {
+    const refused = await call('/voice-enrol', {
+      method: 'POST',
+      body: JSON.stringify({enrolment: bad}),
+    });
+    assert.equal(refused.status, 400, 'a malformed print must not be stored');
+  }
+
+  const good = {
+    print: {bands: new Array(BANDS).fill(0.1), pitch: 118, voiced: 0.9},
+    samples: 3,
+    tightness: 0.94,
+    at: '2026-01-01T00:00:00.000Z',
+  };
+  const enrolled = await call('/voice-enrol', {
+    method: 'POST',
+    body: JSON.stringify({enrolment: good}),
+  });
+  assert.equal(enrolled.status, 200);
+  const guarded = await call('/voice-set', {
+    method: 'POST',
+    body: JSON.stringify({on: true, strictness: 'strict'}),
+  });
+  const settings = (await guarded.json()) as {on: boolean; strictness: string};
+  assert.equal(settings.on, true, 'with a print, the guard can be turned on');
+  assert.equal(settings.strictness, 'strict');
+  ok('a voiceprint is validated atFirst it is stored, and then it can guard');
+
+  // The only thing in this app that is really erased rather than filed. That
+  // asymmetry is deliberate: the standing instruction protects the user's
+  // records, and this is not a record — it is a measurement of their body.
+  const forgotten = (await (
+    await call('/voice-forget', {method: 'POST'})
+  ).json()) as {enrolment: unknown; on: boolean};
+  assert.equal(forgotten.enrolment, null, 'forgetting a voice really removes it');
+  assert.equal(forgotten.on, false, 'and stops the guard with it');
+  ok('a voice can be taken back, and taking it back means gone');
 
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {

@@ -14,6 +14,7 @@ import {chimeAct, chimeDone, chimeWake} from '../lib/chime.ts';
 import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
 import {usePulse} from './usePulse.ts';
 import {useAmbient} from '../voice/useAmbient.ts';
+import type {GuardState} from '../voice/voiceprint.ts';
 import {useRecorder} from '../voice/useRecorder.ts';
 import {useSpeech} from '../voice/useSpeech.ts';
 import {useWakeLock} from '../voice/useWakeLock.ts';
@@ -252,6 +253,18 @@ export function useGrace() {
     onSaid: (message) => setMessages((current) => [...current, message]),
   });
 
+  /**
+   * Whose voice she answers to.
+   *
+   * Fetched once and kept, rather than read per utterance: it changes when the
+   * user changes it and never otherwise, and asking the server whether to
+   * listen every time somebody speaks would undo the point of deciding here.
+   */
+  const [guard, setGuard] = useState<GuardState | null>(null);
+  useEffect(() => {
+    void api.voiceGuard().then(setGuard).catch(() => {});
+  }, []);
+
   const ambient = useAmbient({
     enabled: micOn,
     deviceId,
@@ -259,6 +272,7 @@ export function useGrace() {
     // fighting her for the microphone.
     paused: busy || speech.speaking || recorder.state !== 'idle' || transcribing,
     onRequest: handleRequest,
+    guard,
   });
 
   // One note when she wakes to her name, and not once per frame of hearing it.
@@ -392,6 +406,8 @@ export function useGrace() {
     micOn,
     voiceOn,
     ambient,
+    guard,
+    setGuard,
     recorder,
     pulse,
     transcribing,
