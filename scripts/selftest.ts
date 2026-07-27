@@ -719,6 +719,34 @@ try {
   assert.match(noN8n.result, /not connected/i);
   ok('github and n8n say what is missing rather than guessing');
 
+  // ---- correcting and editing what she keeps -------------------------------
+  // The user's hand on her memory: supersede a fact without deleting it, and
+  // fix a note she wrote.
+  await runTool({
+    name: 'write_note',
+    args: {title: 'Flat', text: 'Landlord is fixing the boiler.'},
+  });
+  const notesNow = (await (await call('/notes')).json()) as {
+    notes: {id: string; title: string; body: string}[];
+  };
+  assert.ok(notesNow.notes.length >= 1, 'the note is visible to the interface');
+  const edited = (await (
+    await call('/note-save', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: notesNow.notes[0].id,
+        title: notesNow.notes[0].title,
+        body: 'Corrected by the user.',
+      }),
+    })
+  ).json()) as {notes: {body: string}[]};
+  assert.match(edited.notes[0].body, /Corrected by the user/, 'the user can fix a note');
+  ok('notes are visible and the user can correct what she wrote');
+
+  const weather = (await (await call('/weather')).json()) as {line: string | null};
+  assert.equal(weather.line, null, 'no location fact means no invented forecast');
+  ok('weather stays silent rather than guess a city it was never given');
+
   // ---- the rooms of the app ------------------------------------------------
   // A workspace is data rather than code, which is the whole reason the user
   // can add one without waiting for a deploy. Everything below is about it

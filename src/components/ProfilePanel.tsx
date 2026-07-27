@@ -1,8 +1,9 @@
 import {Bridge} from './Bridge';
 import {VoicePicker} from './VoicePicker';
+import {WorkspaceEditor} from './WorkspaceEditor';
 import {Keys} from './Keys';
 import {Notifications} from './Notifications';
-import {Lock, Trash2, X} from 'lucide-react';
+import {Clock, Lock, Trash2, X} from 'lucide-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import type {
   ActionCategory,
@@ -52,6 +53,7 @@ interface ProfilePanelProps {
   policies: ActionPolicy[];
   onClose: () => void;
   onForget: (id: string) => void;
+  onSupersede: (text: string) => void;
   onRename: (addressAs: string | null) => void;
   onClear: () => void;
   /** Only present when a password is in use. */
@@ -66,6 +68,7 @@ export function ProfilePanel({
   policies,
   onClose,
   onForget,
+  onSupersede,
   onRename,
   onClear,
   onSignOut,
@@ -133,7 +136,9 @@ export function ProfilePanel({
         </Section>
 
         {(Object.keys(KIND_LABEL) as MemoryKind[]).map((kind) => {
-          const entries = profile.entries.filter((entry) => entry.kind === kind);
+          const entries = profile.entries.filter(
+            (entry) => entry.kind === kind && !entry.supersededAt,
+          );
           if (entries.length === 0) return null;
 
           return (
@@ -153,8 +158,17 @@ export function ProfilePanel({
                     </span>
                     <button
                       type="button"
+                      onClick={() => onSupersede(entry.text)}
+                      aria-label="No longer true"
+                      title="No longer true — file it, keep the record"
+                      className="mt-0.5 text-mist/40 opacity-0 transition hover:text-ice focus:opacity-100 group-hover:opacity-100">
+                      <Clock size={13} />
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => onForget(entry.id)}
                       aria-label="Forget this"
+                      title="Delete outright — for a genuine mistake"
                       className="mt-0.5 text-mist/40 opacity-0 transition hover:text-rose-300 focus:opacity-100 group-hover:opacity-100">
                       <Trash2 size={14} />
                     </button>
@@ -164,6 +178,43 @@ export function ProfilePanel({
             </Section>
           );
         })}
+
+        {(profile.style ?? []).length > 0 && (
+          <Section title="How she deals with you">
+            <ul className="space-y-1.5">
+              {(profile.style ?? []).map((note) => (
+                <li
+                  key={note.id}
+                  className="rounded-lg border border-edge/60 bg-void/60 px-3 py-2 text-sm leading-relaxed text-slate-300">
+                  {note.text}
+                  {note.timesSeen >= 3 && (
+                    <span className="ml-1.5 text-[0.68rem] text-mist/50">consistently</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+
+        {profile.entries.some((entry) => entry.supersededAt) && (
+          <Section title="No longer true">
+            <ul className="space-y-1.5">
+              {profile.entries
+                .filter((entry) => entry.supersededAt)
+                .slice(-8)
+                .map((entry) => (
+                  <li
+                    key={entry.id}
+                    className="rounded-lg border border-edge/40 bg-void/40 px-3 py-2 text-sm leading-relaxed text-mist/50 line-through">
+                    {entry.text}
+                  </li>
+                ))}
+            </ul>
+            <p className="text-xs leading-relaxed text-mist/40">
+              Kept, not deleted — that something changed is worth knowing too.
+            </p>
+          </Section>
+        )}
 
         {profile.entries.length === 0 && (
           <p className="text-sm leading-relaxed text-mist/60">
@@ -223,6 +274,10 @@ export function ProfilePanel({
           <p className="text-xs leading-relaxed text-mist/50">
             Clears what was said. What she has learned about you stays.
           </p>
+        </Section>
+
+        <Section title="Rooms">
+          <WorkspaceEditor />
         </Section>
 
         <Section title="The laptop bridge">

@@ -321,6 +321,13 @@ export function useGrace() {
     [applyProfile],
   );
 
+  // Marking something no longer true, as opposed to deleting it: the honest
+  // correction for "that used to be so and isn't now".
+  const supersede = useCallback(
+    async (text: string) => applyProfile(await api.supersede(text)),
+    [applyProfile],
+  );
+
   const rename = useCallback(
     async (addressAs: string | null) => applyProfile(await api.setAddressAs(addressAs)),
     [applyProfile],
@@ -399,6 +406,7 @@ export function useGrace() {
     send,
     stop,
     forget,
+    supersede,
     rename,
     clear,
     setAttention,

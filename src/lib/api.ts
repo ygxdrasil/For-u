@@ -12,6 +12,7 @@ import type {
   Profile,
   ProfileEntry,
   PulseResult,
+  Workspace,
 } from '../../shared/types.ts';
 
 export type SessionStatus = 'open' | 'ok' | 'required' | 'misconfigured';
@@ -269,6 +270,34 @@ export async function supersede(text: string): Promise<Profile> {
     }),
   );
   return response.json();
+}
+
+export async function fetchWorkspaces(): Promise<Workspace[]> {
+  const response = await fetch('/api/workspaces');
+  if (!response.ok) return [];
+  return ((await response.json()) as {workspaces: Workspace[]}).workspaces;
+}
+
+export async function saveWorkspace(patch: Partial<Workspace>): Promise<Workspace[]> {
+  const response = await expectOk(
+    await fetch('/api/workspace-save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(patch),
+    }),
+  );
+  return ((await response.json()) as {workspaces: Workspace[]}).workspaces;
+}
+
+export async function hideWorkspace(id: string): Promise<Workspace[]> {
+  const response = await expectOk(
+    await fetch('/api/workspace-hide', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id}),
+    }),
+  );
+  return ((await response.json()) as {workspaces: Workspace[]}).workspaces;
 }
 
 export async function fetchDay(): Promise<DayView | null> {

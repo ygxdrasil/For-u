@@ -310,6 +310,7 @@ export default function App() {
             policies={state.policies}
             onClose={() => setPanelOpen(false)}
             onForget={grace.forget}
+            onSupersede={grace.supersede}
             onRename={grace.rename}
             onClear={grace.clear}
             onSignOut={session === 'ok' ? () => void grace.signOut() : undefined}
