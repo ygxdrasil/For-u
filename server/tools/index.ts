@@ -206,9 +206,71 @@ export async function runTool(call: ToolCall): Promise<ToolOutcome> {
   }
 }
 
-/** The shape Gemini wants for a function declaration. */
-export function declarations() {
-  return TOOLS.map((tool) => {
+/**
+ * What each tool needs before it can do anything at all.
+ *
+ * A tool whose service is not connected is worse than useless: it costs its
+ * declaration on every single request, and when she does reach for it, it
+ * answers "GitHub is not connected" — which she then has to explain. Leaving it
+ * out is both cheaper and more honest, since she stops offering what she cannot
+ * do.
+ *
+ * Anything not listed here always works, because it depends on nothing but her.
+ */
+const NEEDS: Record<string, keyof Available> = {
+  check_mail: 'google',
+  read_mail: 'google',
+  draft_reply: 'google',
+  file_mail: 'google',
+  label_mail: 'google',
+  mark_mail: 'google',
+  check_diary: 'google',
+  add_to_diary: 'google',
+  change_diary: 'google',
+  check_github: 'github',
+  rerun_checks: 'github',
+  check_workflows: 'n8n',
+  pause_workflow: 'n8n',
+  check_playstation: 'playstation',
+  recent_games: 'playstation',
+  wake_playstation: 'room',
+  sleep_playstation: 'room',
+  open_on_laptop: 'room',
+  lock_laptop: 'room',
+  notify_phone: 'phone',
+};
+
+export interface Available {
+  google: boolean;
+  github: boolean;
+  n8n: boolean;
+  /** The read-only PlayStation Network view. */
+  playstation: boolean;
+  /** The laptop bridge — the console's switch, and the laptop itself. */
+  room: boolean;
+  phone: boolean;
+}
+
+/**
+ * The shape Gemini wants for a function declaration.
+ *
+ * Given what is connected, the list narrows to what can actually run. Note what
+ * this deliberately is not: a per-message guess at which tools this particular
+ * sentence needs. That would save more on paper and cost more in practice —
+ * Gemini's implicit cache discounts a repeated prompt prefix to a quarter, and
+ * the prefix includes the tool list, so a list that changes every message turns
+ * every request into a full-price one. What is connected changes when a key is
+ * pasted, which is roughly never, so this stays cacheable.
+ */
+export function declarations(have?: Available) {
+  const usable = have
+    ? TOOLS.filter((tool) => {
+        const needs = NEEDS[tool.name];
+        return !needs || have[needs];
+      })
+    : TOOLS;
+
+  return usable.map((tool) => {
     const keys = Object.keys(tool.parameters);
     // A declaration with an empty properties object is malformed, and a
     // malformed declaration can take the whole tool list down with it.

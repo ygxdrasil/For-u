@@ -1268,8 +1268,8 @@ async function accessToken() {
   const saved = await store5.read();
   if (!saved) throw new GoogleError("Google is not connected yet.", true);
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
-  const cached5 = accessTokens.get(saved.refreshToken);
-  if (cached5 && cached5.expiresAt > Date.now() + 6e4) return cached5.token;
+  const cached6 = accessTokens.get(saved.refreshToken);
+  if (cached6 && cached6.expiresAt > Date.now() + 6e4) return cached6.token;
   const token2 = await postToken({
     client_id: googleClient().id,
     client_secret: googleClient().secret,
@@ -3927,8 +3927,34 @@ async function runTool(call3) {
     };
   }
 }
-function declarations() {
-  return TOOLS.map((tool) => {
+var NEEDS = {
+  check_mail: "google",
+  read_mail: "google",
+  draft_reply: "google",
+  file_mail: "google",
+  label_mail: "google",
+  mark_mail: "google",
+  check_diary: "google",
+  add_to_diary: "google",
+  change_diary: "google",
+  check_github: "github",
+  rerun_checks: "github",
+  check_workflows: "n8n",
+  pause_workflow: "n8n",
+  check_playstation: "playstation",
+  recent_games: "playstation",
+  wake_playstation: "room",
+  sleep_playstation: "room",
+  open_on_laptop: "room",
+  lock_laptop: "room",
+  notify_phone: "phone"
+};
+function declarations(have) {
+  const usable = have ? TOOLS.filter((tool) => {
+    const needs = NEEDS[tool.name];
+    return !needs || have[needs];
+  }) : TOOLS;
+  return usable.map((tool) => {
     const keys3 = Object.keys(tool.parameters);
     if (keys3.length === 0) {
       return { name: tool.name, description: tool.description };
@@ -3952,6 +3978,35 @@ function declarations() {
       }
     };
   });
+}
+
+// server/available.ts
+var HOLD_MS = 5 * 6e4;
+var cached4 = null;
+async function available() {
+  if (cached4 && Date.now() - cached4.at < HOLD_MS) return cached4.value;
+  const [google, bridge, phones] = await Promise.all([
+    connection().catch(() => null),
+    bridgeStatus().catch(() => ({ seenAt: null })),
+    devices().catch(() => 0)
+  ]);
+  const value = {
+    google: Boolean(google && !google.brokenReason),
+    github: githubConfigured(),
+    n8n: n8nConfigured(),
+    playstation: Boolean(psnToken()),
+    // Ever seen, not currently answering. A bridge that has checked in once is
+    // a bridge the user has set up, and she should still be able to try and
+    // report honestly that the laptop is not there — whereas a tool list that
+    // changes every time a laptop sleeps would cost the cache discount daily.
+    room: Boolean(bridge.seenAt),
+    phone: phones > 0
+  };
+  cached4 = { at: Date.now(), value };
+  return value;
+}
+function forgetAvailable() {
+  cached4 = null;
 }
 
 // server/persona.ts
@@ -4181,7 +4236,7 @@ ${description}`;
 }
 
 // server/weather.ts
-var cached4 = null;
+var cached5 = null;
 var FRESH_FOR_MS2 = 30 * 60 * 1e3;
 var PLACE = /\b(?:lives?|living|based|located|from|home)\b[^.]*?\bin\s+([A-Z][a-zA-Z .'-]{2,40})/;
 async function place() {
@@ -4194,10 +4249,10 @@ async function place() {
   return null;
 }
 async function weatherLine() {
-  if (cached4 && cached4.until > Date.now()) return cached4.line;
+  if (cached5 && cached5.until > Date.now()) return cached5.line;
   const where = await place();
   if (!where) {
-    cached4 = { line: null, place: null, until: Date.now() + FRESH_FOR_MS2 };
+    cached5 = { line: null, place: null, until: Date.now() + FRESH_FOR_MS2 };
     return null;
   }
   try {
@@ -4208,10 +4263,10 @@ async function weatherLine() {
       temperature: 0,
       maxOutputTokens: 120
     });
-    cached4 = { line: line.trim() || null, place: where, until: Date.now() + FRESH_FOR_MS2 };
-    return cached4.line;
+    cached5 = { line: line.trim() || null, place: where, until: Date.now() + FRESH_FOR_MS2 };
+    return cached5.line;
   } catch {
-    cached4 = { line: null, place: where, until: Date.now() + FRESH_FOR_MS2 };
+    cached5 = { line: null, place: where, until: Date.now() + FRESH_FOR_MS2 };
     return null;
   }
 }
@@ -4379,6 +4434,7 @@ function createApi() {
         return;
       }
       await setKey(name, String(req.body?.value ?? ""));
+      forgetAvailable();
       res.json(await keyStatus());
     })
   );
@@ -4462,7 +4518,9 @@ function createApi() {
             }
           },
           onSearchFailed: (reason) => send2({ type: "search-failed", reason }),
-          tools: declarations(),
+          // Only what is connected. Held for minutes at a time so the list
+          // stays byte-identical between messages and keeps the cache discount.
+          tools: declarations(await available()),
           // What the model reads and what the user sees are different strings,
           // and only this layer holds both. The provider hands onToolUsed
           // whatever onToolCall returned — the raw result — so checking the
@@ -4603,6 +4661,7 @@ function createApi() {
         String(req.query.code ?? ""),
         String(req.query.state ?? "")
       );
+      forgetAvailable();
       finish(`Connected as ${email || "your Google account"}. You can close this.`);
     } catch (error) {
       finish(`Could not connect: ${error.message}`);
@@ -4610,6 +4669,7 @@ function createApi() {
   }));
   api.post("/google-disconnect", guard(async (_req, res) => {
     await disconnect();
+    forgetAvailable();
     res.json({ ok: true });
   }));
   api.get("/google-mail", guard(async (req, res) => {

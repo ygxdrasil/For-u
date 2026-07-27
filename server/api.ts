@@ -50,6 +50,7 @@ import {liveWatches} from './watch';
 import {onOpen} from './tools/open';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
+import {available, forgetAvailable} from './available';
 import {getMode, isMode, setMode} from './modes';
 import {
   clearConversation,
@@ -315,6 +316,9 @@ export function createApi(): Express {
         return;
       }
       await setKey(name, String(req.body?.value ?? ''));
+      // Pasting a key is how a tool comes into existence for her, so the
+      // cached picture of what is connected has to go with it.
+      forgetAvailable();
       // Never echoed back — the status says whether one is set, not what it is.
       res.json(await keyStatus());
     }),
@@ -421,7 +425,9 @@ export function createApi(): Express {
             }
           },
           onSearchFailed: (reason) => send({type: 'search-failed', reason}),
-          tools: declarations(),
+          // Only what is connected. Held for minutes at a time so the list
+          // stays byte-identical between messages and keeps the cache discount.
+          tools: declarations(await available()),
           // What the model reads and what the user sees are different strings,
           // and only this layer holds both. The provider hands onToolUsed
           // whatever onToolCall returned — the raw result — so checking the
@@ -635,6 +641,8 @@ export function createApi(): Express {
         String(req.query.code ?? ''),
         String(req.query.state ?? ''),
       );
+      // Her mail and diary tools come into existence here.
+      forgetAvailable();
       finish(`Connected as ${email || 'your Google account'}. You can close this.`);
     } catch (error) {
       finish(`Could not connect: ${(error as Error).message}`);
@@ -643,6 +651,8 @@ export function createApi(): Express {
 
   api.post('/google-disconnect', guard(async (_req, res) => {
     await disconnect();
+    // Nine tools just stopped existing; she should not be offered them.
+    forgetAvailable();
     res.json({ok: true});
   }));
 

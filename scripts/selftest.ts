@@ -1385,6 +1385,44 @@ try {
   assert.deepEqual(gyms[0].panels, ['day', 'weather', 'notes']);
   ok('she can build a room by voice, and naming it again edits it');
 
+  // ---- she is only offered what is plugged in ----------------------------
+  // Every declaration is paid for on every request, so a tool for a service
+  // with no key is a standing charge for something that can only answer "not
+  // connected". Nothing is offered here, which is this account's actual state.
+  const unplugged = {
+    google: false,
+    github: false,
+    n8n: false,
+    playstation: false,
+    room: false,
+    phone: false,
+  };
+  const offeredBare = declarations(unplugged).map((tool) => tool.name);
+  const offeredAll = declarations().map((tool) => tool.name);
+
+  for (const gated of ['check_mail', 'check_github', 'pause_workflow', 'lock_laptop']) {
+    assert.ok(offeredAll.includes(gated), `${gated} should exist at all`);
+    assert.ok(!offeredBare.includes(gated), `${gated} needs a key and must not be offered`);
+  }
+  for (const always of ['search_web', 'add_reminder', 'remember_this', 'ask_choice']) {
+    assert.ok(offeredBare.includes(always), `${always} depends on unplugged and must stay`);
+  }
+  assert.ok(
+    JSON.stringify(declarations(unplugged)).length <
+      JSON.stringify(declarations()).length * 0.8,
+    'gating should be worth doing — a fifth of the payload at least',
+  );
+
+  // Two calls with the same picture must be byte-identical, or the prompt
+  // prefix changes between messages and Gemini's cache discount is lost —
+  // which would cost more than the tools left out.
+  assert.equal(
+    JSON.stringify(declarations(unplugged)),
+    JSON.stringify(declarations({...unplugged})),
+    'the offered list must be stable for the same set of connections',
+  );
+  ok('only connected tools are offered, and the offer is stable enough to cache');
+
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {
     const locked = await call('/policies', {
