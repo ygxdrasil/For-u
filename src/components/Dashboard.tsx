@@ -1,21 +1,10 @@
-import {
-  Brain,
-  CalendarDays,
-  Database,
-  Ear,
-  Globe,
-  Mail,
-  ShieldCheck,
-  Volume2,
-  Wallet,
-} from 'lucide-react';
-import {useEffect, useMemo, useState, type ReactNode} from 'react';
+import {Brain, CalendarDays, Ear, Globe, Mail, Volume2} from 'lucide-react';
+import {useEffect, useMemo, useState} from 'react';
 import type {
   AttentionMode,
   Concern,
   GoogleStatus,
   GraceState,
-  Message,
   Workspace,
 } from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
@@ -65,36 +54,8 @@ function sinceLabel(iso: string): string {
   return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 }
 
-function Readout({
-  icon,
-  label,
-  value,
-  tone = 'normal',
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  tone?: 'normal' | 'good' | 'bad';
-}) {
-  const colour =
-    tone === 'good' ? 'text-ice' : tone === 'bad' ? 'text-rose-300' : 'text-slate-200';
-  return (
-    <div className="glass px-3 py-2">
-      <div className="flex items-center gap-1.5 text-[0.62rem] uppercase tracking-[0.12em] text-mist/50">
-        {icon}
-        {label}
-      </div>
-      <div className={`mt-1 truncate text-sm ${colour}`} title={value}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 interface DashboardProps {
   state: GraceState;
-  /** The live transcript, not the snapshot inside `state`. */
-  messages: Message[];
   mode: Mode;
   micLevel: number;
   recording: boolean;
@@ -117,14 +78,15 @@ interface DashboardProps {
 /**
  * The panel that makes her feel present rather than parked.
  *
- * Everything here is real: her actual state, the time she is working from, the
- * count of what she remembers, where that memory lives, and what the
- * microphone is picking up this instant. Nothing is a placeholder — a readout
- * that isn't true is worse than no readout.
+ * Everything here is real, and everything here is something you cannot simply
+ * ask her for: the time, what the microphone is doing this instant, which of
+ * her faculties are lit, how much attention she may take. Anything she could
+ * just say out loud — what she has learned, where you left off, how many
+ * exchanges you have had — was taken out, because a wall of text you have
+ * already read is noise no matter how true it is.
  */
 export function Dashboard({
   state,
-  messages,
   mode,
   micLevel,
   recording,
@@ -148,9 +110,6 @@ export function Dashboard({
     !room || room.panels.length === 0 || room.panels.includes(name);
   const attention = state.mode.mode;
   const heldFor = sinceLabel(state.mode.since);
-
-  const spokenTurns = messages.filter((message) => message.via === 'voice').length;
-  const latest = [...state.profile.entries].slice(-3).reverse();
 
   const faculties = useMemo<Faculty[]>(
     () => [
@@ -285,21 +244,17 @@ export function Dashboard({
         {google && !google.connected && (
           <div className="mt-2 rounded-lg border border-edge/70 bg-surface/40 px-3 py-2.5">
             {google.configured ? (
-              <>
-                <p className="text-xs leading-relaxed text-mist/80">
-                  Connect Gmail and Calendar and she can read your day.
-                </p>
-                <a
-                  href="/api/google-start"
-                  className="mt-2 inline-block rounded-full border border-ice/40 bg-ice/15 px-3 py-1 text-xs text-ice transition hover:bg-ice/25">
-                  Connect Google
-                </a>
-              </>
+              // No explaining sentence above it: the button says what it does,
+              // and she can be asked why it matters.
+              <a
+                href="/api/google-start"
+                className="inline-block rounded-full border border-ice/40 bg-ice/15 px-3 py-1 text-xs text-ice transition hover:bg-ice/25">
+                Connect Google
+              </a>
             ) : (
               <p className="text-xs leading-relaxed text-mist/70">
-                Mail and diary need Google keys. See{' '}
-                <span className="font-mono text-mist/90">GOOGLE-SETUP.md</span> — it’s
-                two values pasted into Vercel.
+                Mail and diary need Google keys —{' '}
+                <span className="font-mono text-mist/90">GOOGLE-SETUP.md</span>.
               </p>
             )}
           </div>
@@ -334,83 +289,28 @@ export function Dashboard({
                   ? 'border-ice/40 bg-ice/15 text-ice'
                   : 'border-edge bg-surface/40 text-mist hover:border-ice/30 hover:text-slate-200'
               }`}>
+              {/* The blurb lives in the tooltip. You learn what these four mean
+                  once; after that the sentence under each is furniture. */}
               <span className="block text-xs font-medium">{option.label}</span>
-              <span className="mt-0.5 block text-[0.6rem] leading-tight text-mist/50">
-                {option.blurb}
-              </span>
             </button>
           ))}
         </div>
       </div>
       )}
 
-      <div className="grid grid-cols-2 gap-1.5">
-        <Readout
-          icon={<Brain size={11} />}
-          label="Remembers"
-          value={`${state.profile.entries.length} ${
-            state.profile.entries.length === 1 ? 'thing' : 'things'
-          }`}
-        />
-        <Readout
-          icon={<Ear size={11} />}
-          label="Exchanges"
-          value={`${Math.floor(messages.length / 2)}${
-            spokenTurns > 0 ? ` · ${spokenTurns} spoken` : ''
-          }`}
-        />
-        <Readout
-          icon={<Database size={11} />}
-          label="Memory"
-          value={state.storage.backend}
-        />
-        <Readout
-          icon={<ShieldCheck size={11} />}
-          label="At rest"
-          value={state.storage.encrypted ? 'Encrypted' : 'Plain'}
-          tone={state.storage.encrypted ? 'good' : 'bad'}
-        />
-        <Readout
-          icon={<Wallet size={11} />}
-          label="This month"
-          value={`$${state.spend.dollars.toFixed(2)} of $${state.spend.cap}`}
-          tone={state.spend.dollars >= state.spend.cap ? 'bad' : 'normal'}
-        />
-      </div>
-
-      {wants('learned') && latest.length > 0 && (
-        <div>
-          <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
-            Lately learned
-          </h3>
-          <ul className="space-y-1.5">
-            {latest.map((entry) => (
-              <li
-                key={entry.id}
-                className="rise rounded-lg border border-edge/60 bg-surface/30 px-3 py-2 text-xs leading-relaxed text-slate-300">
-                {entry.text}
-                <span className="ml-1.5 text-[0.6rem] uppercase tracking-wider text-mist/40">
-                  {entry.source}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {state.summary && (
-        <div>
-          <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
-            Where you left off
-          </h3>
-          <p className="rounded-lg border border-edge/60 bg-surface/30 px-3 py-2 text-xs leading-relaxed text-mist/80">
-            {state.summary}
-          </p>
-        </div>
-      )}
-
-      <p className="pb-2 text-center text-[0.6rem] text-mist/30">
-        {state.model} · build {typeof __BUILD__ === 'string' ? __BUILD__ : 'dev'}
+      {/* The money and the build, in one line, because the first is a promise
+          I made and the second is how we tell a stale page from a live one.
+          Everything else that used to sit here she can simply be asked. */}
+      <p
+        className="pb-2 text-center text-[0.6rem] text-mist/30"
+        title={`${state.profile.entries.length} things remembered · ${state.storage.backend} · ${
+          state.storage.encrypted ? 'encrypted' : 'plain'
+        } · ${state.model}`}>
+        <span
+          className={state.spend.dollars >= state.spend.cap ? 'text-rose-300' : undefined}>
+          ${state.spend.dollars.toFixed(2)} of ${state.spend.cap}
+        </span>{' '}
+        · build {typeof __BUILD__ === 'string' ? __BUILD__ : 'dev'}
       </p>
     </div>
   );

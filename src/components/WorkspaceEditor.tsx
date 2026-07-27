@@ -18,7 +18,7 @@ const ACCENTS: Workspace['accent'][] = ['ice', 'amber', 'violet', 'rose'];
 const ICONS = ['sparkles', 'house', 'briefcase', 'gamepad'];
 const PANELS =
   'day, needs, weather, notes, situations, activity, connections, spend, ' +
-  'github, workflows, deeds, faculties, attention, learned';
+  'github, workflows, deeds, faculties, attention';
 
 function Field({label, children}: {label: string; children: React.ReactNode}) {
   return (

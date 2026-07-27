@@ -55,11 +55,12 @@ export function Faculties({
               <span className={`relative ${tone.text}`}>{faculty.icon}</span>
             </span>
 
-            <span className="text-[0.6rem] uppercase tracking-[0.1em] text-mist/60">
+            {/* Label and colour only. The dot already says live, idle, or
+                broken; spelling it out underneath was six lines of text
+                answering a question the colour had answered. The words are
+                still there on hover, and she can be asked. */}
+            <span className={`text-[0.6rem] uppercase tracking-[0.1em] ${tone.text}`}>
               {faculty.label}
-            </span>
-            <span className={`text-[0.62rem] leading-tight ${tone.text}`}>
-              {faculty.detail}
             </span>
           </button>
         );

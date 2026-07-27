@@ -200,10 +200,14 @@ export function Connections({google}: {google: {connected: boolean; problem: str
     <Panel title="Connections">
       <ul className="space-y-1.5">
         {rows.map((row) => (
-          <li key={row.label} className="flex items-center gap-2 text-xs">
+          // The note ("no laptop running it") is the tooltip now — six of them
+          // stacked read as a paragraph, and the dot already carries the state.
+          <li
+            key={row.label}
+            title={row.detail}
+            className="flex items-center gap-2 text-xs">
             <span className="text-mist/50">{row.icon}</span>
             <span className="flex-1 text-slate-300">{row.label}</span>
-            <span className="text-[0.6rem] text-mist/45">{row.detail}</span>
             <span
               className={`h-1.5 w-1.5 shrink-0 rounded-full ${
                 row.state === 'live'
@@ -258,7 +262,6 @@ export function SpendGauge({spend}: {spend: GraceState['spend']}) {
           ))}
         </ul>
       )}
-      <p className="mt-1.5 text-[0.6rem] text-mist/40">{spend.requests} requests</p>
     </Panel>
   );
 }

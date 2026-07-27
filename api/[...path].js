@@ -2711,7 +2711,7 @@ var DEFAULTS = [
     icon: "sparkles",
     accent: "ice",
     opens: [],
-    panels: ["orb", "faculties", "attention", "connections", "spend", "learned"],
+    panels: ["orb", "faculties", "attention", "connections", "spend"],
     blurb: "Her, and what she knows."
   },
   {

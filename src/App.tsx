@@ -187,7 +187,6 @@ export default function App() {
   const dashboard = state && (
     <Dashboard
       state={state}
-      messages={grace.messages}
       mode={mode}
       micLevel={grace.recorder.level}
       recording={grace.recorder.state === 'recording'}
