@@ -3,7 +3,7 @@ import {VoicePicker} from './VoicePicker';
 import {WorkspaceEditor} from './WorkspaceEditor';
 import {Keys} from './Keys';
 import {Notifications} from './Notifications';
-import {Clock, Lock, Trash2, X} from 'lucide-react';
+import {Clock, Fingerprint, Lock, Trash2, X} from 'lucide-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import type {
   ActionCategory,
@@ -60,6 +60,10 @@ interface ProfilePanelProps {
   onSignOut?: () => void;
   /** Something that depends on a key may have just started working. */
   onKeysChanged?: () => void;
+  /** Opens the voice-recognition dialog. */
+  onOpenVoiceLock?: () => void;
+  /** Whether she is currently ignoring voices that are not the owner's. */
+  voiceGuarded?: boolean;
 }
 
 export function ProfilePanel({
@@ -73,6 +77,8 @@ export function ProfilePanel({
   onClear,
   onSignOut,
   onKeysChanged,
+  onOpenVoiceLock,
+  voiceGuarded,
 }: ProfilePanelProps) {
   const [address, setAddress] = useState(profile.addressAs ?? '');
   const [current, setCurrent] = useState(policies);
@@ -287,6 +293,27 @@ export function ProfilePanel({
         <Section title="Her voice">
           <VoicePicker />
         </Section>
+
+        {/* Reachable without a keyboard. This lived only behind the command
+            palette's Ctrl+K, which is invisible on a phone and easy to miss on
+            anything — a setting nobody can find is a setting that does not
+            exist. */}
+        {onOpenVoiceLock && (
+          <Section title="Your voice">
+            <p className="text-xs leading-relaxed text-mist/70">
+              {voiceGuarded
+                ? 'She knows your voice and is ignoring everyone else.'
+                : 'Teach her your voice and she can ignore everybody else — the television, and whoever else is in the room.'}
+            </p>
+            <button
+              type="button"
+              onClick={onOpenVoiceLock}
+              className="mt-2 flex items-center gap-1.5 rounded-full border border-ice/40 bg-ice/15 px-3 py-1.5 text-xs text-ice transition hover:bg-ice/25">
+              <Fingerprint size={12} />
+              {voiceGuarded ? 'Voice settings' : 'Set up voice recognition'}
+            </button>
+          </Section>
+        )}
 
         <Section title="Reaching you">
           <Notifications />

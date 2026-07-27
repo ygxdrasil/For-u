@@ -350,6 +350,11 @@ export default function App() {
             onClear={grace.clear}
             onSignOut={session === 'ok' ? () => void grace.signOut() : undefined}
             onKeysChanged={grace.refreshGoogle}
+            onOpenVoiceLock={() => {
+              setPanelOpen(false);
+              setVoiceLockOpen(true);
+            }}
+            voiceGuarded={Boolean(grace.guard?.on)}
           />
         )}
       </main>
@@ -468,6 +473,10 @@ export default function App() {
           onClose={() => setSoundCheckOpen(false)}
           deviceId={grace.deviceId}
           onPickDevice={grace.setDeviceId}
+          onOpenVoiceLock={() => {
+            setSoundCheckOpen(false);
+            setVoiceLockOpen(true);
+          }}
         />
       )}
 

@@ -1,3 +1,4 @@
+import {Fingerprint} from 'lucide-react';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {speak, transcribe, webCheck} from '../lib/api';
 import {
@@ -24,6 +25,8 @@ interface VoiceCheckProps {
   onClose: () => void;
   deviceId: string | undefined;
   onPickDevice: (deviceId: string | undefined) => void;
+  /** Opens voice recognition, which belongs wherever the microphone is. */
+  onOpenVoiceLock?: () => void;
 }
 
 /**
@@ -34,7 +37,12 @@ interface VoiceCheckProps {
  * problem — whereas a bar that does not move while you talk identifies it in a
  * second, and a bar that does move rules the microphone out entirely.
  */
-export function VoiceCheck({onClose, deviceId, onPickDevice}: VoiceCheckProps) {
+export function VoiceCheck({
+  onClose,
+  deviceId,
+  onPickDevice,
+  onOpenVoiceLock,
+}: VoiceCheckProps) {
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [devices, setDevices] = useState<MicDevice[]>([]);
   const [running, setRunning] = useState<Half | null>(null);
@@ -270,12 +278,24 @@ export function VoiceCheck({onClose, deviceId, onPickDevice}: VoiceCheckProps) {
         <h3 className="text-[0.7rem] font-medium uppercase tracking-[0.14em] text-mist/60">
           Sound check
         </h3>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-xs text-mist transition hover:text-slate-200">
-          Hide
-        </button>
+        <div className="flex items-center gap-3">
+          {/* The second place anyone looks for this, after the settings panel.
+              Anything about the microphone belongs where the microphone is. */}
+          {onOpenVoiceLock && (
+            <button
+              type="button"
+              onClick={onOpenVoiceLock}
+              className="flex items-center gap-1 text-xs text-ice/80 transition hover:text-ice">
+              <Fingerprint size={11} /> Only answer to me
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs text-mist transition hover:text-slate-200">
+            Hide
+          </button>
+        </div>
       </div>
 
       {/* The live meter. Everything else on this panel is secondary to it. */}
