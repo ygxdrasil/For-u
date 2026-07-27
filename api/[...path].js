@@ -534,6 +534,9 @@ async function setKey(name, value) {
 function geminiKey() {
   return cached2?.gemini || config.apiKey;
 }
+function goveeKey() {
+  return cached2?.govee ?? "";
+}
 function psnToken() {
   return cached2?.psn || process.env.PSN_NPSSO || "";
 }
@@ -710,16 +713,16 @@ var GeminiProvider = class {
         if (calls.length === 0 || !request.onToolCall) return;
         history.push({
           role: "model",
-          parts: calls.map((call3) => ({
-            functionCall: { name: call3.name, args: call3.args }
+          parts: calls.map((call4) => ({
+            functionCall: { name: call4.name, args: call4.args }
           }))
         });
         const results = [];
-        for (const call3 of calls) {
-          const result = await request.onToolCall(call3.name, call3.args);
-          request.onToolUsed?.(call3.name, result);
+        for (const call4 of calls) {
+          const result = await request.onToolCall(call4.name, call4.args);
+          request.onToolUsed?.(call4.name, result);
           results.push({
-            functionResponse: { name: call3.name, response: { result } }
+            functionResponse: { name: call4.name, response: { result } }
           });
         }
         history.push({ role: "user", parts: results });
@@ -1747,11 +1750,11 @@ ${soon}`,
       minute: "2-digit"
     })}.`
   ].filter(Boolean).join("\n\n");
-  const said = (await compose2(context)).trim();
-  if (!said) return { say: null };
+  const said2 = (await compose2(context)).trim();
+  if (!said2) return { say: null };
   await store9.write({ at: (/* @__PURE__ */ new Date()).toISOString() });
-  await noteDeed("spoke", said, true);
-  return { say: said, message: await record2("grace", said, "text") };
+  await noteDeed("spoke", said2, true);
+  return { say: said2, message: await record2("grace", said2, "text") };
 }
 
 // server/files.ts
@@ -1761,6 +1764,12 @@ var MAX_FILES = 40;
 var store10 = new Document("files", () => []);
 async function liveFiles() {
   return (await store10.read()).filter((file) => !file.archivedAt).sort((left, right) => right.addedAt.localeCompare(left.addedAt));
+}
+async function findFile(said2) {
+  const needle = said2.toLowerCase().trim();
+  if (!needle) return void 0;
+  const live = await liveFiles();
+  return live.find((file) => file.name.toLowerCase().trim() === needle) ?? live.find((file) => file.name.toLowerCase().includes(needle));
 }
 async function addFile(name, text) {
   const clean = name.trim().slice(0, 120) || "untitled";
@@ -2066,19 +2075,19 @@ async function githubView() {
   };
 }
 async function rerunFailedChecks(repoSaid) {
-  const said = repoSaid.trim().replace(/^https?:\/\/github\.com\//, "");
-  let repo = said;
-  if (!said.includes("/")) {
+  const said2 = repoSaid.trim().replace(/^https?:\/\/github\.com\//, "");
+  let repo = said2;
+  if (!said2.includes("/")) {
     const view = await githubView();
     const known = [...view.prs, ...view.reviewsWanted, ...view.issues].map(
       (item) => item.repo
     );
     const hit = known.find(
-      (full) => full.toLowerCase().endsWith(`/${said.toLowerCase()}`)
+      (full) => full.toLowerCase().endsWith(`/${said2.toLowerCase()}`)
     );
     if (!hit) {
       throw new GithubError(
-        `Not sure which repository "${said}" is. Ask them for the owner and name, as owner/name.`
+        `Not sure which repository "${said2}" is. Ask them for the owner and name, as owner/name.`
       );
     }
     repo = hit;
@@ -2143,8 +2152,8 @@ async function n8nView() {
     recentTotal: recent.data.length
   };
 }
-async function setWorkflowActive(said, active) {
-  const needle = said.toLowerCase().trim();
+async function setWorkflowActive(said2, active) {
+  const needle = said2.toLowerCase().trim();
   const { data } = await call2(
     "/workflows?limit=200"
   );
@@ -2153,12 +2162,12 @@ async function setWorkflowActive(said, active) {
   const candidates = exact.length > 0 ? exact : partial;
   if (candidates.length === 0) {
     throw new N8nError(
-      `No workflow called "${said}". They are: ${data.map((one) => one.name).join(", ") || "none at all"}.`
+      `No workflow called "${said2}". They are: ${data.map((one) => one.name).join(", ") || "none at all"}.`
     );
   }
   if (candidates.length > 1) {
     throw new N8nError(
-      `"${said}" matches more than one: ${candidates.map((one) => one.name).join(", ")}. Ask which they mean.`
+      `"${said2}" matches more than one: ${candidates.map((one) => one.name).join(", ")}. Ask which they mean.`
     );
   }
   const target = candidates[0];
@@ -2651,7 +2660,7 @@ function fallback(concerns) {
   return concerns.map((concern) => concern.text).join(". ") + ".";
 }
 async function compose(concerns) {
-  const said = await getProvider().complete({
+  const said2 = await getProvider().complete({
     system: 'You are Grace, a composed personal assistant, interrupting the person you work for because something wants their attention. Say it in one short spoken sentence \u2014 two at the very most, and only if there are genuinely two things. No preamble, no "just letting you know", no markdown, no lists. Plain speech, understated. Do not add anything you were not given.',
     turns: [
       {
@@ -2663,7 +2672,7 @@ async function compose(concerns) {
     maxOutputTokens: 120,
     fast: true
   });
-  return said.trim() || fallback(concerns);
+  return said2.trim() || fallback(concerns);
 }
 
 // server/tools/ask.ts
@@ -2727,8 +2736,8 @@ async function markFired(id) {
     )
   );
 }
-function parseDuration(said) {
-  const text = said.toLowerCase().replace(/\s+/g, " ").trim();
+function parseDuration(said2) {
+  const text = said2.toLowerCase().replace(/\s+/g, " ").trim();
   let total = 0;
   const pattern = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])/g;
   for (const [, amount, unit] of text.matchAll(pattern)) {
@@ -2882,8 +2891,8 @@ async function workspaces() {
   const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
   return [...saved, ...missing].filter((one) => !one.hidden);
 }
-async function findWorkspace(said) {
-  const needle = said.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+async function findWorkspace(said2) {
+  const needle = said2.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
   if (!needle) return null;
   const all = await workspaces();
   return all.find((one) => one.id === needle || one.name.toLowerCase() === needle) ?? all.find((one) => needle.includes(one.name.toLowerCase())) ?? all.find((one) => one.name.toLowerCase().includes(needle)) ?? null;
@@ -2924,10 +2933,10 @@ function onOpen(handler) {
   deliver2 = handler;
 }
 function toUrl(raw) {
-  const said = raw.trim().replace(/\s+/g, "");
-  if (!said) return null;
-  if (/^https?:\/\//i.test(said)) return said;
-  const host = said.includes(".") ? said : `${said}.com`;
+  const said2 = raw.trim().replace(/\s+/g, "");
+  if (!said2) return null;
+  if (/^https?:\/\//i.test(said2)) return said2;
+  const host = said2.includes(".") ? said2 : `${said2}.com`;
   return /^[a-z0-9.-]+(\/.*)?$/i.test(host) ? `https://${host}` : null;
 }
 var openTools = [
@@ -3242,10 +3251,10 @@ The list above is working material and must not appear in your reply in any form
     },
     required: ["which"],
     run: async (args) => {
-      const said = String(args.which).toLowerCase().trim();
+      const said2 = String(args.which).toLowerCase().trim();
       const events = await upcoming(24 * 30, 100);
-      const exact = events.filter((one) => one.summary.toLowerCase().trim() === said);
-      const partial = events.filter((one) => one.summary.toLowerCase().includes(said));
+      const exact = events.filter((one) => one.summary.toLowerCase().trim() === said2);
+      const partial = events.filter((one) => one.summary.toLowerCase().includes(said2));
       const found = exact.length > 0 ? exact : partial;
       if (found.length === 0) {
         return `Nothing called "${args.which}" in the next month. Ask them which entry they mean.`;
@@ -3354,6 +3363,270 @@ ${note.body}`;
       return hits.map((hit) => `From ${hit.name}:
 "${hit.excerpt}"`).join("\n\n");
     }
+  },
+  {
+    name: "read_document",
+    description: "Read one of the user\u2019s documents in full, by name. Use it when they ask you to summarise, check, rework or pull something out of a document \u2014 search_files finds passages, this gives you the whole thing to work on.",
+    category: "research",
+    parameters: {
+      name: { type: "string", description: "The document\u2019s name, or part of it." }
+    },
+    required: ["name"],
+    run: async (args) => {
+      const found = await findFile(String(args.name));
+      if (!found) {
+        const all = await liveFiles();
+        return all.length === 0 ? "They have not given you any documents to keep." : `Nothing called that. They have: ${all.map((one) => one.name).join(", ")}.`;
+      }
+      return `${found.name}, in full:
+
+${found.text}`;
+    }
+  },
+  {
+    name: "write_document",
+    description: "Write a document and keep it for the user \u2014 a draft, a summary, notes worked up into something readable, a rewrite of one they already have. Use it when they ask you to write something down properly rather than say it. Writing over a name that exists replaces it, so say so if you are replacing something. This never sends anything to anybody.",
+    category: "research",
+    parameters: {
+      name: { type: "string", description: "What to call it." },
+      text: {
+        type: "string",
+        description: "The whole document, written out. Plain text, in the user\u2019s own register \u2014 no markdown headings, no bullet salad."
+      }
+    },
+    required: ["name", "text"],
+    run: async (args) => {
+      const name = String(args.name).trim();
+      const text = String(args.text);
+      if (text.trim().length < 20) return "That is too short to be a document.";
+      const existing = await findFile(name);
+      const saved = await addFile(name, text);
+      return existing && existing.name === saved.name ? `Rewritten "${saved.name}" \u2014 the old version is gone, so tell them it was replaced.` : `Kept as "${saved.name}", ${saved.chars} characters. It is theirs to read in Files.`;
+    }
+  }
+];
+
+// server/lights.ts
+import { randomUUID as randomUUID11 } from "node:crypto";
+var LightError = class extends Error {
+  constructor(message, needsKey = false) {
+    super(message);
+    this.needsKey = needsKey;
+  }
+};
+var BASE3 = "https://openapi.api.govee.com/router/api/v1";
+async function call3(path3, body) {
+  const key = goveeKey();
+  if (!key) {
+    throw new LightError(
+      "The lights are not connected. Govee gives out an API key from the app, under Settings, About Us, Apply for API Key \u2014 it arrives by email. Pasting it into her keys is the whole setup.",
+      true
+    );
+  }
+  const response = await fetch(`${BASE3}${path3}`, {
+    method: body ? "POST" : "GET",
+    headers: { "Govee-API-Key": key, "Content-Type": "application/json" },
+    ...body ? { body: JSON.stringify(body) } : {},
+    signal: AbortSignal.timeout(8e3)
+  });
+  if (response.status === 401 || response.status === 403) {
+    throw new LightError("Govee rejected the key. It may have been revoked.", true);
+  }
+  if (response.status === 429) {
+    throw new LightError("Govee is rate-limiting; try again in a minute.");
+  }
+  if (!response.ok) throw new LightError(`Govee answered ${response.status}.`);
+  const parsed = await response.json();
+  if (parsed.code !== void 0 && parsed.code !== 200 && parsed.code !== 0) {
+    throw new LightError(parsed.message || `Govee refused that (${parsed.code}).`);
+  }
+  return parsed;
+}
+async function lights() {
+  const { data } = await call3(
+    "/user/devices"
+  );
+  return (data ?? []).map((one) => ({
+    sku: one.sku,
+    device: one.device,
+    name: one.deviceName
+  }));
+}
+async function pick(said2) {
+  const all = await lights();
+  if (all.length === 0) {
+    throw new LightError("Govee has no devices on this account.");
+  }
+  const needle = (said2 ?? "").toLowerCase().trim();
+  if (!needle || /^(all|the )?(lights?|everything)$/.test(needle)) return all;
+  const found = all.filter((light) => light.name.toLowerCase().includes(needle));
+  if (found.length === 0) {
+    throw new LightError(
+      `No light called "${said2}". They are: ${all.map((one) => one.name).join(", ")}.`
+    );
+  }
+  return found;
+}
+async function control(light, capability) {
+  await call3("/device/control", {
+    requestId: randomUUID11(),
+    payload: { sku: light.sku, device: light.device, capability }
+  });
+}
+async function setPower(said2, on) {
+  const chosen = await pick(said2);
+  await Promise.all(
+    chosen.map(
+      (light) => control(light, {
+        type: "devices.capabilities.on_off",
+        instance: "powerSwitch",
+        value: on ? 1 : 0
+      })
+    )
+  );
+  return chosen.map((light) => light.name);
+}
+async function setBrightness(said2, percent) {
+  const level = Math.max(1, Math.min(100, Math.round(percent)));
+  const chosen = await pick(said2);
+  await Promise.all(
+    chosen.map(
+      (light) => control(light, {
+        type: "devices.capabilities.range",
+        instance: "brightness",
+        value: level
+      })
+    )
+  );
+  return chosen.map((light) => light.name);
+}
+var COLOURS = {
+  red: [255, 0, 0],
+  orange: [255, 110, 0],
+  amber: [255, 170, 40],
+  yellow: [255, 230, 0],
+  lime: [160, 255, 0],
+  green: [0, 255, 60],
+  teal: [0, 220, 190],
+  cyan: [0, 220, 255],
+  blue: [0, 90, 255],
+  indigo: [75, 0, 220],
+  violet: [150, 60, 255],
+  purple: [180, 0, 255],
+  magenta: [255, 0, 200],
+  pink: [255, 105, 180],
+  white: [255, 255, 255],
+  warm: [255, 180, 110],
+  cool: [200, 225, 255],
+  gold: [255, 200, 70]
+};
+async function setColour(said2, colour) {
+  const wanted = colour.toLowerCase().trim();
+  const rgb = COLOURS[wanted];
+  if (!rgb) {
+    throw new LightError(
+      `I don't have a "${colour}". I know: ${Object.keys(COLOURS).join(", ")}.`
+    );
+  }
+  const chosen = await pick(said2);
+  const packed = rgb[0] << 16 | rgb[1] << 8 | rgb[2];
+  await Promise.all(
+    chosen.map(
+      (light) => control(light, {
+        type: "devices.capabilities.color_setting",
+        instance: "colorRgb",
+        value: packed
+      })
+    )
+  );
+  return { lights: chosen.map((light) => light.name), colour: wanted };
+}
+function lightsConfigured() {
+  return Boolean(goveeKey());
+}
+
+// server/tools/lights.ts
+function said(names) {
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `all ${names.length} of them`;
+}
+async function guarded(work) {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof LightError) return error.message;
+    throw error;
+  }
+}
+var lightTools = [
+  {
+    name: "set_lights",
+    description: "Turn the lights on or off. Use it whenever the user asks for lights on, off, out, or killed, and when they say they are going to bed or leaving the room. Leave the name out to mean all of them.",
+    category: "home",
+    parameters: {
+      on: { type: "boolean", description: "True for on, false for off." },
+      which: {
+        type: "string",
+        description: 'Which light or group, as they said it \u2014 "kitchen", "desk". Leave out for all of them.'
+      }
+    },
+    required: ["on"],
+    run: (args) => guarded(async () => {
+      const on = Boolean(args.on);
+      const names = await setPower(
+        args.which ? String(args.which) : void 0,
+        on
+      );
+      return `${said(names)} ${on ? "on" : "off"}. Say so in a few words.`;
+    })
+  },
+  {
+    name: "dim_lights",
+    description: 'Set how bright the lights are, from 1 to 100. Use it for "dim the lights", "brighter", "all the way up", and work out a sensible number from what they said rather than asking for one.',
+    category: "home",
+    parameters: {
+      percent: { type: "number", description: "Brightness, 1 to 100." },
+      which: { type: "string", description: "Which light. Leave out for all." }
+    },
+    required: ["percent"],
+    run: (args) => guarded(async () => {
+      const percent = Number(args.percent);
+      if (!Number.isFinite(percent)) return "That was not a brightness.";
+      const names = await setBrightness(
+        args.which ? String(args.which) : void 0,
+        percent
+      );
+      return `${said(names)} at ${Math.max(1, Math.min(100, Math.round(percent)))}%.`;
+    })
+  },
+  {
+    name: "colour_lights",
+    description: `Set the colour of the lights. Known colours: ${Object.keys(COLOURS).join(", ")}. Map what they said to the nearest of those \u2014 "make it cosy" is warm, "party" is magenta \u2014 rather than refusing an unlisted word.`,
+    category: "home",
+    parameters: {
+      colour: { type: "string", description: "One of the known colours." },
+      which: { type: "string", description: "Which light. Leave out for all." }
+    },
+    required: ["colour"],
+    run: (args) => guarded(async () => {
+      const { lights: names, colour } = await setColour(
+        args.which ? String(args.which) : void 0,
+        String(args.colour)
+      );
+      return `${said(names)} now ${colour}.`;
+    })
+  },
+  {
+    name: "list_lights",
+    description: "Find out what lights exist and what they are called. Use it when the user asks what you can control, or when a name they used did not match.",
+    category: "research",
+    parameters: {},
+    required: [],
+    run: () => guarded(async () => {
+      const found = await lights();
+      return found.length === 0 ? "No lights on the account." : `Lights: ${found.map((one) => one.name).join(", ")}.`;
+    })
   }
 ];
 
@@ -3822,7 +4095,8 @@ var TOOLS = [
   ...keepTools,
   ...timerTools,
   ...workTools,
-  ...selfTools
+  ...selfTools,
+  ...lightTools
 ];
 function allTools() {
   return TOOLS;
@@ -3859,6 +4133,12 @@ var LABELS = {
   list_watches: "Checked the watches",
   stop_watch: "Stopped a watch",
   search_files: "Looked through your documents",
+  read_document: "Read a document",
+  write_document: "Wrote a document",
+  set_lights: "Changed the lights",
+  dim_lights: "Dimmed the lights",
+  colour_lights: "Recoloured the lights",
+  list_lights: "Checked the lights",
   check_github: "Checked GitHub",
   check_workflows: "Checked the workflows",
   file_mail: "Filed a message",
@@ -3882,18 +4162,18 @@ function describe2(name, result) {
   const short = result.trim().split("\n")[0];
   return short.length > 0 && short.length <= 60 && !short.includes("  ") ? `${label(name)} \u2014 ${short}` : label(name);
 }
-async function runTool(call3) {
-  const tool = findTool(call3.name);
+async function runTool(call4) {
+  const tool = findTool(call4.name);
   if (!tool) {
     return {
-      name: call3.name,
+      name: call4.name,
       ok: false,
-      result: `There is no tool called ${call3.name}.`,
-      summary: `Tried to use a tool that doesn't exist (${call3.name})`
+      result: `There is no tool called ${call4.name}.`,
+      summary: `Tried to use a tool that doesn't exist (${call4.name})`
     };
   }
   const missing = tool.required.filter(
-    (key) => call3.args[key] === void 0 || call3.args[key] === ""
+    (key) => call4.args[key] === void 0 || call4.args[key] === ""
   );
   if (missing.length > 0) {
     return {
@@ -3912,7 +4192,7 @@ async function runTool(call3) {
     };
   }
   try {
-    const result = await tool.run(call3.args);
+    const result = await tool.run(call4.args);
     await noteDeed("acted", describe2(tool.name, result)).catch(() => {
     });
     return { name: tool.name, ok: true, result, summary: describe2(tool.name, result) };
@@ -3947,7 +4227,11 @@ var NEEDS = {
   sleep_playstation: "room",
   open_on_laptop: "room",
   lock_laptop: "room",
-  notify_phone: "phone"
+  notify_phone: "phone",
+  set_lights: "lights",
+  dim_lights: "lights",
+  colour_lights: "lights",
+  list_lights: "lights"
 };
 function declarations(have) {
   const usable = have ? TOOLS.filter((tool) => {
@@ -4000,7 +4284,8 @@ async function available() {
     // report honestly that the laptop is not there — whereas a tool list that
     // changes every time a laptop sleeps would cost the cache discount daily.
     room: Boolean(bridge.seenAt),
-    phone: phones > 0
+    phone: phones > 0,
+    lights: lightsConfigured()
   };
   cached4 = { at: Date.now(), value };
   return value;
@@ -4092,7 +4377,7 @@ When you need a decision and the sensible answers are a short list, use ask_choi
 
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
 
-Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch keeps an eye on a web page and you speak up when it changes \u2014 prefer a keyword to watch for. Be honest about how the watching works: you check roughly once an hour while you are open somewhere, such as the laptop that stays on in their room, not from some place outside it. search_files reaches into documents they have given you to keep.
+Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch keeps an eye on a web page and you speak up when it changes \u2014 prefer a keyword to watch for. Be honest about how the watching works: you check roughly once an hour while you are open somewhere, such as the laptop that stays on in their room, not from some place outside it. search_files finds passages in documents they have given you to keep; read_document gives you a whole one to work on when they ask you to summarise, check or rework it; write_document writes one and keeps it for them \u2014 a draft, a summary, notes worked up into something readable. Use write_document when they want something written down properly rather than said, and tell them it is in Files. Writing over a name that exists replaces it, so say so when you have replaced something.
 
 You can also work on yourself, and you should. remember_this puts something in memory deliberately, rather than hoping the later reflection catches it \u2014 use it the moment they say "remember that". correct_memory marks a belief of yours as overtaken when they put you right; nothing is thrown away, it is filed as no longer true, and if there is a new version, remember it too. set_attention moves you between Open, Work, Focus and Away when they say to leave them alone or that they are back. make_room builds a new room in your own interface from a description of it.
 
@@ -4111,7 +4396,13 @@ They keep the app in rooms \u2014 Grace, Home, Work, Play, and any they have mad
 
 Both only work while they are looking at you. A browser cannot be reached when nobody is on the page, so if they ask you to open something and then leave, say so rather than pretending.
 
-You have no connection to their lights or heating yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
+You never sign in to any website as the user.`;
+var LIGHTS_NOTE = `Their lights are yours to work. set_lights turns them on and off, dim_lights sets brightness, colour_lights sets colour, list_lights tells you what exists and what each one is called. Leave the name out and you mean all of them, which is what "lights off" means.
+
+Act rather than ask. A light is the most undoable thing in the house \u2014 if you get it wrong they say one sentence and it is right again \u2014 so "shall I turn them off?" is the wrong shape every single time. Read the room: going to bed is off, settling down is warm and dim, working is bright, and you can pick a colour from a mood without being given one.
+
+If a name they said matches no light, say which lights there are rather than doing it to all of them. Turning on every light in the house because a word was misheard is how someone stops talking to you at night.`;
+var NO_LIGHTS_NOTE = `You have no connection to their lights or heating. If you are asked, say plainly that it isn't connected rather than pretending \u2014 the lights need a Govee API key pasted into your keys, which they get from the Govee app under Settings, About Us, Apply for API Key.`;
 var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
 
 When they ask you to go and look \u2014 "check my mail", "what's on today", "anything from Sam" \u2014 use check_mail or check_diary rather than answering from the summary below, which may be a minute old. You can also write drafts and put things in their diary.
@@ -4209,6 +4500,7 @@ ${summary}` : null;
     has("playstation") || has("room") ? CONSOLE_NOTE : null,
     has("room") ? LAPTOP_NOTE : null,
     has("phone") ? PHONE_NOTE : null,
+    has("lights") ? LIGHTS_NOTE : NO_LIGHTS_NOTE,
     // Changes rarely.
     address,
     describePolicies(policies),

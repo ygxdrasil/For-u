@@ -1,5 +1,6 @@
 import {bridgeStatus} from './bridge';
 import {githubConfigured} from './github';
+import {lightsConfigured} from './lights';
 import {connection} from './google/oauth';
 import {psnToken} from './keys';
 import {n8nConfigured} from './n8n';
@@ -48,6 +49,7 @@ export async function available(): Promise<Available> {
     // changes every time a laptop sleeps would cost the cache discount daily.
     room: Boolean(bridge.seenAt),
     phone: phones > 0,
+    lights: lightsConfigured(),
   };
 
   cached = {at: Date.now(), value};

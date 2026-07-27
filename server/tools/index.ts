@@ -4,6 +4,7 @@ import {askTools} from './ask';
 import {consoleTools} from './console';
 import {googleTools} from './google';
 import {keepTools} from './keep';
+import {lightTools} from './lights';
 import {openTools} from './open';
 import {playstationTools} from './playstation';
 import {recallTools} from './recall';
@@ -36,6 +37,7 @@ const TOOLS: Tool[] = [
   ...timerTools,
   ...workTools,
   ...selfTools,
+  ...lightTools,
 ];
 
 export function allTools(): Tool[] {
@@ -104,6 +106,12 @@ const LABELS: Record<string, string> = {
   list_watches: 'Checked the watches',
   stop_watch: 'Stopped a watch',
   search_files: 'Looked through your documents',
+  read_document: 'Read a document',
+  write_document: 'Wrote a document',
+  set_lights: 'Changed the lights',
+  dim_lights: 'Dimmed the lights',
+  colour_lights: 'Recoloured the lights',
+  list_lights: 'Checked the lights',
   check_github: 'Checked GitHub',
   check_workflows: 'Checked the workflows',
   file_mail: 'Filed a message',
@@ -238,6 +246,10 @@ const NEEDS: Record<string, keyof Available> = {
   open_on_laptop: 'room',
   lock_laptop: 'room',
   notify_phone: 'phone',
+  set_lights: 'lights',
+  dim_lights: 'lights',
+  colour_lights: 'lights',
+  list_lights: 'lights',
 };
 
 export interface Available {
@@ -249,6 +261,7 @@ export interface Available {
   /** The laptop bridge — the console's switch, and the laptop itself. */
   room: boolean;
   phone: boolean;
+  lights: boolean;
 }
 
 /**

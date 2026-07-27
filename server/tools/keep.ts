@@ -1,4 +1,4 @@
-import {searchFiles} from '../files';
+import {searchFiles, addFile, findFile, liveFiles} from '../files';
 import {liveNotes, readNote, writeNote} from '../notes';
 import {openSituations, resolveSituation, trackSituation} from '../situations';
 import type {Tool} from './types';
@@ -120,6 +120,59 @@ export const keepTools: Tool[] = [
       const hits = await searchFiles(String(args.about));
       if (hits.length === 0) return 'Nothing in their documents mentions that.';
       return hits.map((hit) => `From ${hit.name}:\n"${hit.excerpt}"`).join('\n\n');
+    },
+  },
+  {
+    name: 'read_document',
+    description:
+      'Read one of the user’s documents in full, by name. Use it when they ask ' +
+      'you to summarise, check, rework or pull something out of a document — ' +
+      'search_files finds passages, this gives you the whole thing to work on.',
+    category: 'research',
+    parameters: {
+      name: {type: 'string', description: 'The document’s name, or part of it.'},
+    },
+    required: ['name'],
+    run: async (args) => {
+      const found = await findFile(String(args.name));
+      if (!found) {
+        const all = await liveFiles();
+        return all.length === 0
+          ? 'They have not given you any documents to keep.'
+          : `Nothing called that. They have: ${all.map((one) => one.name).join(', ')}.`;
+      }
+      return `${found.name}, in full:\n\n${found.text}`;
+    },
+  },
+  {
+    name: 'write_document',
+    description:
+      'Write a document and keep it for the user — a draft, a summary, notes ' +
+      'worked up into something readable, a rewrite of one they already have. ' +
+      'Use it when they ask you to write something down properly rather than ' +
+      'say it. Writing over a name that exists replaces it, so say so if you ' +
+      'are replacing something. This never sends anything to anybody.',
+    category: 'research',
+    parameters: {
+      name: {type: 'string', description: 'What to call it.'},
+      text: {
+        type: 'string',
+        description:
+          'The whole document, written out. Plain text, in the user’s own ' +
+          'register — no markdown headings, no bullet salad.',
+      },
+    },
+    required: ['name', 'text'],
+    run: async (args) => {
+      const name = String(args.name).trim();
+      const text = String(args.text);
+      if (text.trim().length < 20) return 'That is too short to be a document.';
+
+      const existing = await findFile(name);
+      const saved = await addFile(name, text);
+      return existing && existing.name === saved.name
+        ? `Rewritten "${saved.name}" — the old version is gone, so tell them it was replaced.`
+        : `Kept as "${saved.name}", ${saved.chars} characters. It is theirs to read in Files.`;
     },
   },
 ];

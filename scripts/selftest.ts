@@ -1427,11 +1427,12 @@ try {
     playstation: false,
     room: false,
     phone: false,
+    lights: false,
   };
   const offeredBare = declarations(unplugged).map((tool) => tool.name);
   const offeredAll = declarations().map((tool) => tool.name);
 
-  for (const gated of ['check_mail', 'check_github', 'pause_workflow', 'lock_laptop']) {
+  for (const gated of ['check_mail', 'check_github', 'pause_workflow', 'lock_laptop', 'set_lights']) {
     assert.ok(offeredAll.includes(gated), `${gated} should exist at all`);
     assert.ok(!offeredBare.includes(gated), `${gated} needs a key and must not be offered`);
   }
@@ -1490,6 +1491,12 @@ try {
     'and the narrowing should be worth doing',
   );
   ok('the prompt describes only the powers she actually has');
+
+  // Lights are the one gated thing that has to say something when it is
+  // absent: "I can't do that" is a worse answer than "that needs a key".
+  assert.match(thisAccount, /Govee API key/, 'unconnected lights explain themselves');
+  assert.doesNotMatch(thisAccount, /dim_lights/, 'without saying she can work them');
+  ok('a power she has not got yet explains how to give it to her');
 
   // ---- whose voice she answers to ----------------------------------------
   // The maths, proved against synthesised voices with known fundamentals and

@@ -40,6 +40,24 @@ export async function liveFiles(): Promise<StoredFile[]> {
     .sort((left, right) => right.addedAt.localeCompare(left.addedAt));
 }
 
+/**
+ * One document by name, however loosely it was said.
+ *
+ * Exact first, so "Notes" cannot be captured by "Notes (old)". Spoken names
+ * arrive approximate, and reading back the wrong document is worse than
+ * failing to find one.
+ */
+export async function findFile(said: string): Promise<StoredFile | undefined> {
+  const needle = said.toLowerCase().trim();
+  if (!needle) return undefined;
+
+  const live = await liveFiles();
+  return (
+    live.find((file) => file.name.toLowerCase().trim() === needle) ??
+    live.find((file) => file.name.toLowerCase().includes(needle))
+  );
+}
+
 export async function addFile(name: string, text: string): Promise<StoredFile> {
   const clean = name.trim().slice(0, 120) || 'untitled';
   const body = text.trim().slice(0, MAX_CHARS);
