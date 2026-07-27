@@ -92,3 +92,46 @@ export async function addAppointment(options: {
 
   return shape(created);
 }
+
+/**
+ * Move or amend something already in the diary.
+ *
+ * A patch, not a replacement, so changing the time cannot quietly drop the
+ * guest list. sendUpdates stays none for the same reason it does above: if
+ * other people are on the invitation, telling them is the user's act, not hers,
+ * and she says so rather than mailing them.
+ *
+ * There is deliberately no counterpart that removes an entry. Nothing she has
+ * is allowed to destroy, and a diary is exactly the kind of record where the
+ * cost of being wrong is only visible weeks later.
+ */
+export async function changeAppointment(
+  id: string,
+  patch: {
+    summary?: string;
+    start?: string;
+    end?: string;
+    location?: string;
+    timeZone?: string;
+  },
+): Promise<Appointment> {
+  const zone =
+    patch.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
+
+  const body: Record<string, unknown> = {};
+  if (patch.summary) body.summary = patch.summary;
+  if (patch.location) body.location = patch.location;
+  if (patch.start) body.start = {dateTime: patch.start, timeZone: zone};
+  if (patch.end) body.end = {dateTime: patch.end, timeZone: zone};
+
+  if (Object.keys(body).length === 0) {
+    throw new Error('nothing to change');
+  }
+
+  const updated = (await googleFetch(
+    `${BASE}/${encodeURIComponent(id)}?sendUpdates=none`,
+    {method: 'PATCH', body: JSON.stringify(body)},
+  )) as RawEvent;
+
+  return shape(updated);
+}

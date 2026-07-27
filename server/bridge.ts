@@ -19,11 +19,13 @@ import {Document} from './store/index';
  * unlike every other key she holds, which is never echoed back at all.
  */
 
-export type BridgeAction = 'wake' | 'sleep' | 'status';
+export type BridgeAction = 'wake' | 'sleep' | 'status' | 'open' | 'lock';
 
 export interface Command {
   id: string;
   action: BridgeAction;
+  /** What the action is about — the address to open, and nothing else so far. */
+  arg?: string;
   at: string;
   /** Set when the laptop has taken it, so it is never run twice. */
   claimedAt?: string;
@@ -95,7 +97,7 @@ export async function bridgeStatus(): Promise<{
 }
 
 /** Leaves an instruction for the laptop, and returns its id to wait on. */
-export async function enqueue(action: BridgeAction): Promise<string> {
+export async function enqueue(action: BridgeAction, arg?: string): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
 
@@ -105,7 +107,7 @@ export async function enqueue(action: BridgeAction): Promise<string> {
       // Anything nobody collected is not worth carrying, and a queue that only
       // grows is a console that suddenly does five things at once.
       ...current.queue.filter((command) => now - new Date(command.at).getTime() < STALE_MS),
-      {id, action, at: new Date(now).toISOString()},
+      {id, action, ...(arg ? {arg} : {}), at: new Date(now).toISOString()},
     ],
   }));
 

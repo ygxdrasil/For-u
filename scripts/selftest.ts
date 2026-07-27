@@ -36,7 +36,9 @@ import {
 } from '../server/memory';
 import {CHUNK_TARGET, chunkForSpeech} from '../shared/speech';
 import {recentDeeds} from '../server/journal';
-import {setMode} from '../server/modes';
+import {labelMail} from '../server/google/gmail';
+import {getMode, setMode} from '../server/modes';
+import {workspaces} from '../server/workspaces';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
@@ -1047,6 +1049,24 @@ try {
   );
   ok('the bridge she hands out is the same program that is tested');
 
+  // The bridge now opens pages on the laptop's own screen, which makes what it
+  // will accept an address a security question rather than a tidiness one:
+  // file:// reaches local documents and the shell schemes start programs.
+  const bridgeSource = readFileSync('bridge/bridge.mjs', 'utf8');
+  assert.match(
+    bridgeSource,
+    /protocol !== 'http:' && address\.protocol !== 'https:'/,
+    'the bridge must open web addresses and nothing else',
+  );
+  assert.doesNotMatch(
+    bridgeSource,
+    // Quoted, so the comment explaining why cmd is avoided does not itself
+    // fail the check that cmd is avoided.
+    /shell: true|['"]cmd\.exe['"]/,
+    'nothing on the laptop may go through a shell',
+  );
+  ok('the bridge opens web addresses only, and never through a shell');
+
   // This is the only route that anything on the open internet can reach
   // without the password, so what it refuses matters more than what it does.
   const refused = await fetch(`${base}/bridge`, {
@@ -1279,6 +1299,91 @@ try {
     'the draft path should exist, or this check is proving nothing',
   );
   ok('no code path exists that sends mail on the user’s behalf');
+
+  // ---- she cannot destroy mail either, now that she can move it ----------
+  // gmail.modify is what lets her file and label. It also carries the ability
+  // to bin, which the user has forbidden outright, so the same style of proof
+  // applies: no endpoint that destroys, and no request that applies the two
+  // labels which amount to destroying.
+  for (const source of googleSources) {
+    assert.doesNotMatch(
+      source,
+      /messages\/[^'"`\s]*\/trash|messages\/[^'"`\s]*\/untrash|method: 'DELETE'/,
+      'nothing in the Google layer may bin mail or remove a diary entry',
+    );
+  }
+  assert.ok(
+    googleSources.some((source) => source.includes('/modify')),
+    'the modify path should exist, or this check is proving nothing',
+  );
+  // And the refusal is real rather than an absence: asked outright to apply
+  // Gmail's bin label, the one function that changes labels says no, before it
+  // reaches the network.
+  await assert.rejects(
+    () => labelMail('any-message', 'TRASH'),
+    /not hers to touch/,
+    'the bin must be refused at the seam, not merely never asked for',
+  );
+  await assert.rejects(() => labelMail('any-message', 'spam'), /not hers to touch/);
+  ok('she can file and label mail, and cannot bin it by any route');
+
+  // ---- the tools she points at herself -----------------------------------
+  const heldBefore = (await getProfile()).entries.length;
+  const kept = await runTool({
+    name: 'remember_this',
+    args: {fact: 'The user keeps a standing desk at the window', kind: 'fact'},
+  });
+  assert.equal(kept.ok, true);
+  assert.equal((await getProfile()).entries.length, heldBefore + 1, 'it should be held');
+
+  const corrected = await runTool({
+    name: 'correct_memory',
+    args: {old: 'The user keeps a standing desk at the window'},
+  });
+  assert.equal(corrected.ok, true);
+  const entry = (await getProfile()).entries.find((one) =>
+    one.text.includes('standing desk'),
+  );
+  assert.ok(entry?.supersededAt, 'a correction marks it overtaken');
+  assert.equal(
+    (await getProfile()).entries.length,
+    heldBefore + 1,
+    'and keeps it — that it used to be true is itself a fact',
+  );
+  ok('she can commit something to memory and correct it, losing nothing');
+
+  const unmatched = await runTool({name: 'correct_memory', args: {old: 'utter invention'}});
+  assert.match(
+    unmatched.result,
+    /Do not claim you changed anything/,
+    'correcting nothing must not read to the model as a success',
+  );
+  ok('a correction that matched nothing says so rather than claiming a change');
+
+  await runTool({name: 'set_attention', args: {mode: 'work'}});
+  assert.equal((await getMode()).mode, 'work', 'she can change her own mode');
+  const badMode = await runTool({name: 'set_attention', args: {mode: 'sleepy'}});
+  assert.match(badMode.result, /no "sleepy" mode/);
+  assert.equal((await getMode()).mode, 'work', 'and an invented one changes nothing');
+  await runTool({name: 'set_attention', args: {mode: 'open'}});
+  ok('she can move herself between attention modes, and refuses invented ones');
+
+  const built = await runTool({
+    name: 'make_room',
+    args: {name: 'Gym', panels: 'day, weather', accent: 'rose'},
+  });
+  assert.equal(built.ok, true);
+  const gym = (await workspaces()).find((room) => room.name === 'Gym');
+  assert.ok(gym, 'the room should be in the rail');
+  assert.deepEqual(gym.panels, ['day', 'weather']);
+
+  // Saying the same name again edits that room rather than making a second one
+  // called Gym, which is what "add the weather to my gym room" has to mean.
+  await runTool({name: 'make_room', args: {name: 'Gym', panels: 'day, weather, notes'}});
+  const gyms = (await workspaces()).filter((room) => room.name === 'Gym');
+  assert.equal(gyms.length, 1, 'a second room of the same name is never right');
+  assert.deepEqual(gyms[0].panels, ['day', 'weather', 'notes']);
+  ok('she can build a room by voice, and naming it again edits it');
 
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {

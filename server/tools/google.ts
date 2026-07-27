@@ -1,5 +1,14 @@
-import {addAppointment, upcoming} from '../google/calendar';
-import {draftReply, readMail, recentMail} from '../google/gmail';
+import {addAppointment, changeAppointment, upcoming} from '../google/calendar';
+import {
+  draftReply,
+  fileMail,
+  labelMail,
+  markRead,
+  markUnread,
+  readMail,
+  recentMail,
+  star,
+} from '../google/gmail';
 import type {Tool} from './types';
 
 /**
@@ -10,8 +19,17 @@ import type {Tool} from './types';
  * that is a request to act, and without a tool she can only say she is unable
  * to — which is what she did.
  *
- * Note what is absent and must stay absent: nothing sends, nothing deletes.
- * A draft goes to the drafts folder and the user presses send.
+ * She now tidies as well as reads: filing a message out of the inbox, labelling
+ * it, starring it, marking it read or unread, and moving something already in
+ * the diary. Every one of those is a gesture the user can undo in a second from
+ * their own client, which is the test for whether it belongs here at all.
+ *
+ * Note what is absent and must stay absent: nothing sends, and nothing
+ * destroys. A draft goes to the drafts folder and the user presses send;
+ * filing takes a message out of the inbox and leaves every word of it in All
+ * Mail; there is no tool that removes a message or a diary entry, because
+ * "never delete anything, ever" is the user's standing instruction and the
+ * cheapest way to keep it is to build no way to break it.
  */
 
 /**
@@ -202,6 +220,128 @@ export const googleTools: Tool[] = [
         location: args.location ? String(args.location) : undefined,
       });
       return `In the diary: ${event.summary}, ${when(event.start, event.allDay)}.`;
+    },
+  },
+  {
+    name: 'file_mail',
+    description:
+      'Take a message out of the inbox — Gmail’s archive. It keeps every word ' +
+      'and stays searchable in All Mail; it simply stops sitting in the inbox. ' +
+      'Use it when the user says they are done with something, have dealt with ' +
+      'it, or asks you to clear or tidy the inbox. Pass the id from check_mail.',
+    category: 'research',
+    parameters: {
+      id: {type: 'string', description: 'The message id from check_mail.'},
+    },
+    required: ['id'],
+    run: async (args) => {
+      await fileMail(String(args.id));
+      return 'Filed out of the inbox. Still in All Mail, still searchable.';
+    },
+  },
+  {
+    name: 'label_mail',
+    description:
+      'Put a label on a message, making the label if it does not exist yet. Use ' +
+      'it when the user wants something filed under a heading — "put that under ' +
+      'taxes". Labelling does not take it out of the inbox; file_mail does that.',
+    category: 'research',
+    parameters: {
+      id: {type: 'string', description: 'The message id from check_mail.'},
+      label: {type: 'string', description: 'The label name, as they said it.'},
+    },
+    required: ['id', 'label'],
+    run: async (args) => {
+      const applied = await labelMail(String(args.id), String(args.label));
+      return `Labelled ${applied}.`;
+    },
+  },
+  {
+    name: 'mark_mail',
+    description:
+      'Change how a message sits in the inbox: mark it read once you have told ' +
+      'the user what it says, unread to bring it back for them later, or star ' +
+      'it to flag it. Pass the id from check_mail.',
+    category: 'research',
+    parameters: {
+      id: {type: 'string', description: 'The message id from check_mail.'},
+      how: {
+        type: 'string',
+        description: 'What to do with it.',
+        values: ['read', 'unread', 'starred'],
+      },
+    },
+    required: ['id', 'how'],
+    run: async (args) => {
+      const id = String(args.id);
+      const how = String(args.how);
+      if (how === 'read') {
+        await markRead(id);
+        return 'Marked read.';
+      }
+      if (how === 'unread') {
+        await markUnread(id);
+        return 'Back in the inbox, unread.';
+      }
+      if (how === 'starred') {
+        await star(id);
+        return 'Starred.';
+      }
+      return `I do not know what "${how}" means for a message.`;
+    },
+  },
+  {
+    name: 'change_diary',
+    description:
+      'Move or amend something already in the user’s calendar — a new time, a ' +
+      'new place, a new name. Say which entry by its title, as they said it. ' +
+      'Nobody else is notified, so if other people are on it, tell the user ' +
+      'they still have to say so. This cannot remove an entry; nothing can.',
+    category: 'calendar',
+    parameters: {
+      which: {
+        type: 'string',
+        description: 'The title of the entry, or enough of it to find it.',
+      },
+      start: {type: 'string', description: 'New start, as ISO 8601.'},
+      end: {type: 'string', description: 'New end, as ISO 8601.'},
+      location: {type: 'string', description: 'New place.'},
+      title: {type: 'string', description: 'New title.'},
+    },
+    required: ['which'],
+    run: async (args) => {
+      const said = String(args.which).toLowerCase().trim();
+      // A month ahead: far enough for "move the dentist", short enough that
+      // matching stays unambiguous.
+      const events = await upcoming(24 * 30, 100);
+
+      const exact = events.filter((one) => one.summary.toLowerCase().trim() === said);
+      const partial = events.filter((one) => one.summary.toLowerCase().includes(said));
+      const found = exact.length > 0 ? exact : partial;
+
+      if (found.length === 0) {
+        return `Nothing called "${args.which}" in the next month. Ask them which entry they mean.`;
+      }
+      if (found.length > 1) {
+        return (
+          `"${args.which}" matches ${found.length} entries: ${found
+            .map((one) => `${one.summary} on ${when(one.start, one.allDay)}`)
+            .join('; ')}. Ask which one before changing anything.`
+        );
+      }
+
+      const updated = await changeAppointment(found[0].id, {
+        summary: args.title ? String(args.title) : undefined,
+        start: args.start ? String(args.start) : undefined,
+        end: args.end ? String(args.end) : undefined,
+        location: args.location ? String(args.location) : undefined,
+      });
+
+      return (
+        `Moved: ${updated.summary} is now ${when(updated.start, updated.allDay)}` +
+        `${updated.location ? ` at ${updated.location}` : ''}.` +
+        `${updated.attendees.length > 0 ? ' Other people are on this one and have not been told.' : ''}`
+      );
     },
   },
 ];

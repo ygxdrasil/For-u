@@ -8,6 +8,7 @@ import {openTools} from './open';
 import {playstationTools} from './playstation';
 import {recallTools} from './recall';
 import {reminderTools} from './reminders';
+import {selfTools} from './self';
 import {timerTools} from './timers';
 import {webTools} from './web';
 import {workTools} from './work';
@@ -34,6 +35,7 @@ const TOOLS: Tool[] = [
   ...keepTools,
   ...timerTools,
   ...workTools,
+  ...selfTools,
 ];
 
 export function allTools(): Tool[] {
@@ -104,6 +106,19 @@ const LABELS: Record<string, string> = {
   search_files: 'Looked through your documents',
   check_github: 'Checked GitHub',
   check_workflows: 'Checked the workflows',
+  file_mail: 'Filed a message',
+  label_mail: 'Labelled a message',
+  mark_mail: 'Marked a message',
+  change_diary: 'Moved something in the diary',
+  pause_workflow: 'Changed a workflow',
+  rerun_checks: 'Set the build running again',
+  open_on_laptop: 'Put a page on the laptop',
+  lock_laptop: 'Locked the laptop',
+  remember_this: 'Kept something in mind',
+  correct_memory: 'Corrected herself',
+  set_attention: 'Changed how much she interrupts',
+  make_room: 'Built a room',
+  notify_phone: 'Reached your phone',
 };
 
 function label(name: string): string {

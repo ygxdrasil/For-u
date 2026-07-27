@@ -5,7 +5,8 @@
  * Grace lives in a data centre. A PlayStation answers to nothing but the local
  * network — waking one is a UDP broadcast, and no amount of cloud will put her
  * on your Wi-Fi. So this runs on the laptop that is already switched on in the
- * room, and does the two things she cannot.
+ * room, and is her hands there: it wakes and sleeps the console, opens a page
+ * on the screen in front of you, and locks the machine when you leave.
  *
  * It only ever dials out. Nothing here listens on a port, so there is no
  * router to reconfigure and nothing on your network is reachable from outside.
@@ -218,7 +219,72 @@ function playactor(command) {
   });
 }
 
-async function carryOut(action) {
+/**
+ * The laptop's own screen, as somewhere she can put things.
+ *
+ * Deliberately not `cmd /c start` and not PowerShell: this laptop is managed,
+ * and the whole reason playactor is invoked through node.exe above is that the
+ * policy blocks batch files outright. explorer.exe is an ordinary executable
+ * that hands a URL to whatever the default browser is, and openers on the other
+ * two platforms are the same shape.
+ *
+ * Only http and https, checked by parsing rather than by pattern. `file://`
+ * would open local documents and the shell schemes can start programs, neither
+ * of which is what "open my bank" means.
+ */
+function openOnScreen(url) {
+  return new Promise((resolve) => {
+    let address;
+    try {
+      address = new URL(url);
+    } catch {
+      resolve({ok: false, detail: `"${url}" is not an address I can open`});
+      return;
+    }
+    if (address.protocol !== 'http:' && address.protocol !== 'https:') {
+      resolve({ok: false, detail: 'only web addresses, nothing else'});
+      return;
+    }
+
+    const opener =
+      process.platform === 'win32'
+        ? ['explorer.exe', [address.href]]
+        : process.platform === 'darwin'
+          ? ['open', [address.href]]
+          : ['xdg-open', [address.href]];
+
+    const child = spawn(opener[0], opener[1], {detached: true, stdio: 'ignore'});
+    child.on('error', (error) =>
+      resolve({ok: false, detail: `could not open it: ${error.message}`}),
+    );
+    // explorer.exe exits non-zero on success often enough that waiting on the
+    // code would report every successful open as a failure. Spawning without
+    // an error is the honest signal available here.
+    child.unref();
+    setTimeout(() => resolve({ok: true, detail: address.hostname}), 400);
+  });
+}
+
+/** Lock the screen and walk away. Nothing closes, nothing is lost. */
+function lockScreen() {
+  return new Promise((resolve) => {
+    const [command, args] =
+      process.platform === 'win32'
+        ? ['rundll32.exe', ['user32.dll,LockWorkStation']]
+        : process.platform === 'darwin'
+          ? ['pmset', ['displaysleepnow']]
+          : ['loginctl', ['lock-session']];
+
+    const child = spawn(command, args, {detached: true, stdio: 'ignore'});
+    child.on('error', (error) =>
+      resolve({ok: false, detail: `could not lock it: ${error.message}`}),
+    );
+    child.unref();
+    setTimeout(() => resolve({ok: true, detail: ''}), 400);
+  });
+}
+
+async function carryOut(action, arg) {
   if (action === 'status') {
     const state = await discover();
     return {ok: state.found, detail: state.found ? `${state.status}` : 'no console answered'};
@@ -226,6 +292,8 @@ async function carryOut(action) {
 
   if (action === 'wake') return playactor('wake');
   if (action === 'sleep') return playactor('standby');
+  if (action === 'open') return openOnScreen(arg ?? '');
+  if (action === 'lock') return lockScreen();
 
   return {ok: false, detail: `I do not know how to ${action}`};
 }
@@ -272,8 +340,11 @@ async function cycle() {
 
   const results = [];
   for (const command of commands) {
-    console.log(`[${new Date().toLocaleTimeString()}] ${command.action}`);
-    const outcome = await carryOut(command.action);
+    console.log(
+      `[${new Date().toLocaleTimeString()}] ${command.action}` +
+        (command.arg ? ` ${command.arg}` : ''),
+    );
+    const outcome = await carryOut(command.action, command.arg);
     console.log(`  ${outcome.ok ? 'done' : `failed: ${outcome.detail}`}`);
     results.push({id: command.id, ok: outcome.ok, detail: outcome.detail});
   }

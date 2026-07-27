@@ -401,7 +401,7 @@ async function bridgeStatus() {
     state: current.state
   };
 }
-async function enqueue(action) {
+async function enqueue(action, arg) {
   const id = randomUUID();
   const now = Date.now();
   await store2.update((current) => ({
@@ -410,7 +410,7 @@ async function enqueue(action) {
       // Anything nobody collected is not worth carrying, and a queue that only
       // grows is a console that suddenly does five things at once.
       ...current.queue.filter((command) => now - new Date(command.at).getTime() < STALE_MS),
-      { id, action, at: new Date(now).toISOString() }
+      { id, action, ...arg ? { arg } : {}, at: new Date(now).toISOString() }
     ]
   }));
   return id;
@@ -1160,6 +1160,7 @@ var TOKEN_URL = "https://oauth2.googleapis.com/token";
 var SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar.events",
   "openid",
   "email"
@@ -1251,6 +1252,13 @@ async function completeSignIn(code, state) {
 }
 async function connection() {
   return store5.read();
+}
+async function missingScopes() {
+  const saved = await store5.read();
+  if (!saved) return [];
+  return SCOPES.filter(
+    (scope) => scope.includes("/auth/") && !saved.scopes.includes(scope)
+  );
 }
 async function disconnect() {
   accessTokens.clear();
@@ -1345,6 +1353,22 @@ async function addAppointment(options) {
   });
   return shape(created);
 }
+async function changeAppointment(id, patch) {
+  const zone = patch.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const body = {};
+  if (patch.summary) body.summary = patch.summary;
+  if (patch.location) body.location = patch.location;
+  if (patch.start) body.start = { dateTime: patch.start, timeZone: zone };
+  if (patch.end) body.end = { dateTime: patch.end, timeZone: zone };
+  if (Object.keys(body).length === 0) {
+    throw new Error("nothing to change");
+  }
+  const updated = await googleFetch(
+    `${BASE}/${encodeURIComponent(id)}?sendUpdates=none`,
+    { method: "PATCH", body: JSON.stringify(body) }
+  );
+  return shape(updated);
+}
 
 // server/google/gmail.ts
 var BASE2 = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -1413,6 +1437,52 @@ async function readMail(id) {
     bulk: false,
     body: findText(message.payload) || (message.snippet ?? "")
   };
+}
+var FORBIDDEN = ["TRASH", "SPAM"];
+async function modify(id, change) {
+  const addLabelIds = change.add ?? [];
+  const removeLabelIds = change.remove ?? [];
+  const banned = [...addLabelIds, ...removeLabelIds].find(
+    (label2) => FORBIDDEN.includes(label2.toUpperCase())
+  );
+  if (banned) throw new Error(`${banned} is not hers to touch`);
+  await googleFetch(`${BASE2}/messages/${id}/modify`, {
+    method: "POST",
+    body: JSON.stringify({ addLabelIds, removeLabelIds })
+  });
+}
+async function fileMail(id) {
+  await modify(id, { remove: ["INBOX"] });
+}
+async function markRead(id) {
+  await modify(id, { remove: ["UNREAD"] });
+}
+async function markUnread(id) {
+  await modify(id, { add: ["UNREAD", "INBOX"] });
+}
+async function star(id) {
+  await modify(id, { add: ["STARRED"] });
+}
+async function labelMail(id, name) {
+  const wanted = name.trim();
+  if (!wanted) throw new Error("a label needs a name");
+  if (FORBIDDEN.includes(wanted.toUpperCase())) {
+    throw new Error(`${wanted} is not hers to touch`);
+  }
+  const existing = await googleFetch(`${BASE2}/labels`);
+  const found = (existing.labels ?? []).find(
+    (label2) => label2.name.toLowerCase() === wanted.toLowerCase()
+  );
+  const labelId = found?.id ?? (await googleFetch(`${BASE2}/labels`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: wanted,
+      labelListVisibility: "labelShow",
+      messageListVisibility: "show"
+    })
+  })).id;
+  await modify(id, { add: [labelId] });
+  return found ? wanted : `${wanted} (new label)`;
 }
 async function draftReply(options) {
   const mime = [
@@ -1935,7 +2005,7 @@ var GithubError = class extends Error {
     this.needsToken = needsToken;
   }
 };
-async function call(path3) {
+async function call(path3, method = "GET") {
   const token2 = githubToken();
   if (!token2) {
     throw new GithubError(
@@ -1944,6 +2014,7 @@ async function call(path3) {
     );
   }
   const response = await fetch(`${API}${path3}`, {
+    method,
     headers: {
       Authorization: `Bearer ${token2}`,
       Accept: "application/vnd.github+json",
@@ -1954,10 +2025,17 @@ async function call(path3) {
   if (response.status === 401) {
     throw new GithubError("GitHub rejected the token. It may have expired.", true);
   }
+  if (response.status === 403) {
+    throw new GithubError(
+      "GitHub refused: the token has no permission for that. Re-running checks needs a token with Actions write on the repository.",
+      true
+    );
+  }
   if (!response.ok) {
     throw new GithubError(`GitHub answered ${response.status}.`);
   }
-  return response.json();
+  const body = await response.text();
+  return body ? JSON.parse(body) : {};
 }
 function shape2(items) {
   return items.slice(0, 8).map((item) => ({
@@ -1987,6 +2065,36 @@ async function githubView() {
     issues: shape2(issues.items)
   };
 }
+async function rerunFailedChecks(repoSaid) {
+  const said = repoSaid.trim().replace(/^https?:\/\/github\.com\//, "");
+  let repo = said;
+  if (!said.includes("/")) {
+    const view = await githubView();
+    const known = [...view.prs, ...view.reviewsWanted, ...view.issues].map(
+      (item) => item.repo
+    );
+    const hit = known.find(
+      (full) => full.toLowerCase().endsWith(`/${said.toLowerCase()}`)
+    );
+    if (!hit) {
+      throw new GithubError(
+        `Not sure which repository "${said}" is. Ask them for the owner and name, as owner/name.`
+      );
+    }
+    repo = hit;
+  }
+  const runs = await call(`/repos/${repo}/actions/runs?status=failure&per_page=1`);
+  const run = runs.workflow_runs?.[0];
+  if (!run) {
+    throw new GithubError(`Nothing has failed recently in ${repo}.`);
+  }
+  await call(`/repos/${repo}/actions/runs/${run.id}/rerun-failed-jobs`, "POST");
+  return {
+    repo,
+    workflow: run.name ?? "the workflow",
+    branch: run.head_branch ?? "its branch"
+  };
+}
 function githubConfigured() {
   return Boolean(githubToken());
 }
@@ -1998,7 +2106,7 @@ var N8nError = class extends Error {
     this.needsKey = needsKey;
   }
 };
-async function call2(path3) {
+async function call2(path3, method = "GET") {
   const { key, url } = n8nAccess();
   if (!key || !url) {
     throw new N8nError(
@@ -2007,6 +2115,7 @@ async function call2(path3) {
     );
   }
   const response = await fetch(`${url}/api/v1${path3}`, {
+    method,
     headers: { "X-N8N-API-KEY": key },
     signal: AbortSignal.timeout(8e3)
   });
@@ -2033,6 +2142,29 @@ async function n8nView() {
     })),
     recentTotal: recent.data.length
   };
+}
+async function setWorkflowActive(said, active) {
+  const needle = said.toLowerCase().trim();
+  const { data } = await call2(
+    "/workflows?limit=200"
+  );
+  const exact = data.filter((one) => one.name.toLowerCase().trim() === needle);
+  const partial = data.filter((one) => one.name.toLowerCase().includes(needle));
+  const candidates = exact.length > 0 ? exact : partial;
+  if (candidates.length === 0) {
+    throw new N8nError(
+      `No workflow called "${said}". They are: ${data.map((one) => one.name).join(", ") || "none at all"}.`
+    );
+  }
+  if (candidates.length > 1) {
+    throw new N8nError(
+      `"${said}" matches more than one: ${candidates.map((one) => one.name).join(", ")}. Ask which they mean.`
+    );
+  }
+  const target = candidates[0];
+  if (target.active === active) return { name: target.name, changed: false };
+  await call2(`/workflows/${target.id}/${active ? "activate" : "deactivate"}`, "POST");
+  return { name: target.name, changed: true };
 }
 function n8nConfigured() {
   const { key, url } = n8nAccess();
@@ -2838,8 +2970,8 @@ var openTools = [
 ];
 
 // server/tools/console.ts
-var NO_LAPTOP = "The laptop bridge is not running, so I have no way onto your home network. Tell the user plainly: the console can only be reached from something in the same house, and that program is not answering.";
-async function send(action, verb) {
+var NO_LAPTOP = "The laptop bridge is not running, so I have no way into the room at all. Tell the user plainly: the console and the laptop can only be reached from a program running in the same house, and it is not answering. Do not imply anything happened.";
+async function send(action, verb, arg) {
   const { online, state } = await bridgeStatus();
   if (!online) return NO_LAPTOP;
   if (action === "wake" && state?.status === "AWAKE") {
@@ -2848,11 +2980,20 @@ async function send(action, verb) {
   if (action === "sleep" && state?.status === "STANDBY") {
     return "The console is already asleep.";
   }
-  const finished = await awaitResult(await enqueue(action));
+  const finished = await awaitResult(await enqueue(action, arg));
   if (!finished) {
-    return `The laptop took the instruction to ${verb} the console but has not reported back yet. Say that it is on its way rather than that it is done.`;
+    return `The laptop took the instruction to ${verb} but has not reported back yet. Say that it is on its way rather than that it is done.`;
   }
-  return finished.ok ? `Done \u2014 the console is ${action === "wake" ? "coming on" : "going to sleep"}.` + (finished.detail ? ` ${finished.detail}` : "") : `That did not work: ${finished.detail || "the laptop gave no reason"}.`;
+  if (!finished.ok) {
+    return `That did not work: ${finished.detail || "the laptop gave no reason"}.`;
+  }
+  const done = {
+    wake: "Done \u2014 the console is coming on.",
+    sleep: "Done \u2014 the console is going to sleep.",
+    open: `Done \u2014 it is up on the laptop screen${finished.detail ? ` (${finished.detail})` : ""}.`,
+    lock: "Done \u2014 the laptop is locked."
+  };
+  return done[action] ?? "Done.";
 }
 var consoleTools = [
   {
@@ -2870,6 +3011,27 @@ var consoleTools = [
     parameters: {},
     required: [],
     run: () => send("sleep", "sleep")
+  },
+  {
+    name: "open_on_laptop",
+    description: 'Put a web page up on the laptop in the room, on its own screen. Use it when the user is not holding a phone and says "pull that up", "put it on the laptop", or "show me". Different from open_pages, which opens a tab in whatever they are looking at now \u2014 this one reaches the machine in the room. Web addresses only.',
+    category: "home",
+    parameters: {
+      url: {
+        type: "string",
+        description: "The full address, including https://."
+      }
+    },
+    required: ["url"],
+    run: (args) => send("open", "open that page", String(args.url ?? ""))
+  },
+  {
+    name: "lock_laptop",
+    description: "Lock the laptop\u2019s screen. Use it when the user says they are leaving, going out, or asks you to lock up. Nothing closes and nothing is lost \u2014 it is the lock screen, not a shutdown.",
+    category: "home",
+    parameters: {},
+    required: [],
+    run: () => send("lock", "lock the laptop")
   }
 ];
 
@@ -3004,6 +3166,100 @@ The list above is working material and must not appear in your reply in any form
         location: args.location ? String(args.location) : void 0
       });
       return `In the diary: ${event.summary}, ${when(event.start, event.allDay)}.`;
+    }
+  },
+  {
+    name: "file_mail",
+    description: "Take a message out of the inbox \u2014 Gmail\u2019s archive. It keeps every word and stays searchable in All Mail; it simply stops sitting in the inbox. Use it when the user says they are done with something, have dealt with it, or asks you to clear or tidy the inbox. Pass the id from check_mail.",
+    category: "research",
+    parameters: {
+      id: { type: "string", description: "The message id from check_mail." }
+    },
+    required: ["id"],
+    run: async (args) => {
+      await fileMail(String(args.id));
+      return "Filed out of the inbox. Still in All Mail, still searchable.";
+    }
+  },
+  {
+    name: "label_mail",
+    description: 'Put a label on a message, making the label if it does not exist yet. Use it when the user wants something filed under a heading \u2014 "put that under taxes". Labelling does not take it out of the inbox; file_mail does that.',
+    category: "research",
+    parameters: {
+      id: { type: "string", description: "The message id from check_mail." },
+      label: { type: "string", description: "The label name, as they said it." }
+    },
+    required: ["id", "label"],
+    run: async (args) => {
+      const applied = await labelMail(String(args.id), String(args.label));
+      return `Labelled ${applied}.`;
+    }
+  },
+  {
+    name: "mark_mail",
+    description: "Change how a message sits in the inbox: mark it read once you have told the user what it says, unread to bring it back for them later, or star it to flag it. Pass the id from check_mail.",
+    category: "research",
+    parameters: {
+      id: { type: "string", description: "The message id from check_mail." },
+      how: {
+        type: "string",
+        description: "What to do with it.",
+        values: ["read", "unread", "starred"]
+      }
+    },
+    required: ["id", "how"],
+    run: async (args) => {
+      const id = String(args.id);
+      const how = String(args.how);
+      if (how === "read") {
+        await markRead(id);
+        return "Marked read.";
+      }
+      if (how === "unread") {
+        await markUnread(id);
+        return "Back in the inbox, unread.";
+      }
+      if (how === "starred") {
+        await star(id);
+        return "Starred.";
+      }
+      return `I do not know what "${how}" means for a message.`;
+    }
+  },
+  {
+    name: "change_diary",
+    description: "Move or amend something already in the user\u2019s calendar \u2014 a new time, a new place, a new name. Say which entry by its title, as they said it. Nobody else is notified, so if other people are on it, tell the user they still have to say so. This cannot remove an entry; nothing can.",
+    category: "calendar",
+    parameters: {
+      which: {
+        type: "string",
+        description: "The title of the entry, or enough of it to find it."
+      },
+      start: { type: "string", description: "New start, as ISO 8601." },
+      end: { type: "string", description: "New end, as ISO 8601." },
+      location: { type: "string", description: "New place." },
+      title: { type: "string", description: "New title." }
+    },
+    required: ["which"],
+    run: async (args) => {
+      const said = String(args.which).toLowerCase().trim();
+      const events = await upcoming(24 * 30, 100);
+      const exact = events.filter((one) => one.summary.toLowerCase().trim() === said);
+      const partial = events.filter((one) => one.summary.toLowerCase().includes(said));
+      const found = exact.length > 0 ? exact : partial;
+      if (found.length === 0) {
+        return `Nothing called "${args.which}" in the next month. Ask them which entry they mean.`;
+      }
+      if (found.length > 1) {
+        return `"${args.which}" matches ${found.length} entries: ${found.map((one) => `${one.summary} on ${when(one.start, one.allDay)}`).join("; ")}. Ask which one before changing anything.`;
+      }
+      const updated = await changeAppointment(found[0].id, {
+        summary: args.title ? String(args.title) : void 0,
+        start: args.start ? String(args.start) : void 0,
+        end: args.end ? String(args.end) : void 0,
+        location: args.location ? String(args.location) : void 0
+      });
+      return `Moved: ${updated.summary} is now ${when(updated.start, updated.allDay)}${updated.location ? ` at ${updated.location}` : ""}.${updated.attendees.length > 0 ? " Other people are on this one and have not been told." : ""}`;
     }
   }
 ];
@@ -3274,6 +3530,146 @@ ${known.join("\n")}`);
   }
 ];
 
+// server/tools/self.ts
+var selfTools = [
+  {
+    name: "remember_this",
+    description: 'Commit something about the user to memory on purpose. Use it when they tell you something worth keeping \u2014 a preference, how they like things done, a fact about their life or work \u2014 and especially when they say "remember that". Do not use it for passing detail, for anything about the current conversation, or for anything they have told you not to keep.',
+    category: "research",
+    parameters: {
+      fact: {
+        type: "string",
+        description: 'One fact, written about the user in the third person, as a full sentence: "The user takes their coffee black". Not a note to self.'
+      },
+      kind: {
+        type: "string",
+        description: "What sort of thing it is.",
+        values: ["preference", "fact", "routine", "goal"]
+      }
+    },
+    required: ["fact"],
+    run: async (args) => {
+      const text = String(args.fact).trim();
+      if (text.length < 4) return "That is too thin to be worth keeping.";
+      const kind = String(args.kind ?? "fact");
+      const added = await remember([
+        {
+          // Said out loud, so it is a stated fact rather than something she
+          // inferred — which is a real distinction the profile keeps.
+          kind: ["preference", "fact", "routine", "goal"].includes(kind) ? kind : "fact",
+          text,
+          source: "stated"
+        }
+      ]);
+      return added.length > 0 ? "Kept. Say so in three or four words, not a sentence about memory." : "Already known \u2014 she has had that for a while. Do not announce it.";
+    }
+  },
+  {
+    name: "correct_memory",
+    description: "Mark something she has been believing as no longer true. Use it when the user corrects you, or says something has changed. Give the old belief roughly as she has been holding it. Nothing is thrown away \u2014 it is marked as overtaken, because that it used to be true still matters. If there is a new version of the fact, also call remember_this.",
+    category: "research",
+    parameters: {
+      old: {
+        type: "string",
+        description: "The belief that is no longer true, as she has been holding it."
+      }
+    },
+    required: ["old"],
+    run: async (args) => {
+      const found = await supersedeEntry(String(args.old));
+      return found ? "Corrected. Acknowledge briefly and move on; do not dwell on it." : "Nothing on file matched that closely enough to correct. Do not claim you changed anything \u2014 say what you do believe and let them put you right.";
+    }
+  },
+  {
+    name: "set_attention",
+    description: "Change how much of the user\u2019s attention you may take. Open is normal, Work is brisk with personal things held back, Focus is answers only and nothing volunteered, Away means they are not at the desk and you take messages. Use it when they say to leave them alone, that they are heads-down, that they are back, or that they are going out.",
+    category: "research",
+    parameters: {
+      mode: {
+        type: "string",
+        description: "Which one to move to.",
+        values: ["open", "work", "focus", "away"]
+      }
+    },
+    required: ["mode"],
+    run: async (args) => {
+      const mode = String(args.mode).toLowerCase();
+      if (!isMode(mode)) {
+        return `There is no "${mode}" mode. They are: open, work, focus, away.`;
+      }
+      await setMode(mode);
+      return `Now in ${MODES[mode].label}. ${MODES[mode].guidance} Confirm in a few words and start behaving that way in this very reply.`;
+    }
+  },
+  {
+    name: "make_room",
+    description: 'Build a new room in her interface, or change one that exists. A room is a name, a colour, the panels it shows and the pages it opens when the user goes there. Use it when they describe a mode or a space they want \u2014 "make me a room for the gym", "add the news to my morning". Saying the name of an existing room changes that one rather than making a second.',
+    category: "research",
+    parameters: {
+      name: { type: "string", description: "What the room is called, one or two words." },
+      panels: {
+        type: "string",
+        description: "Comma-separated, from: day, needs, weather, notes, situations, files, activity, connections, spend, github, workflows, deeds, faculties, attention, playstation, games."
+      },
+      opens: {
+        type: "string",
+        description: "Comma-separated web addresses to open on arrival. Optional."
+      },
+      accent: {
+        type: "string",
+        description: "The colour of the room.",
+        values: ["ice", "amber", "violet", "rose"]
+      },
+      brief: {
+        type: "string",
+        description: "What she should say or check on arrival, in the user\u2019s words. Optional."
+      }
+    },
+    required: ["name"],
+    run: async (args) => {
+      const name = String(args.name).trim().slice(0, 24);
+      if (!name) return "A room needs a name.";
+      const split = (value) => String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+      const existing = (await workspaces()).find(
+        (room) => room.name.toLowerCase() === name.toLowerCase()
+      );
+      const panels = split(args.panels);
+      const opens = split(args.opens);
+      const patch = {
+        ...existing ?? {},
+        ...existing ? { id: existing.id } : {},
+        name,
+        // An empty list from the model means "leave it alone" on an edit, and
+        // "show everything" on a new room — never "show nothing at all".
+        panels: panels.length > 0 ? panels : existing?.panels ?? [],
+        opens: opens.length > 0 ? opens : existing?.opens ?? [],
+        accent: args.accent ?? existing?.accent ?? "ice",
+        ...args.brief ? { brief: String(args.brief) } : {}
+      };
+      await saveWorkspace(patch);
+      return existing ? `${name} updated. It is in the rail already, so say so in a few words.` : `${name} is now a room in the rail. Tell them it is there and what is on it.`;
+    }
+  },
+  {
+    name: "notify_phone",
+    description: "Push a short notice to the user\u2019s phone. Use it only when something genuinely wants them and they are not in front of you \u2014 a build that failed, a timer that finished, something arriving that they asked to be told about. Never for a reply to something they just said, and never for anything that can wait until they next look.",
+    category: "research",
+    parameters: {
+      text: {
+        type: "string",
+        description: "The notice, under about fifteen words. It appears on a lock screen."
+      }
+    },
+    required: ["text"],
+    run: async (args) => {
+      const text = String(args.text).trim().slice(0, 200);
+      if (!text) return "There was nothing to send.";
+      const sent = await notify("Grace", text);
+      return sent > 0 ? `Sent to ${sent} device${sent === 1 ? "" : "s"}.` : "No phone is set up to receive notices yet, so nothing went anywhere. Tell them plainly.";
+    }
+  }
+];
+
 // server/tools/web.ts
 var webTools = [
   {
@@ -3363,6 +3759,53 @@ Report this in a sentence or two, not as a list.` : `Signed in as ${view.login}.
         throw error;
       }
     }
+  },
+  {
+    name: "pause_workflow",
+    description: "Pause or resume one of the user\u2019s n8n workflows by name. Use it when they say to stop, pause, turn off, restart or turn back on a workflow \u2014 and offer it yourself when one is failing over and over, since every run of a broken workflow does the damage again. It cannot run a workflow: n8n offers no way to trigger one from outside, so say so if asked.",
+    category: "research",
+    parameters: {
+      name: { type: "string", description: "The workflow\u2019s name, as they said it." },
+      running: {
+        type: "boolean",
+        description: "True to resume it, false to pause it."
+      }
+    },
+    required: ["name", "running"],
+    run: async (args) => {
+      try {
+        const wanted = Boolean(args.running);
+        const { name, changed } = await setWorkflowActive(String(args.name), wanted);
+        if (!changed) {
+          return `${name} was already ${wanted ? "running" : "paused"}. Nothing to do.`;
+        }
+        return `${name} is ${wanted ? "running again" : "paused"}.`;
+      } catch (error) {
+        if (error instanceof N8nError) return error.message;
+        throw error;
+      }
+    }
+  },
+  {
+    name: "rerun_checks",
+    description: "Set the failed jobs of a repository\u2019s most recent red build running again. Use it when the user asks to re-run CI, the build, the checks, or the tests, or says a failure looks flaky. Only the failed jobs re-run.",
+    category: "research",
+    parameters: {
+      repo: {
+        type: "string",
+        description: "The repository, as owner/name if they said it that way, or just the name if it is one you have already seen in their work."
+      }
+    },
+    required: ["repo"],
+    run: async (args) => {
+      try {
+        const { repo, workflow, branch } = await rerunFailedChecks(String(args.repo));
+        return `Re-running the failed jobs of ${workflow} on ${branch} in ${repo}.`;
+      } catch (error) {
+        if (error instanceof GithubError) return error.message;
+        throw error;
+      }
+    }
   }
 ];
 
@@ -3378,7 +3821,8 @@ var TOOLS = [
   ...openTools,
   ...keepTools,
   ...timerTools,
-  ...workTools
+  ...workTools,
+  ...selfTools
 ];
 function allTools() {
   return TOOLS;
@@ -3416,7 +3860,20 @@ var LABELS = {
   stop_watch: "Stopped a watch",
   search_files: "Looked through your documents",
   check_github: "Checked GitHub",
-  check_workflows: "Checked the workflows"
+  check_workflows: "Checked the workflows",
+  file_mail: "Filed a message",
+  label_mail: "Labelled a message",
+  mark_mail: "Marked a message",
+  change_diary: "Moved something in the diary",
+  pause_workflow: "Changed a workflow",
+  rerun_checks: "Set the build running again",
+  open_on_laptop: "Put a page on the laptop",
+  lock_laptop: "Locked the laptop",
+  remember_this: "Kept something in mind",
+  correct_memory: "Corrected herself",
+  set_attention: "Changed how much she interrupts",
+  make_room: "Built a room",
+  notify_phone: "Reached your phone"
 };
 function label(name) {
   return LABELS[name] ?? name.replace(/_/g, " ");
@@ -3533,11 +3990,17 @@ When someone asks you to remember something, or mentions something they need to 
 
 Two things you have no tools for at all, because the user forbade them: sending anything to anyone, and spending money. There is nothing to attempt. A third: you never delete. Things get marked done, filed, or archived \u2014 never destroyed \u2014 because deleting is the one thing neither of you can undo.
 
+Everything else, you do. The user's line is "only sending and spending" \u2014 so with anything short of those two, act rather than offer. "Shall I file that for you?" is the wrong shape; file it and say you have. If you turn out to be wrong, every one of these is undone by them saying the opposite sentence, and that is exactly why you may act without asking.
+
 When you need a decision and the sensible answers are a short list, use ask_choice: it puts the answers on screen as buttons so they can tap rather than type. Ask the question in your reply as well, in your own words, then stop and wait \u2014 do not guess which they will pick. Use it for a real fork, not for "shall I carry on".
 
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
 
-Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch keeps an eye on a web page and you speak up when it changes \u2014 prefer a keyword to watch for. Be honest about how the watching works: you check roughly once an hour while you are open somewhere, such as the laptop that stays on in their room, not from some place outside it. search_files reaches into documents they have given you to keep. check_github and check_workflows read their code and their n8n; both are read-only and both say plainly when their key is missing.
+Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch keeps an eye on a web page and you speak up when it changes \u2014 prefer a keyword to watch for. Be honest about how the watching works: you check roughly once an hour while you are open somewhere, such as the laptop that stays on in their room, not from some place outside it. search_files reaches into documents they have given you to keep. check_github and check_workflows read their code and their n8n, and both say plainly when their key is missing.
+
+You also act on that work rather than only reporting it. rerun_checks sets the failed jobs of a red build running again \u2014 offer it the moment a failure looks flaky, since re-running is what anyone would do next. pause_workflow stops or restarts one of their n8n workflows by name; when one has failed several times in a row, say you are pausing it and pause it, because every further run repeats the damage. You cannot trigger a workflow to run \u2014 n8n offers no way in from outside \u2014 so say that rather than implying you tried. Nothing you have comments, merges, or closes anything on GitHub: those speak to other people in their name, and stay theirs.
+
+You can also work on yourself, and you should. remember_this puts something in memory deliberately, rather than hoping the later reflection catches it \u2014 use it the moment they say "remember that". correct_memory marks a belief of yours as overtaken when they put you right; nothing is thrown away, it is filed as no longer true, and if there is a new version, remember it too. set_attention moves you between Open, Work, Focus and Away when they say to leave them alone or that they are back. make_room builds a new room in your own interface from a description of it. notify_phone reaches their phone when something genuinely wants them and they are not in front of you \u2014 a failed build, a finished timer \u2014 and never for a reply to something they just said.
 
 You keep every word either of you has ever said, and search_memory reaches into it. You are shown only the recent conversation and a short summary of what came before, so when they refer to something you cannot see \u2014 a decision, a name, something from last week \u2014 search for it rather than saying you don't remember. Saying you have forgotten something that is sitting in the record is the same as being wrong.
 
@@ -3552,6 +4015,8 @@ They keep the app in rooms \u2014 Grace, Home, Work, Play, and any they have mad
 
 Both only work while they are looking at you. A browser cannot be reached when nobody is on the page, so if they ask you to open something and then leave, say so rather than pretending.
 
+The laptop in their room is the exception, and it is the one place you reach without them holding anything. open_on_laptop puts a web page up on that screen \u2014 use it when they say "pull that up" or "show me" with their hands full. lock_laptop locks it when they say they are going out; nothing closes and nothing is lost. Both go through the same small program as the console, so if it is not running, say so plainly rather than claiming the page is up.
+
 You have no connection to their lights or heating yet. If you are asked for that, say plainly that it isn't connected rather than pretending. You never sign in to any website as the user.`;
 var CONNECTED_NOTE = `Their Gmail and Google Calendar are connected, so what follows about their day is real and current.
 
@@ -3565,7 +4030,11 @@ When something does want them, end by asking whether they would like any of it r
 
 When something plainly needs a reply, say so and offer to draft it \u2014 don't wait to be asked, and don't write it silently either. If you are missing anything the reply depends on, ask for that first, with ask_choice where the answer is a short list. Then write it into their drafts folder in their own voice and tell them plainly that it is sitting there, unsent, for them to read and send. You never send it. That limit does not move.
 
-You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place.`;
+You tidy as well as read, without being asked each time. Once you have told them what a message says, mark_mail it read \u2014 leaving a badge on something you have already handled is a small lie. When they say they are done with something, file_mail takes it out of the inbox; it keeps every word and stays in All Mail, so say "filed", not "deleted", because it is not deleted and never will be. label_mail files something under a heading they name, making the label if it is new. mark_mail can also star something or put it back unread when it wants them later.
+
+change_diary moves or renames something already in their calendar. If other people are on that entry, they are not told \u2014 say so, because "moved to Thursday" without that is misleading.
+
+You never send. A draft goes to their drafts folder and they press send, and you say so plainly rather than implying it went. You never delete anything, in either place \u2014 not a message, not a diary entry. There is no tool for it, in either direction.`;
 function describeProfile(profile2) {
   if (profile2.entries.filter((entry) => !entry.supersededAt).length === 0) {
     return `You have not learned anything about the user yet. This is early days \u2014 pay attention and remember what matters.`;
@@ -4088,11 +4557,15 @@ function createApi() {
   );
   api.get("/google-status", guard(async (_req, res) => {
     const saved = await connection();
+    const missing = await missingScopes();
     res.json({
       configured: googleConfigured(),
       connected: Boolean(saved && !saved.brokenReason),
       email: saved?.email ?? null,
-      problem: saved?.brokenReason ?? null,
+      // A connection made before a power was added keeps working for everything
+      // it was granted and fails with an unreadable 403 for the new part. Said
+      // as a problem, it reads as one sentence and one button.
+      problem: saved?.brokenReason ?? (missing.length > 0 ? "She has learned to file and label your mail since you connected. Reconnect once to let her." : null),
       redirectUri: redirectUri()
     });
   }));

@@ -17,17 +17,25 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 /**
  * The narrowest set that does the job.
  *
- * Note what is not here: `gmail.modify`, which would also let her label and
- * bin things, and `https://mail.google.com/`, which would let her delete
- * permanently. Note also what cannot be avoided — Google publishes no
- * draft-only scope, so `gmail.compose` carries the ability to send. That the
- * user's first hard limit therefore cannot be enforced by scope is exactly why
- * it is enforced in code: nothing in this repository calls drafts.send or
- * messages.send, and the self-test fails if that ever stops being true.
+ * `gmail.modify` is here so she can file, label, and mark things read: the
+ * user asked for an assistant that tidies rather than one that reports.
+ *
+ * What is still not here is `https://mail.google.com/`, the scope that permits
+ * permanent erasure. Without it, erasing mail is not merely forbidden — it is
+ * impossible, which is the stronger of the two guarantees and the reason the
+ * scope stays out however capable she becomes.
+ *
+ * Two limits cannot be expressed as scopes and are enforced in code instead.
+ * Google publishes no draft-only scope, so `gmail.compose` carries the ability
+ * to send; and `gmail.modify` carries the ability to move mail to the bin.
+ * Nothing in this repository calls drafts.send, messages.send, or
+ * messages.trash, no request anywhere adds the TRASH or SPAM label, and the
+ * self-test fails if any of that ever stops being true.
  */
 export const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.compose',
+  'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/calendar.events',
   'openid',
   'email',
@@ -187,6 +195,22 @@ export async function completeSignIn(
 
 export async function connection(): Promise<Connection | null> {
   return store.read();
+}
+
+/**
+ * Powers granted since this connection was made.
+ *
+ * A refresh token carries the scopes it was minted with, so adding one to the
+ * list above does nothing at all for an account that connected before — the
+ * request simply fails with a 403 the user has no way to interpret. Naming the
+ * gap lets the interface say "reconnect, she can file your mail now" instead.
+ */
+export async function missingScopes(): Promise<string[]> {
+  const saved = await store.read();
+  if (!saved) return [];
+  return SCOPES.filter(
+    (scope) => scope.includes('/auth/') && !saved.scopes.includes(scope),
+  );
 }
 
 export async function disconnect(): Promise<void> {

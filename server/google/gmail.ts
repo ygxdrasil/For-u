@@ -143,6 +143,106 @@ export async function readMail(id: string): Promise<MailSummary & {body: string}
 }
 
 /**
+ * Labels she is not allowed to apply, at any cost, by any route.
+ *
+ * TRASH is Gmail's bin, and SPAM is a bin with the sender's reputation attached.
+ * Both are reversible for thirty days and then not, which makes them the
+ * closest thing to erasure this file can reach — so the one function that
+ * changes labels refuses them outright rather than trusting every caller above
+ * it to remember. The self-test asserts this list, and that nothing here calls
+ * messages.trash or messages.delete.
+ */
+const FORBIDDEN = ['TRASH', 'SPAM'];
+
+/**
+ * The single seam through which mail is changed.
+ *
+ * Everything below goes through here, so there is exactly one place to read to
+ * know what she can do to a mailbox: add labels, remove labels, and nothing
+ * else. No endpoint that destroys is reachable from this file.
+ */
+async function modify(
+  id: string,
+  change: {add?: string[]; remove?: string[]},
+): Promise<void> {
+  const addLabelIds = change.add ?? [];
+  const removeLabelIds = change.remove ?? [];
+
+  const banned = [...addLabelIds, ...removeLabelIds].find((label) =>
+    FORBIDDEN.includes(label.toUpperCase()),
+  );
+  if (banned) throw new Error(`${banned} is not hers to touch`);
+
+  await googleFetch(`${BASE}/messages/${id}/modify`, {
+    method: 'POST',
+    body: JSON.stringify({addLabelIds, removeLabelIds}),
+  });
+}
+
+/**
+ * File a message out of the inbox.
+ *
+ * This is Gmail's archive, and it is worth being precise about what it is: the
+ * INBOX label comes off and nothing else changes. The message keeps every word,
+ * stays in All Mail, stays searchable, and comes back the moment anyone replies.
+ * It is the tidying gesture, not the destroying one.
+ */
+export async function fileMail(id: string): Promise<void> {
+  await modify(id, {remove: ['INBOX']});
+}
+
+export async function markRead(id: string): Promise<void> {
+  await modify(id, {remove: ['UNREAD']});
+}
+
+/** Back to the top of the inbox, unread, because it wants attention again. */
+export async function markUnread(id: string): Promise<void> {
+  await modify(id, {add: ['UNREAD', 'INBOX']});
+}
+
+export async function star(id: string): Promise<void> {
+  await modify(id, {add: ['STARRED']});
+}
+
+/**
+ * Apply a label by name, making it if it does not exist.
+ *
+ * Gmail's modify endpoint speaks label ids, not names, and a person says
+ * "file that under taxes" — so the name is resolved, and created on first use,
+ * which is how a filing system starts existing without anyone setting it up.
+ */
+export async function labelMail(id: string, name: string): Promise<string> {
+  const wanted = name.trim();
+  if (!wanted) throw new Error('a label needs a name');
+  if (FORBIDDEN.includes(wanted.toUpperCase())) {
+    throw new Error(`${wanted} is not hers to touch`);
+  }
+
+  const existing = (await googleFetch(`${BASE}/labels`)) as {
+    labels?: {id: string; name: string}[];
+  };
+  const found = (existing.labels ?? []).find(
+    (label) => label.name.toLowerCase() === wanted.toLowerCase(),
+  );
+
+  const labelId =
+    found?.id ??
+    (
+      (await googleFetch(`${BASE}/labels`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: wanted,
+          labelListVisibility: 'labelShow',
+          messageListVisibility: 'show',
+        }),
+      })) as {id: string}
+    ).id;
+
+  await modify(id, {add: [labelId]});
+  return found ? wanted : `${wanted} (new label)`;
+}
+
+/**
  * Write a draft. Never send it.
  *
  * This is the whole of Grace's outbound mail capability, and it stops here on

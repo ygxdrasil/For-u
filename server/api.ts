@@ -29,6 +29,7 @@ import {
   connection,
   disconnect,
   googleConfigured,
+  missingScopes,
   redirectUri,
   type GoogleError,
 } from './google/oauth';
@@ -566,11 +567,20 @@ export function createApi(): Express {
   // ---- Google -----------------------------------------------------------
   api.get('/google-status', guard(async (_req, res) => {
     const saved = await connection();
+    const missing = await missingScopes();
     res.json({
       configured: googleConfigured(),
       connected: Boolean(saved && !saved.brokenReason),
       email: saved?.email ?? null,
-      problem: saved?.brokenReason ?? null,
+      // A connection made before a power was added keeps working for everything
+      // it was granted and fails with an unreadable 403 for the new part. Said
+      // as a problem, it reads as one sentence and one button.
+      problem:
+        saved?.brokenReason ??
+        (missing.length > 0
+          ? 'She has learned to file and label your mail since you connected. ' +
+            'Reconnect once to let her.'
+          : null),
       redirectUri: redirectUri(),
     });
   }));
