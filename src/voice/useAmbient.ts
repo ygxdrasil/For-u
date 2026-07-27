@@ -3,7 +3,7 @@ import * as api from '../lib/api';
 import {acquire, MicError, type MicLease} from './mic';
 import {wavFromSamples} from './wav';
 import {keepUpWithSamples, wasYouSamples, type GuardState} from './voiceprint';
-import {heardName} from '../../shared/wake';
+import {heardName, toldToSleep} from '../../shared/wake';
 
 /**
  * Always-on listening.
@@ -145,6 +145,8 @@ interface AmbientOptions {
   speaking?: boolean;
   /** Called when her name is said mid-sentence: stop talking, listen. */
   onBargeIn?: () => void;
+  /** Called when she has been told to leave it, so the room can acknowledge. */
+  onSleep?: () => void;
 }
 
 export function useAmbient({
@@ -155,6 +157,7 @@ export function useAmbient({
   guard,
   speaking,
   onBargeIn,
+  onSleep,
 }: AmbientOptions) {
   const [state, setState] = useState<AmbientState>('off');
   const [level, setLevel] = useState(0);
@@ -168,6 +171,8 @@ export function useAmbient({
   const [ear, setEar] = useState<'none' | 'worklet' | 'frames'>('none');
   /** The last speaker verdict, for the same reason. */
   const [lastScore, setLastScore] = useState<number | null>(null);
+  /** Told to leave it. Shown, because a silent assistant needs a reason. */
+  const [dormant, setDormant] = useState(false);
 
   const leaseRef = useRef<MicLease | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -181,6 +186,9 @@ export function useAmbient({
   const guardRef = useRef<GuardState | null>(null);
   const speakingRef = useRef(false);
   const onBargeInRef = useRef(onBargeIn);
+  const onSleepRef = useRef(onSleep);
+  /** Hearing, and deliberately doing nothing about it until her name. */
+  const dormantRef = useRef(false);
   /** Lets the blob path reach the sample path without a circular dependency. */
   const considerRef = useRef<(samples: Float32Array, rate: number) => Promise<void>>(
     async () => {},
@@ -203,6 +211,9 @@ export function useAmbient({
   useEffect(() => {
     onBargeInRef.current = onBargeIn;
   }, [onBargeIn]);
+  useEffect(() => {
+    onSleepRef.current = onSleep;
+  }, [onSleep]);
 
   const stop = useCallback(() => {
     runningRef.current = false;
@@ -298,7 +309,39 @@ export function useAmbient({
        */
       if (called && onBargeInRef.current) onBargeInRef.current();
 
+      /*
+       * Asleep: she hears, and does nothing about it, until her name.
+       *
+       * Not the microphone switched off — she has to keep listening or there
+       * would be nothing to wake her. What stops is everything after: no
+       * model, no reply, no noise. Saying her name is the whole of what gets
+       * through, and it wakes her in the same breath as the request, so
+       * "Grace, lights on" both wakes her and turns the lights on.
+       *
+       * Worth being straight about the cost: with no wake-word engine running
+       * on the machine, deciding whether her name was said still means
+       * transcribing. Asleep is quiet, not free.
+       */
+      if (dormantRef.current) {
+        if (!called) return;
+        dormantRef.current = false;
+        setDormant(false);
+      }
+
       if (!called && !stillAwake) return;
+
+      // Told to leave it. Answered here rather than by the model: "go to
+      // sleep" followed by a thoughtful paragraph about going to sleep is a
+      // joke at her expense, and this has to work at the moment something has
+      // gone wrong, which is when a round trip is least dependable.
+      if (toldToSleep(request)) {
+        dormantRef.current = true;
+        setDormant(true);
+        awakeUntilRef.current = 0;
+        setAwake(false);
+        onSleepRef.current?.();
+        return;
+      }
 
       // Just her name and nothing else: she is being got, not asked.
       if (!request) {
@@ -665,5 +708,21 @@ export function useAmbient({
     };
   }, [enabled, start, stop]);
 
-  return {state, level, error, awake, heard, strangers, ear, lastScore};
+  return {
+    state,
+    level,
+    error,
+    awake,
+    heard,
+    strangers,
+    ear,
+    lastScore,
+    dormant,
+    // Waking her from the interface, for when saying her name is not
+    // convenient — or when she went to sleep and you changed your mind.
+    rouse: useCallback(() => {
+      dormantRef.current = false;
+      setDormant(false);
+    }, []),
+  };
 }

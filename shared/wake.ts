@@ -90,6 +90,27 @@ function sounds(word: string): boolean {
   return distance(word, limit) <= limit;
 }
 
+/**
+ * Being told to leave it.
+ *
+ * Matched here rather than by asking the model, for two reasons. It has to be
+ * instant — "go to sleep" followed by a considered paragraph about going to
+ * sleep is a joke at her expense — and it has to work when she is being told
+ * to stop *because* something has gone wrong, which is exactly when a round
+ * trip to a model is the least reliable thing to depend on.
+ *
+ * Deliberately a short list of unambiguous phrases. "Sleep" on its own is not
+ * here: "did you sleep well" and "set a sleep timer" both contain it, and
+ * going silent when someone was making conversation is a worse failure than
+ * not catching one phrasing.
+ */
+const SLEEP =
+  /^(go(ing)? (to|back to) sleep|goodnight|good night|stop listening|that('?s| is) (all|it)|nothing else|leave me( alone)?|be quiet|shut up|dismissed|stand down)\b/i;
+
+export function toldToSleep(request: string): boolean {
+  return SLEEP.test(request.trim());
+}
+
 export interface Heard {
   /** Whether her name was in it at all. */
   called: boolean;

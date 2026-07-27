@@ -14,6 +14,8 @@ import {chimeAct, chimeDone, chimeWake} from '../lib/chime.ts';
 import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
 import {usePulse} from './usePulse.ts';
 import {useAmbient} from '../voice/useAmbient.ts';
+
+export type VoiceMode = 'all' | 'answers' | 'off';
 import type {GuardState} from '../voice/voiceprint.ts';
 import {useRecorder} from '../voice/useRecorder.ts';
 import {useSpeech} from '../voice/useSpeech.ts';
@@ -48,7 +50,27 @@ export function useGrace() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [micOn, setMicOn] = useState(false);
-  const [voiceOn, setVoiceOn] = useState(true);
+  /**
+   * How much she says out loud, kept per device.
+   *
+   * Three settings rather than a switch, because the useful one is in the
+   * middle. On a phone, "change the light to red" wants the light changed and
+   * nothing else — being told what you just asked for is noise, and on a phone
+   * in company it is worse than noise. But "what is on today" is a question,
+   * and an answer you cannot hear is not an answer.
+   *
+   * So: everything, answers only, or nothing.
+   */
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>(() => {
+    const saved = localStorage.getItem('grace-voice-mode');
+    if (saved === 'all' || saved === 'answers' || saved === 'off') return saved;
+    return 'all';
+  });
+  useEffect(() => {
+    localStorage.setItem('grace-voice-mode', voiceMode);
+  }, [voiceMode]);
+  const voiceOn = voiceMode !== 'off';
+  const setVoiceOn = useCallback((on: boolean) => setVoiceMode(on ? 'all' : 'off'), []);
 
   const abortRef = useRef<AbortController | null>(null);
   const handleRecordingRef = useRef<(audio: EncodedAudio) => void>(() => {});
@@ -162,13 +184,32 @@ export function useGrace() {
       speech.unlock();
       let landed = false;
 
+      /*
+       * "Answers only", and how it can be decided before she has finished.
+       *
+       * A tool call happens in a round before the words do, so by the time the
+       * first fragment of text arrives it is already known whether she went and
+       * did something. If she did, nothing is spoken as it streams — and at the
+       * end, a reply long enough to be an actual answer is spoken whole while a
+       * short one is left as the light going red and nothing else.
+       *
+       * The length test is what keeps it honest: "put the lights on and tell me
+       * what's in my diary" does both, and the diary half deserves saying out
+       * loud.
+       */
+      let acted = false;
+      const holding = () => speakIt && voiceMode === 'answers' && acted;
+
       try {
         for await (const event of api.streamChat(spoken, via, controller.signal)) {
           if (event.type === 'delta') {
             setStreaming((current) => current + event.text);
-            if (speakIt) speech.push(event.text);
+            if (speakIt && !holding()) speech.push(event.text);
           } else if (event.type === 'done') {
-            if (speakIt) speech.flush();
+            if (speakIt && !holding()) speech.flush();
+            else if (holding() && event.message.text.trim().split(/\s+/).length > 14) {
+              speech.say(event.message.text);
+            }
             const {message} = event;
             setStreaming('');
             setMessages((current) => [...current, message]);
@@ -181,6 +222,7 @@ export function useGrace() {
           } else if (event.type === 'asked') {
             setAsked({question: event.question, choices: event.choices});
           } else if (event.type === 'acted') {
+            acted = true;
             chimeAct();
             setActions((current) => [...current, event.summary]);
           } else if (event.type === 'search-failed') {
@@ -209,7 +251,7 @@ export function useGrace() {
         api.reflect().then(addLearned).catch(() => {});
       }
     },
-    [addLearned, speech, voiceOn],
+    [addLearned, speech, voiceOn, voiceMode],
   );
 
   const handleRequest = useCallback(
@@ -285,6 +327,12 @@ export function useGrace() {
      */
     speaking: speech.speaking,
     onBargeIn: () => speech.cancel(),
+    // One note and nothing else. Being told at length that she is going quiet
+    // is the opposite of what was asked for.
+    onSleep: () => {
+      speech.cancel();
+      chimeDone();
+    },
   });
 
   // One note when she wakes to her name, and not once per frame of hearing it.
@@ -417,6 +465,10 @@ export function useGrace() {
     mode,
     micOn,
     voiceOn,
+    voiceMode,
+    setVoiceMode,
+    volume: speech.volume,
+    setVolume: speech.setVolume,
     ambient,
     guard,
     setGuard,

@@ -42,7 +42,7 @@ import {workspaces} from '../server/workspaces';
 import {buildSystemPrompt} from '../server/persona';
 import {BANDS} from '../shared/voiceprint';
 import {trimTrailingSilence} from '../shared/trim';
-import {heardName} from '../shared/wake';
+import {heardName, toldToSleep} from '../shared/wake';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
@@ -1219,6 +1219,32 @@ try {
   assert.equal(heardName('Grace').request, '', 'her name alone is not a request');
   assert.equal(heardName('Grace!').request, '');
   ok('her name is recognised however it was transcribed, and only her name');
+
+  // Being told to leave it. Decided here rather than by the model, because
+  // "go to sleep" followed by a thoughtful paragraph about going to sleep is a
+  // joke at her expense, and it has to work at the moment something has gone
+  // wrong — which is when a round trip is the least dependable thing there is.
+  for (const said of [
+    'go to sleep',
+    'goodnight',
+    'stop listening',
+    "that's all",
+    'be quiet',
+    'stand down',
+  ]) {
+    assert.equal(toldToSleep(said), true, `"${said}" should send her to sleep`);
+  }
+  // "Sleep" alone is deliberately not enough: going silent when someone was
+  // making conversation is worse than missing one phrasing of the instruction.
+  for (const said of [
+    'did you sleep well',
+    'set a sleep timer for twenty minutes',
+    'what time did I go to sleep last night',
+    'all of the lights',
+  ]) {
+    assert.equal(toldToSleep(said), false, `"${said}" must not silence her`);
+  }
+  ok('she can be told to leave it, and only when she was actually told');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach

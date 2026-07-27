@@ -3,7 +3,7 @@ import {VoicePicker} from './VoicePicker';
 import {WorkspaceEditor} from './WorkspaceEditor';
 import {Keys} from './Keys';
 import {Notifications} from './Notifications';
-import {Clock, Fingerprint, Lock, Moon, Sun, Trash2, X} from 'lucide-react';
+import {Clock, Fingerprint, Lock, Moon, Sun, Trash2, Volume2, X} from 'lucide-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import type {
   ActionCategory,
@@ -66,6 +66,10 @@ interface ProfilePanelProps {
   voiceGuarded?: boolean;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
+  voiceMode?: 'all' | 'answers' | 'off';
+  onVoiceMode?: (mode: 'all' | 'answers' | 'off') => void;
+  volume?: number;
+  onVolume?: (volume: number) => void;
 }
 
 export function ProfilePanel({
@@ -83,6 +87,10 @@ export function ProfilePanel({
   voiceGuarded,
   theme,
   onToggleTheme,
+  voiceMode,
+  onVoiceMode,
+  volume,
+  onVolume,
 }: ProfilePanelProps) {
   const [address, setAddress] = useState(profile.addressAs ?? '');
   const [current, setCurrent] = useState(policies);
@@ -313,6 +321,57 @@ export function ProfilePanel({
                 </button>
               ))}
             </div>
+          </Section>
+        )}
+
+        {onVoiceMode && (
+          <Section title="How much she says">
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  ['all', 'Everything', 'Answers and confirmations'],
+                  ['answers', 'Answers only', 'Does what you asked, silently'],
+                  ['off', 'Silent', 'Never speaks on this device'],
+                ] as const
+              ).map(([id, label, blurb]) => (
+                <button
+                  key={id}
+                  type="button"
+                  title={blurb}
+                  onClick={() => onVoiceMode(id)}
+                  aria-pressed={voiceMode === id}
+                  className={`rounded-lg border px-2 py-2 text-xs transition ${
+                    voiceMode === id
+                      ? 'border-ice/40 bg-ice/15 text-ice'
+                      : 'border-edge bg-surface/40 text-mist hover:border-ice/30'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* The whole reason the middle setting exists. */}
+            <p className="text-[0.65rem] leading-relaxed text-mist/55">
+              On a phone, “answers only” means saying “lights red” turns the light
+              red and nothing else. Questions are still answered out loud.
+            </p>
+
+            {volume !== undefined && onVolume && (
+              <label className="mt-1 flex items-center gap-2 text-xs text-mist">
+                <Volume2 size={13} className="shrink-0" />
+                <input
+                  type="range"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={volume}
+                  onChange={(event) => onVolume(Number(event.target.value))}
+                  className="min-w-0 flex-1 accent-violet-400"
+                />
+                <span className="figure w-8 shrink-0 text-right text-mist/60">
+                  {Math.round(volume * 100)}%
+                </span>
+              </label>
+            )}
           </Section>
         )}
 

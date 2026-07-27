@@ -50,6 +50,26 @@ function scoreVoice(voice: SpeechSynthesisVoice): number {
 
 export function useSpeech(enabled: boolean) {
   const [speaking, setSpeaking] = useState(false);
+  /**
+   * How loud she is, kept per device.
+   *
+   * Per device on purpose: the same person wants her at a murmur on a phone in
+   * a pocket and loud enough to hear from the other side of a room on whatever
+   * is sitting in that room, and a single shared setting would mean choosing
+   * which of those to get wrong.
+   */
+  const [volume, setVolume] = useState(() => {
+    const saved = Number(localStorage.getItem('grace-volume'));
+    return Number.isFinite(saved) && saved > 0 && saved <= 1 ? saved : 1;
+  });
+  const volumeRef = useRef(volume);
+  useEffect(() => {
+    volumeRef.current = volume;
+    localStorage.setItem('grace-volume', String(volume));
+    // Applied to whatever is playing right now, so dragging the slider is
+    // audible as you drag it rather than at the start of the next sentence.
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
   const [blocked, setBlocked] = useState(false);
   const [source, setSource] = useState<VoiceSource>('grace');
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +169,7 @@ export function useSpeech(enabled: boolean) {
         if (synthVoiceRef.current) utterance.voice = synthVoiceRef.current;
         utterance.lang = synthVoiceRef.current?.lang ?? 'en-GB';
         utterance.rate = 1.02;
+        utterance.volume = volumeRef.current;
 
         let settled = false;
         const finish = () => {
@@ -190,6 +211,7 @@ export function useSpeech(enabled: boolean) {
          */
         element.preservesPitch = true;
         element.playbackRate = 1.08;
+        element.volume = volumeRef.current;
 
         const url = URL.createObjectURL(blob);
         let settled = false;
@@ -401,5 +423,19 @@ export function useSpeech(enabled: boolean) {
 
   useEffect(() => cancel, [cancel]);
 
-  return {speaking, supported, blocked, source, error, unlock, say, push, flush, cancel};
+  // Browser synthesis takes volume per utterance rather than on an element.
+  return {
+    speaking,
+    supported,
+    blocked,
+    source,
+    error,
+    volume,
+    setVolume,
+    unlock,
+    say,
+    push,
+    flush,
+    cancel,
+  };
 }

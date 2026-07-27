@@ -1,6 +1,7 @@
 import {
   ExternalLink,
   Headphones,
+  Moon,
   LayoutDashboard,
   Maximize2,
   MessagesSquare,
@@ -365,6 +366,10 @@ export default function App() {
             voiceGuarded={Boolean(grace.guard?.on)}
             theme={theme}
             onToggleTheme={toggleTheme}
+            voiceMode={grace.voiceMode}
+            onVoiceMode={grace.setVoiceMode}
+            volume={grace.volume}
+            onVolume={grace.setVolume}
           />
         )}
       </main>
@@ -528,6 +533,28 @@ export default function App() {
         reported. Three refusals in a row is no longer the television; it is
         somebody trying to be heard, so it says so and offers the two ways out.
       */}
+      {/*
+        Asleep, and saying so.
+
+        A silent assistant needs a reason on screen, or "she stopped working"
+        and "I told her to stop" look identical — which is the same mistake the
+        voice guard made, and it took two rounds to find that one.
+      */}
+      {grace.ambient.dormant && (
+        <div className="glass mx-4 mb-2 flex items-center gap-3 p-3">
+          <Moon size={14} className="accent shrink-0" />
+          <p className="flex-1 text-xs text-slate-200">
+            Asleep. Say “Grace” and I’m back.
+          </p>
+          <button
+            type="button"
+            onClick={grace.ambient.rouse}
+            className="rounded-full border border-ice/40 bg-ice/15 px-3 py-1 text-xs text-ice hover:bg-ice/25">
+            Wake her
+          </button>
+        </div>
+      )}
+
       {grace.ambient.strangers >= 3 && grace.guard?.on && !voiceLockOpen && (
         <div className="glass edge-run fixed inset-x-4 bottom-24 z-30 mx-auto max-w-md p-3 lg:bottom-6">
           <p className="text-xs leading-relaxed text-slate-200">
