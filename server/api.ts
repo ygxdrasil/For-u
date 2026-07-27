@@ -34,11 +34,17 @@ import {
 } from './google/oauth';
 import {greet} from './greeting';
 import {recentDeeds} from './journal';
+import {archiveNote, liveNotes, saveNoteBody} from './notes';
+import {allSituations} from './situations';
+import {GithubError, githubConfigured, githubView} from './github';
+import {N8nError, n8nConfigured, n8nView} from './n8n';
 import {getProvider} from './llm/index';
 import {playstation, psnConfigured, PsnError, recentlyPlayed} from './ps5';
 import {pulse} from './pulse';
 import {devices, notify, publicKey, subscribe} from './push';
 import {onAsk} from './tools/ask';
+import {markFired, runningTimers} from './tools/timers';
+import {liveWatches} from './watch';
 import {onOpen} from './tools/open';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
@@ -294,6 +300,10 @@ export function createApi(): Express {
         'googleClientSecret',
         'ownerEmail',
         'psn',
+        'github',
+        'n8n',
+        'n8nUrl',
+        'voice',
       ] as const;
       const name = String(req.body?.name ?? '') as (typeof allowed)[number];
       if (!allowed.includes(name)) {
@@ -648,6 +658,100 @@ export function createApi(): Express {
     '/bridge-status',
     guard(async (_req, res) => {
       res.json({token: await bridgeToken(), ...(await bridgeStatus())});
+    }),
+  );
+
+  // ---- what she keeps ----------------------------------------------------
+
+  api.get(
+    '/notes',
+    guard(async (_req, res) => {
+      res.json({notes: await liveNotes()});
+    }),
+  );
+
+  /** The user correcting what she wrote — the whole point of notes they can see. */
+  api.post(
+    '/note-save',
+    guard(async (req, res) => {
+      res.json({
+        notes: await saveNoteBody(
+          String(req.body?.id ?? ''),
+          String(req.body?.title ?? ''),
+          String(req.body?.body ?? ''),
+        ),
+      });
+    }),
+  );
+
+  api.post(
+    '/note-archive',
+    guard(async (req, res) => {
+      res.json({notes: await archiveNote(String(req.body?.id ?? ''))});
+    }),
+  );
+
+  api.get(
+    '/situations',
+    guard(async (_req, res) => {
+      res.json({situations: await allSituations()});
+    }),
+  );
+
+  api.get(
+    '/timers',
+    guard(async (_req, res) => {
+      res.json({timers: await runningTimers()});
+    }),
+  );
+
+  /** The client rang it; never ring the same timer twice. */
+  api.post(
+    '/timer-fired',
+    guard(async (req, res) => {
+      await markFired(String(req.body?.id ?? ''));
+      res.json({ok: true});
+    }),
+  );
+
+  api.get(
+    '/watches',
+    guard(async (_req, res) => {
+      res.json({watches: await liveWatches()});
+    }),
+  );
+
+  // ---- the working world -------------------------------------------------
+
+  api.get(
+    '/github-view',
+    guard(async (_req, res) => {
+      if (!githubConfigured()) {
+        res.json({configured: false});
+        return;
+      }
+      try {
+        res.json({configured: true, ...(await githubView())});
+      } catch (error) {
+        const failure = error as GithubError;
+        res.status(failure.needsToken ? 409 : 502).json({error: failure.message});
+      }
+    }),
+  );
+
+  api.get(
+    '/n8n-view',
+    guard(async (_req, res) => {
+      if (!n8nConfigured()) {
+        res.json({configured: false});
+        return;
+      }
+      try {
+        res.json({configured: true, ...(await n8nView())});
+      } catch (error) {
+        const failure = error as N8nError;
+        res.status(failure.needsKey ? 409 : 502).json({error: failure.message});
+      }
     }),
   );
 

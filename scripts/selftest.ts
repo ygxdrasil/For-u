@@ -41,6 +41,7 @@ import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
 import {worthLearningFrom} from '../server/learn';
+import {parseDuration} from '../server/tools/timers';
 import {allReminders, outstanding} from '../server/tools/reminders';
 import type {Backend} from '../server/store/types';
 
@@ -629,6 +630,94 @@ try {
     'with no token she must say it is not connected',
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
+
+  // ---- notes, situations, timers, watches ----------------------------------
+  // The keeping tools: everything appends or files; nothing destroys.
+  const noted = await runTool({
+    name: 'write_note',
+    args: {title: 'Berlin trip', text: 'Flights are booked for March.'},
+  });
+  assert.match(noted.result, /Berlin trip/);
+  await runTool({
+    name: 'write_note',
+    args: {title: 'berlin trip', text: 'Hotel shortlist is down to two.'},
+  });
+  const readBack = await runTool({name: 'read_note', args: {title: 'Berlin'}});
+  assert.match(readBack.result, /Flights are booked/, 'first entry kept');
+  assert.match(readBack.result, /Hotel shortlist/, 'and the second appended');
+  const wrongNote = await runTool({name: 'read_note', args: {title: 'Mars base'}});
+  assert.match(wrongNote.result, /No note called that/);
+  ok('a note is one page per topic, appended to, matched loosely by title');
+
+  await runTool({
+    name: 'track_situation',
+    args: {title: 'the deposit dispute', update: 'Letter sent to the landlord.'},
+  });
+  await runTool({
+    name: 'track_situation',
+    args: {title: 'deposit dispute', update: 'They replied offering half.'},
+  });
+  const open_ = await runTool({name: 'list_situations', args: {}});
+  assert.match(open_.result, /offering half/, 'the latest development is the status');
+  const settled = await runTool({
+    name: 'resolve_situation',
+    args: {title: 'deposit'},
+  });
+  assert.match(settled.result, /resolved/i);
+  assert.match(
+    (await runTool({name: 'list_situations', args: {}})).result,
+    /Nothing open/,
+    'resolved means off the open list',
+  );
+  const {allSituations: allSit} = await import('../server/situations');
+  assert.equal((await allSit()).length, 1, 'but filed, never deleted');
+  ok('a situation carries its history, resolves, and is never destroyed');
+
+  const timed = await runTool({
+    name: 'set_timer',
+    args: {duration: '20 minutes', label: 'pasta'},
+  });
+  assert.match(timed.result, /pasta, 20 minutes/);
+  assert.equal(parseDuration('1h30m'), 90 * 60_000);
+  assert.equal(parseDuration('90 seconds'), 90_000);
+  assert.equal(parseDuration('20'), 20 * 60_000, 'a bare number means minutes');
+  assert.equal(parseDuration('yesterday'), null);
+  const ticking = (await (await call('/timers')).json()) as {timers: {id: string}[]};
+  assert.equal(ticking.timers.length, 1, 'the client can see it to ring it');
+  await call('/timer-fired', {
+    method: 'POST',
+    body: JSON.stringify({id: ticking.timers[0].id}),
+  });
+  assert.equal(
+    ((await (await call('/timers')).json()) as {timers: unknown[]}).timers.length,
+    0,
+    'and a fired timer never rings twice',
+  );
+  ok('timers parse spoken durations, surface to the client, and fire once');
+
+  const badWatch = await runTool({
+    name: 'start_watch',
+    args: {what: 'nothing', url: 'not-a-url'},
+  });
+  assert.equal(badWatch.ok, false, 'a watch without a real address is refused');
+  await runTool({
+    name: 'start_watch',
+    args: {what: 'the restock', url: 'https://example.com/x', keyword: 'in stock'},
+  });
+  assert.match(
+    (await runTool({name: 'list_watches', args: {}})).result,
+    /the restock.*in stock/,
+  );
+  const stopped = await runTool({name: 'stop_watch', args: {what: 'restock'}});
+  assert.match(stopped.result, /Stopped/);
+  ok('watches want a keyword, list honestly, and stop by filing');
+
+  // Read-only integrations degrade to a sentence, not a stack trace.
+  const noGithub = await runTool({name: 'check_github', args: {}});
+  assert.match(noGithub.result, /not connected/i);
+  const noN8n = await runTool({name: 'check_workflows', args: {}});
+  assert.match(noN8n.result, /not connected/i);
+  ok('github and n8n say what is missing rather than guessing');
 
   // ---- the rooms of the app ------------------------------------------------
   // A workspace is data rather than code, which is the whole reason the user

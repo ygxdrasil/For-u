@@ -8,6 +8,7 @@ import {getProvider} from './llm/index';
 import {getMode} from './modes';
 import {notify} from './push';
 import {outstanding} from './tools/reminders';
+import {checkWatches} from './watch';
 import {Document} from './store/index';
 
 /**
@@ -33,7 +34,7 @@ export type Urgency = 'now' | 'soon' | 'whenever';
 
 export interface Concern {
   id: string;
-  kind: 'diary' | 'mail' | 'reminder';
+  kind: 'diary' | 'mail' | 'reminder' | 'watch';
   text: string;
   urgency: Urgency;
   at?: string;
@@ -59,6 +60,18 @@ function minutesUntil(iso: string): number {
 /** The diary, the list, and the inbox — whatever of them is reachable. */
 export async function gather(now = new Date()): Promise<Concern[]> {
   const concerns: Concern[] = [];
+
+  // Watches first: a change is the whole reason a watch exists, and the
+  // check is a fetch-and-compare with no model call, so an unchanged hour
+  // costs nothing but the fetches.
+  for (const change of await checkWatches().catch(() => [])) {
+    concerns.push({
+      id: `watch:${change.id}:${now.toISOString().slice(0, 13)}`,
+      kind: 'watch',
+      text: change.detail,
+      urgency: 'soon',
+    });
+  }
 
   const overdue = await outstanding().catch(() => []);
   for (const reminder of overdue) {

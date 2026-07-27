@@ -3,11 +3,14 @@ import {noteDeed} from '../journal';
 import {askTools} from './ask';
 import {consoleTools} from './console';
 import {googleTools} from './google';
+import {keepTools} from './keep';
 import {openTools} from './open';
 import {playstationTools} from './playstation';
 import {recallTools} from './recall';
 import {reminderTools} from './reminders';
+import {timerTools} from './timers';
 import {webTools} from './web';
+import {workTools} from './work';
 import type {Tool, ToolCall, ToolOutcome} from './types';
 
 /**
@@ -28,6 +31,9 @@ const TOOLS: Tool[] = [
   ...recallTools,
   ...askTools,
   ...openTools,
+  ...keepTools,
+  ...timerTools,
+  ...workTools,
 ];
 
 export function allTools(): Tool[] {
@@ -85,6 +91,18 @@ const LABELS: Record<string, string> = {
   ask_choice: 'Asked you something',
   open_pages: 'Opened a page',
   open_workspace: 'Switched workspace',
+  write_note: 'Added to a note',
+  read_note: 'Read a note back',
+  track_situation: 'Logged a development',
+  list_situations: 'Checked what is open',
+  resolve_situation: 'Marked something settled',
+  set_timer: 'Started a timer',
+  list_timers: 'Checked the timers',
+  start_watch: 'Started watching something',
+  list_watches: 'Checked the watches',
+  stop_watch: 'Stopped a watch',
+  check_github: 'Checked GitHub',
+  check_workflows: 'Checked the workflows',
 };
 
 function label(name: string): string {

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "selftest": "GRACE_DATA_DIR=.selftest-data GEMINI_API_KEY=stub-key GRACE_SECRET=selftest-secret GRACE_PASSWORD=selftest-password tsx scripts/selftest.ts",
+    "selftest": "GRACE_DATA_DIR=.selftest-data GEMINI_API_KEY=stub-key GRACE_SECRET=selftest-secret GRACE_PASSWORD=selftest-password GITHUB_TOKEN= N8N_API_KEY= N8N_URL= PSN_NPSSO= tsx scripts/selftest.ts",
     "build:api": "esbuild server/vercel-entry.ts --bundle --platform=node --format=esm --target=node20 --packages=external --outfile='api/[...path].js'",
     "sync:bridge": "node -e \"require('fs').copyFileSync('bridge/bridge.mjs','public/bridge.mjs')\""
   },

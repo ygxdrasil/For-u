@@ -2,6 +2,7 @@ import {GoogleGenAI} from '@google/genai';
 import type {Content, GenerateContentConfig} from '@google/genai';
 import * as budget from '../budget';
 import {config} from '../config';
+import {chosenVoice} from '../keys';
 import type {
   GenerateRequest,
   LlmProvider,
@@ -231,7 +232,8 @@ export class GeminiProvider implements LlmProvider {
         abortSignal: request.signal,
         responseModalities: ['AUDIO'],
         speechConfig: {
-          voiceConfig: {prebuiltVoiceConfig: {voiceName: config.voice}},
+          // A pasted choice wins over the deploy-time default, like every key.
+          voiceConfig: {prebuiltVoiceConfig: {voiceName: chosenVoice() || config.voice}},
         },
       },
     });

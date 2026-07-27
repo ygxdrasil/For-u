@@ -24,6 +24,14 @@ export interface StoredKeys {
   ownerEmail?: string;
   /** PlayStation's NPSSO cookie. Read-only access to PSN, nothing more. */
   psn?: string;
+  /** GitHub personal access token. She only ever reads. */
+  github?: string;
+  /** n8n API key, for reporting on workflows. */
+  n8n?: string;
+  /** The n8n instance address, since cloud accounts each have their own. */
+  n8nUrl?: string;
+  /** Which prebuilt voice she speaks in. Not a secret, but lives with keys. */
+  voice?: string;
 }
 
 export type KeyName = keyof StoredKeys;
@@ -66,6 +74,21 @@ export function goveeKey(): string {
 
 export function psnToken(): string {
   return cached?.psn || process.env.PSN_NPSSO || '';
+}
+
+export function githubToken(): string {
+  return cached?.github || process.env.GITHUB_TOKEN || '';
+}
+
+export function n8nAccess(): {key: string; url: string} {
+  return {
+    key: cached?.n8n || process.env.N8N_API_KEY || '',
+    url: (cached?.n8nUrl || process.env.N8N_URL || '').replace(/\/+$/, ''),
+  };
+}
+
+export function chosenVoice(): string {
+  return cached?.voice || '';
 }
 
 export function googleClient(): {id: string; secret: string; owner: string} {
@@ -118,6 +141,22 @@ export async function keyStatus() {
       set: Boolean(psnToken()),
       pasted: Boolean(keys.psn),
       hint: tail(keys.psn) ?? (process.env.PSN_NPSSO ? 'from the environment' : null),
+    },
+    github: {
+      set: Boolean(githubToken()),
+      pasted: Boolean(keys.github),
+      hint: tail(keys.github) ?? (process.env.GITHUB_TOKEN ? 'from the environment' : null),
+    },
+    n8n: {
+      set: Boolean(n8nAccess().key),
+      pasted: Boolean(keys.n8n),
+      hint: tail(keys.n8n),
+    },
+    n8nUrl: {
+      set: Boolean(n8nAccess().url),
+      pasted: Boolean(keys.n8nUrl),
+      // An address, not a secret — showing it whole is what catches typos.
+      hint: n8nAccess().url || null,
     },
   };
 }

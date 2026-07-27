@@ -536,6 +536,18 @@ function geminiKey() {
 function psnToken() {
   return cached2?.psn || process.env.PSN_NPSSO || "";
 }
+function githubToken() {
+  return cached2?.github || process.env.GITHUB_TOKEN || "";
+}
+function n8nAccess() {
+  return {
+    key: cached2?.n8n || process.env.N8N_API_KEY || "",
+    url: (cached2?.n8nUrl || process.env.N8N_URL || "").replace(/\/+$/, "")
+  };
+}
+function chosenVoice() {
+  return cached2?.voice || "";
+}
 function googleClient() {
   return {
     id: cached2?.googleClientId || process.env.GOOGLE_CLIENT_ID || "",
@@ -582,6 +594,22 @@ async function keyStatus() {
       set: Boolean(psnToken()),
       pasted: Boolean(keys3.psn),
       hint: tail(keys3.psn) ?? (process.env.PSN_NPSSO ? "from the environment" : null)
+    },
+    github: {
+      set: Boolean(githubToken()),
+      pasted: Boolean(keys3.github),
+      hint: tail(keys3.github) ?? (process.env.GITHUB_TOKEN ? "from the environment" : null)
+    },
+    n8n: {
+      set: Boolean(n8nAccess().key),
+      pasted: Boolean(keys3.n8n),
+      hint: tail(keys3.n8n)
+    },
+    n8nUrl: {
+      set: Boolean(n8nAccess().url),
+      pasted: Boolean(keys3.n8nUrl),
+      // An address, not a secret — showing it whole is what catches typos.
+      hint: n8nAccess().url || null
     }
   };
 }
@@ -671,16 +699,16 @@ var GeminiProvider = class {
         if (calls.length === 0 || !request.onToolCall) return;
         history.push({
           role: "model",
-          parts: calls.map((call) => ({
-            functionCall: { name: call.name, args: call.args }
+          parts: calls.map((call3) => ({
+            functionCall: { name: call3.name, args: call3.args }
           }))
         });
         const results = [];
-        for (const call of calls) {
-          const result = await request.onToolCall(call.name, call.args);
-          request.onToolUsed?.(call.name, result);
+        for (const call3 of calls) {
+          const result = await request.onToolCall(call3.name, call3.args);
+          request.onToolUsed?.(call3.name, result);
           results.push({
-            functionResponse: { name: call.name, response: { result } }
+            functionResponse: { name: call3.name, response: { result } }
           });
         }
         history.push({ role: "user", parts: results });
@@ -756,7 +784,8 @@ ${request.text}` }]
         abortSignal: request.signal,
         responseModalities: ["AUDIO"],
         speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: config.voice } }
+          // A pasted choice wins over the deploy-time default, like every key.
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: chosenVoice() || config.voice } }
         }
       }
     });
@@ -1641,6 +1670,242 @@ ${soon}`,
   return { say: said, message: await record2("grace", said, "text") };
 }
 
+// server/notes.ts
+import { randomUUID as randomUUID5 } from "node:crypto";
+var store10 = new Document("notes", () => []);
+async function liveNotes() {
+  const all = await store10.read();
+  return all.filter((note) => !note.archivedAt).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+function match(notes, title) {
+  const needle = title.toLowerCase().trim();
+  return notes.find((note) => note.title.toLowerCase() === needle) ?? notes.find((note) => note.title.toLowerCase().includes(needle)) ?? notes.find((note) => needle.includes(note.title.toLowerCase()));
+}
+async function writeNote(title, text, mode = "append") {
+  const clean = title.trim().slice(0, 80);
+  const body = text.trim();
+  if (!clean || !body) throw new Error("a note needs a title and something to say");
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  let saved = null;
+  await store10.update((notes) => {
+    const existing = match(
+      notes.filter((note) => !note.archivedAt),
+      clean
+    );
+    if (existing) {
+      saved = {
+        ...existing,
+        body: mode === "replace" ? body : `${existing.body}
+
+${dateLine(now)} ${body}`,
+        updatedAt: now
+      };
+      return notes.map((note) => note.id === existing.id ? saved : note);
+    }
+    saved = {
+      id: randomUUID5(),
+      title: clean,
+      body: `${dateLine(now)} ${body}`,
+      createdAt: now,
+      updatedAt: now
+    };
+    return [...notes, saved];
+  });
+  return saved;
+}
+function dateLine(iso) {
+  return `[${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}]`;
+}
+async function readNote(title) {
+  return match(await liveNotes(), title.trim()) ?? null;
+}
+async function saveNoteBody(id, title, body) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await store10.update(
+    (notes) => notes.map(
+      (note) => note.id === id ? { ...note, title: title.trim().slice(0, 80), body: body.trim(), updatedAt: now } : note
+    )
+  );
+  return liveNotes();
+}
+async function archiveNote(id) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await store10.update(
+    (notes) => notes.map((note) => note.id === id ? { ...note, archivedAt: now } : note)
+  );
+  return liveNotes();
+}
+
+// server/situations.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
+var store11 = new Document("situations", () => []);
+function allSituations() {
+  return store11.read();
+}
+async function openSituations() {
+  const all = await store11.read();
+  return all.filter((one) => one.status === "open").sort((left, right) => lastMove(right).localeCompare(lastMove(left)));
+}
+function lastMove(one) {
+  return one.updates[one.updates.length - 1]?.at ?? one.createdAt;
+}
+function find(list, title) {
+  const needle = title.toLowerCase().trim();
+  return list.find((one) => one.title.toLowerCase() === needle) ?? list.find((one) => one.title.toLowerCase().includes(needle)) ?? list.find((one) => needle.includes(one.title.toLowerCase()));
+}
+async function trackSituation(title, update) {
+  const clean = title.trim().slice(0, 80);
+  const text = update.trim();
+  if (!clean || !text) throw new Error("a situation needs a title and an update");
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  let saved = null;
+  await store11.update((list) => {
+    const existing = find(
+      list.filter((one) => one.status === "open"),
+      clean
+    );
+    if (existing) {
+      saved = { ...existing, updates: [...existing.updates, { at: now, text }] };
+      return list.map((one) => one.id === existing.id ? saved : one);
+    }
+    saved = {
+      id: randomUUID6(),
+      title: clean,
+      status: "open",
+      updates: [{ at: now, text }],
+      createdAt: now
+    };
+    return [...list, saved];
+  });
+  return saved;
+}
+async function resolveSituation(title) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  let resolved = null;
+  await store11.update((list) => {
+    const one = find(
+      list.filter((s) => s.status === "open"),
+      title.trim()
+    );
+    if (!one) return list;
+    resolved = { ...one, status: "resolved", resolvedAt: now };
+    return list.map((s) => s.id === one.id ? resolved : s);
+  });
+  return resolved;
+}
+
+// server/github.ts
+var API = "https://api.github.com";
+var GithubError = class extends Error {
+  constructor(message, needsToken = false) {
+    super(message);
+    this.needsToken = needsToken;
+  }
+};
+async function call(path3) {
+  const token2 = githubToken();
+  if (!token2) {
+    throw new GithubError(
+      "GitHub is not connected. A personal access token pasted into her keys fixes that.",
+      true
+    );
+  }
+  const response = await fetch(`${API}${path3}`, {
+    headers: {
+      Authorization: `Bearer ${token2}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    signal: AbortSignal.timeout(8e3)
+  });
+  if (response.status === 401) {
+    throw new GithubError("GitHub rejected the token. It may have expired.", true);
+  }
+  if (!response.ok) {
+    throw new GithubError(`GitHub answered ${response.status}.`);
+  }
+  return response.json();
+}
+function shape2(items) {
+  return items.slice(0, 8).map((item) => ({
+    title: item.title,
+    repo: item.repository_url.split("/repos/")[1] ?? "",
+    url: item.html_url
+  }));
+}
+async function githubView() {
+  const me = await call("/user");
+  const login = me.login;
+  const [prs, reviews, issues] = await Promise.all([
+    call(
+      `/search/issues?q=${encodeURIComponent(`is:pr is:open author:${login}`)}&per_page=8`
+    ),
+    call(
+      `/search/issues?q=${encodeURIComponent(`is:pr is:open review-requested:${login}`)}&per_page=8`
+    ),
+    call(
+      `/search/issues?q=${encodeURIComponent(`is:issue is:open assignee:${login}`)}&per_page=8`
+    )
+  ]);
+  return {
+    login,
+    prs: shape2(prs.items),
+    reviewsWanted: shape2(reviews.items),
+    issues: shape2(issues.items)
+  };
+}
+function githubConfigured() {
+  return Boolean(githubToken());
+}
+
+// server/n8n.ts
+var N8nError = class extends Error {
+  constructor(message, needsKey = false) {
+    super(message);
+    this.needsKey = needsKey;
+  }
+};
+async function call2(path3) {
+  const { key, url } = n8nAccess();
+  if (!key || !url) {
+    throw new N8nError(
+      "n8n is not connected. It needs two things pasted into her keys: the instance address, and an API key from Settings, n8n API.",
+      true
+    );
+  }
+  const response = await fetch(`${url}/api/v1${path3}`, {
+    headers: { "X-N8N-API-KEY": key },
+    signal: AbortSignal.timeout(8e3)
+  });
+  if (response.status === 401) {
+    throw new N8nError("n8n rejected the key. It may have been revoked.", true);
+  }
+  if (!response.ok) throw new N8nError(`n8n answered ${response.status}.`);
+  return response.json();
+}
+async function n8nView() {
+  const [workflows, failed, recent] = await Promise.all([
+    call2("/workflows?limit=100"),
+    call2(
+      "/executions?status=error&limit=10"
+    ),
+    call2("/executions?limit=50")
+  ]);
+  return {
+    active: workflows.data.filter((one) => one.active).length,
+    inactive: workflows.data.filter((one) => !one.active).length,
+    failures: failed.data.map((one) => ({
+      workflow: one.workflowData?.name ?? "unnamed workflow",
+      at: one.startedAt
+    })),
+    recentTotal: recent.data.length
+  };
+}
+function n8nConfigured() {
+  const { key, url } = n8nAccess();
+  return Boolean(key && url);
+}
+
 // server/ps5.ts
 var AUTH = "https://ca.account.sony.com/api/authz/v3/oauth";
 var PROFILE = "https://m.np.playstation.com/api/userProfile/v1/internal/users";
@@ -1897,6 +2162,86 @@ async function notify(title, body) {
   return sent;
 }
 
+// server/watch.ts
+import { createHash as createHash2, randomUUID as randomUUID7 } from "node:crypto";
+var store12 = new Document("watches", () => []);
+async function liveWatches() {
+  return (await store12.read()).filter((watch) => !watch.archivedAt);
+}
+async function startWatch(what, url, keyword) {
+  const clean = what.trim().slice(0, 100);
+  const address = url.trim();
+  if (!clean || !/^https?:\/\//i.test(address)) {
+    throw new Error("a watch needs something to watch and a full https address");
+  }
+  const watch = {
+    id: randomUUID7(),
+    what: clean,
+    url: address,
+    keyword: keyword?.trim() || void 0,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await store12.update((list) => [...list, watch]);
+  return watch;
+}
+async function stopWatch(what) {
+  const needle = what.toLowerCase().trim();
+  let found = false;
+  await store12.update(
+    (list) => list.map((watch) => {
+      if (watch.archivedAt || !watch.what.toLowerCase().includes(needle)) return watch;
+      found = true;
+      return { ...watch, archivedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    })
+  );
+  return found;
+}
+function textOf(html) {
+  return html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+async function observe(watch) {
+  try {
+    const response = await fetch(watch.url, {
+      headers: { "user-agent": "Mozilla/5.0 (Grace watch)" },
+      signal: AbortSignal.timeout(8e3)
+    });
+    if (!response.ok) return null;
+    const text = textOf(await response.text());
+    if (watch.keyword) {
+      return text.includes(watch.keyword.toLowerCase()) ? "present" : "absent";
+    }
+    return createHash2("sha256").update(text).digest("hex").slice(0, 16);
+  } catch {
+    return null;
+  }
+}
+async function checkWatches() {
+  const watches = await liveWatches();
+  if (watches.length === 0) return [];
+  const changes = [];
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const readings = await Promise.all(
+    watches.map(async (watch) => ({ watch, reading: await observe(watch) }))
+  );
+  await store12.update(
+    (list) => list.map((stored) => {
+      const found = readings.find((r) => r.watch.id === stored.id);
+      if (!found || found.reading === null) return stored;
+      const { reading } = found;
+      if (stored.last !== void 0 && stored.last !== reading) {
+        changes.push({
+          id: stored.id,
+          what: stored.what,
+          url: stored.url,
+          detail: stored.keyword ? reading === "present" ? `"${stored.keyword}" now appears on the page for ${stored.what}` : `"${stored.keyword}" has gone from the page for ${stored.what}` : `${stored.what} changed`
+        });
+      }
+      return { ...stored, last: reading, lastCheckedAt: now };
+    })
+  );
+  return changes;
+}
+
 // server/pulse.ts
 var seen = new Document("pulse", () => ({ raised: {} }));
 var IMMINENT_MINUTES = 45;
@@ -1906,6 +2251,14 @@ function minutesUntil(iso) {
 }
 async function gather(now = /* @__PURE__ */ new Date()) {
   const concerns = [];
+  for (const change of await checkWatches().catch(() => [])) {
+    concerns.push({
+      id: `watch:${change.id}:${now.toISOString().slice(0, 13)}`,
+      kind: "watch",
+      text: change.detail,
+      urgency: "soon"
+    });
+  }
   const overdue = await outstanding().catch(() => []);
   for (const reminder of overdue) {
     if (!reminder.due) continue;
@@ -2090,8 +2443,129 @@ var askTools = [
   }
 ];
 
+// server/tools/timers.ts
+import { randomUUID as randomUUID8 } from "node:crypto";
+var store13 = new Document("timers", () => []);
+async function runningTimers() {
+  const now = Date.now();
+  return (await store13.read()).filter((timer) => !timer.firedAt && new Date(timer.at).getTime() > now - 6e4).sort((left, right) => left.at.localeCompare(right.at));
+}
+async function markFired(id) {
+  await store13.update(
+    (list) => list.map(
+      (timer) => timer.id === id ? { ...timer, firedAt: (/* @__PURE__ */ new Date()).toISOString() } : timer
+    )
+  );
+}
+function parseDuration(said) {
+  const text = said.toLowerCase().replace(/\s+/g, " ").trim();
+  let total = 0;
+  const pattern = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])/g;
+  for (const [, amount, unit] of text.matchAll(pattern)) {
+    const value = Number(amount);
+    if (unit.startsWith("h")) total += value * 36e5;
+    else if (unit.startsWith("m")) total += value * 6e4;
+    else total += value * 1e3;
+  }
+  if (total === 0 && /^\d+$/.test(text)) total = Number(text) * 6e4;
+  return total > 0 && total <= 24 * 36e5 ? total : null;
+}
+var timerTools = [
+  {
+    name: "set_timer",
+    description: 'Start a countdown that rings when it ends \u2014 "20 minutes for the pasta", "an hour". For short, soon things. Anything tied to a date or a time of day is a reminder instead.',
+    category: "calendar",
+    parameters: {
+      duration: {
+        type: "string",
+        description: 'How long, as said: "20 minutes", "1h30m", "90 seconds".'
+      },
+      label: { type: "string", description: "What it is for, a word or two." }
+    },
+    required: ["duration"],
+    run: async (args) => {
+      const ms = parseDuration(String(args.duration ?? ""));
+      if (!ms) return "I could not make a length of time out of that.";
+      const timer = {
+        id: randomUUID8(),
+        label: String(args.label ?? "").trim() || "timer",
+        at: new Date(Date.now() + ms).toISOString(),
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      await store13.update((list) => [...list, timer]);
+      const minutes = Math.round(ms / 6e4);
+      return `Timer set: ${timer.label}, ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${Math.round(ms / 1e3)} seconds`}.`;
+    }
+  },
+  {
+    name: "list_timers",
+    description: "What timers are running and how long each has left.",
+    category: "research",
+    parameters: {},
+    required: [],
+    run: async () => {
+      const running = await runningTimers();
+      if (running.length === 0) return "No timers running.";
+      const now = Date.now();
+      return running.map((timer) => {
+        const left = Math.max(0, Math.round((new Date(timer.at).getTime() - now) / 6e4));
+        return `- ${timer.label}: about ${left} minute${left === 1 ? "" : "s"} left`;
+      }).join("\n");
+    }
+  },
+  {
+    name: "start_watch",
+    description: 'Watch a web page and speak up when it changes \u2014 a price, availability, a status page, a release. Checked hourly. Far more reliable with a keyword: watching whether "in stock" appears beats watching a whole page, which half the web rewrites on every load. Ask for a keyword if one is not obvious.',
+    category: "research",
+    parameters: {
+      what: { type: "string", description: "What is being watched, in their words." },
+      url: { type: "string", description: "The full https address of the page." },
+      keyword: {
+        type: "string",
+        description: "A word or phrase whose appearance or disappearance matters."
+      }
+    },
+    required: ["what", "url"],
+    run: async (args) => {
+      const watch = await startWatch(
+        String(args.what),
+        String(args.url),
+        args.keyword ? String(args.keyword) : void 0
+      );
+      return `Watching ${watch.what}, checked every hour${watch.keyword ? ` for "${watch.keyword}"` : ""}. I will say when it moves.`;
+    }
+  },
+  {
+    name: "list_watches",
+    description: "What is being watched for changes right now.",
+    category: "research",
+    parameters: {},
+    required: [],
+    run: async () => {
+      const watches = await liveWatches();
+      if (watches.length === 0) return "Nothing being watched.";
+      return watches.map(
+        (watch) => `- ${watch.what}${watch.keyword ? ` (for "${watch.keyword}")` : ""}${watch.lastCheckedAt ? "" : " \u2014 not checked yet"}`
+      ).join("\n");
+    }
+  },
+  {
+    name: "stop_watch",
+    description: "Stop watching something. It is filed, not deleted.",
+    category: "research",
+    parameters: {
+      what: { type: "string", description: "Which watch to stop, by its wording." }
+    },
+    required: ["what"],
+    run: async (args) => {
+      const stopped = await stopWatch(String(args.what));
+      return stopped ? "Stopped watching it." : "Nothing being watched matches that.";
+    }
+  }
+];
+
 // server/workspaces.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 var DEFAULTS = [
   {
     id: "grace",
@@ -2132,9 +2606,9 @@ var DEFAULTS = [
     blurb: "The console, and what you have been playing."
   }
 ];
-var store10 = new Document("workspaces", () => DEFAULTS);
+var store14 = new Document("workspaces", () => DEFAULTS);
 async function workspaces() {
-  const saved = await store10.read();
+  const saved = await store14.read();
   const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
   return [...saved, ...missing].filter((one) => !one.hidden);
 }
@@ -2146,7 +2620,7 @@ async function findWorkspace(said) {
 }
 async function saveWorkspace(patch) {
   const clean = {
-    id: patch.id?.trim() || randomUUID5().slice(0, 8),
+    id: patch.id?.trim() || randomUUID9().slice(0, 8),
     name: (patch.name ?? "Untitled").trim().slice(0, 24),
     icon: patch.icon ?? "sparkles",
     accent: patch.accent ?? "ice",
@@ -2155,7 +2629,7 @@ async function saveWorkspace(patch) {
     blurb: patch.blurb?.slice(0, 80),
     brief: patch.brief?.slice(0, 200)
   };
-  await store10.update((current) => {
+  await store14.update((current) => {
     const rest = current.filter((one) => one.id !== clean.id);
     const at = current.findIndex((one) => one.id === clean.id);
     if (at < 0) return [...current, clean];
@@ -2166,7 +2640,7 @@ async function saveWorkspace(patch) {
   return workspaces();
 }
 async function hideWorkspace(id) {
-  await store10.update((current) => {
+  await store14.update((current) => {
     const known = current.some((one) => one.id === id);
     const base = known ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
     return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
@@ -2396,6 +2870,84 @@ The list above is working material and must not appear in your reply in any form
   }
 ];
 
+// server/tools/keep.ts
+var keepTools = [
+  {
+    name: "write_note",
+    description: "Add to a project note \u2014 an ongoing topic like a trip, a piece of work, a plan. Use it when the user tells you where something has got to, or asks you to jot something down about a subject. Match an existing note by title, or a new one is started. It appends by default.",
+    category: "research",
+    parameters: {
+      title: { type: "string", description: "The project or topic, short." },
+      text: { type: "string", description: "What to add, in a sentence or two." }
+    },
+    required: ["title", "text"],
+    run: async (args) => {
+      const note = await writeNote(String(args.title), String(args.text));
+      return `Noted under "${note.title}".`;
+    }
+  },
+  {
+    name: "read_note",
+    description: "Read back a project note in full. Use it when the user asks where something stands, or what you have on a topic.",
+    category: "research",
+    parameters: {
+      title: { type: "string", description: "The note to read." }
+    },
+    required: ["title"],
+    run: async (args) => {
+      const note = await readNote(String(args.title));
+      if (!note) {
+        const have = (await liveNotes()).map((one) => one.title).join(", ");
+        return have ? `No note called that. You have: ${have}.` : "No notes yet.";
+      }
+      return `${note.title}:
+${note.body}`;
+    }
+  },
+  {
+    name: "track_situation",
+    description: "Record a development in something ongoing that has a state \u2014 an order, a dispute, a setup in progress. Use it when something moves: a parcel ships, a reply arrives, a step is done. Distinct from a note (prose) and a reminder (a dated to-do): a situation is a thing you are watching.",
+    category: "research",
+    parameters: {
+      title: { type: "string", description: "What the situation is, short." },
+      update: { type: "string", description: "What just happened." }
+    },
+    required: ["title", "update"],
+    run: async (args) => {
+      const one = await trackSituation(String(args.title), String(args.update));
+      return `Logged against "${one.title}" (${one.updates.length} update${one.updates.length === 1 ? "" : "s"}).`;
+    }
+  },
+  {
+    name: "list_situations",
+    description: 'List what is currently open \u2014 the things in progress you are tracking. Use it for "what is going on", "where are we with things", "any updates".',
+    category: "research",
+    parameters: {},
+    required: [],
+    run: async () => {
+      const open = await openSituations();
+      if (open.length === 0) return "Nothing open right now.";
+      return open.map((one) => {
+        const last = one.updates[one.updates.length - 1];
+        return `- ${one.title}: ${last?.text ?? "no updates yet"}`;
+      }).join("\n");
+    }
+  },
+  {
+    name: "resolve_situation",
+    description: "Mark a situation settled once it is done \u2014 the order arrived, the dispute closed. It is filed, not deleted.",
+    category: "research",
+    parameters: {
+      title: { type: "string", description: "Which situation is finished." }
+    },
+    required: ["title"],
+    run: async (args) => {
+      const one = await resolveSituation(String(args.title));
+      return one ? `Marked "${one.title}" resolved.` : "Nothing open by that name.";
+    }
+  }
+];
+
 // server/tools/playstation.ts
 function when2(iso) {
   if (!iso) return "at some point";
@@ -2596,6 +3148,71 @@ var webTools = [
   }
 ];
 
+// server/tools/work.ts
+function ago(iso) {
+  const hours = Math.round((Date.now() - new Date(iso).getTime()) / 36e5);
+  if (hours < 1) return "within the hour";
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+var workTools = [
+  {
+    name: "check_github",
+    description: "Look at the user\u2019s GitHub: their open pull requests, reviews waiting on them, and issues assigned to them. Use it when they ask about their code, PRs, reviews, or what is waiting on them there.",
+    category: "research",
+    parameters: {},
+    required: [],
+    run: async () => {
+      try {
+        const view = await githubView();
+        const lines = [];
+        if (view.reviewsWanted.length > 0) {
+          lines.push(
+            `Reviews waiting on them: ${view.reviewsWanted.map((pr) => `${pr.title} (${pr.repo})`).join("; ")}`
+          );
+        }
+        if (view.prs.length > 0) {
+          lines.push(
+            `Their open PRs: ${view.prs.map((pr) => `${pr.title} (${pr.repo})`).join("; ")}`
+          );
+        }
+        if (view.issues.length > 0) {
+          lines.push(
+            `Assigned issues: ${view.issues.map((issue) => issue.title).join("; ")}`
+          );
+        }
+        return lines.length > 0 ? `Signed in as ${view.login}.
+${lines.join("\n")}
+
+Report this in a sentence or two, not as a list.` : `Signed in as ${view.login}. Nothing is waiting on them anywhere.`;
+      } catch (error) {
+        if (error instanceof GithubError) return error.message;
+        throw error;
+      }
+    }
+  },
+  {
+    name: "check_workflows",
+    description: "Look at the user\u2019s n8n: whether the workflows are healthy and what has failed lately. Use it when they ask about n8n, their workflows, or automation, and as part of a Work briefing.",
+    category: "research",
+    parameters: {},
+    required: [],
+    run: async () => {
+      try {
+        const view = await n8nView();
+        if (view.failures.length === 0) {
+          return `All healthy: ${view.active} active workflow${view.active === 1 ? "" : "s"}${view.inactive > 0 ? ` (${view.inactive} paused)` : ""}, ${view.recentTotal} recent runs, no failures.`;
+        }
+        const failed = view.failures.slice(0, 5).map((one) => `${one.workflow} (${ago(one.at)})`).join("; ");
+        return `${view.failures.length} failed execution${view.failures.length === 1 ? "" : "s"}: ${failed}. ${view.active} workflows active. Report the failures in a sentence; they can open n8n to dig in.`;
+      } catch (error) {
+        if (error instanceof N8nError) return error.message;
+        throw error;
+      }
+    }
+  }
+];
+
 // server/tools/index.ts
 var TOOLS = [
   ...webTools,
@@ -2605,7 +3222,10 @@ var TOOLS = [
   ...consoleTools,
   ...recallTools,
   ...askTools,
-  ...openTools
+  ...openTools,
+  ...keepTools,
+  ...timerTools,
+  ...workTools
 ];
 function allTools() {
   return TOOLS;
@@ -2630,7 +3250,19 @@ var LABELS = {
   search_memory: "Went back through the record",
   ask_choice: "Asked you something",
   open_pages: "Opened a page",
-  open_workspace: "Switched workspace"
+  open_workspace: "Switched workspace",
+  write_note: "Added to a note",
+  read_note: "Read a note back",
+  track_situation: "Logged a development",
+  list_situations: "Checked what is open",
+  resolve_situation: "Marked something settled",
+  set_timer: "Started a timer",
+  list_timers: "Checked the timers",
+  start_watch: "Started watching something",
+  list_watches: "Checked the watches",
+  stop_watch: "Stopped a watch",
+  check_github: "Checked GitHub",
+  check_workflows: "Checked the workflows"
 };
 function label(name) {
   return LABELS[name] ?? name.replace(/_/g, " ");
@@ -2639,18 +3271,18 @@ function describe2(name, result) {
   const short = result.trim().split("\n")[0];
   return short.length > 0 && short.length <= 60 && !short.includes("  ") ? `${label(name)} \u2014 ${short}` : label(name);
 }
-async function runTool(call) {
-  const tool = findTool(call.name);
+async function runTool(call3) {
+  const tool = findTool(call3.name);
   if (!tool) {
     return {
-      name: call.name,
+      name: call3.name,
       ok: false,
-      result: `There is no tool called ${call.name}.`,
-      summary: `Tried to use a tool that doesn't exist (${call.name})`
+      result: `There is no tool called ${call3.name}.`,
+      summary: `Tried to use a tool that doesn't exist (${call3.name})`
     };
   }
   const missing = tool.required.filter(
-    (key) => call.args[key] === void 0 || call.args[key] === ""
+    (key) => call3.args[key] === void 0 || call3.args[key] === ""
   );
   if (missing.length > 0) {
     return {
@@ -2669,7 +3301,7 @@ async function runTool(call) {
     };
   }
   try {
-    const result = await tool.run(call.args);
+    const result = await tool.run(call3.args);
     await noteDeed("acted", describe2(tool.name, result)).catch(() => {
     });
     return { name: tool.name, ok: true, result, summary: describe2(tool.name, result) };
@@ -2750,6 +3382,8 @@ Two things you have no tools for at all, because the user forbade them: sending 
 When you need a decision and the sensible answers are a short list, use ask_choice: it puts the answers on screen as buttons so they can tap rather than type. Ask the question in your reply as well, in your own words, then stop and wait \u2014 do not guess which they will pick. Use it for a real fork, not for "shall I carry on".
 
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
+
+Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch checks a web page hourly and you speak up when it changes \u2014 prefer a keyword to watch for. check_github and check_workflows read their code and their n8n; both are read-only and both say plainly when their key is missing.
 
 You keep every word either of you has ever said, and search_memory reaches into it. You are shown only the recent conversation and a short summary of what came before, so when they refer to something you cannot see \u2014 a decision, a name, something from last week \u2014 search for it rather than saying you don't remember. Saying you have forgotten something that is sitting in the record is the same as being wrong.
 
@@ -2869,7 +3503,7 @@ ${summary}` : null;
 }
 
 // server/style.ts
-var store11 = new Document("style", () => ({
+var store15 = new Document("style", () => ({
   description: null,
   samples: 0,
   builtAt: null
@@ -2877,14 +3511,14 @@ var store11 = new Document("style", () => ({
 var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
 var SAMPLES = 8;
 async function writingStyle() {
-  return (await store11.read()).description;
+  return (await store15.read()).description;
 }
 function fresh(style) {
   if (!style.description || !style.builtAt) return false;
   return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
 }
 async function learnWritingStyle(force = false) {
-  const current = await store11.read();
+  const current = await store15.read();
   if (!force && fresh(current)) return false;
   const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
   if (sent.length < 3) return false;
@@ -2908,7 +3542,7 @@ ${body}`).join("\n\n")
     fast: true
   }).catch(() => "");
   if (!description.trim()) return false;
-  await store11.write({
+  await store15.write({
     description: description.trim(),
     samples: bodies.length,
     builtAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -3074,7 +3708,11 @@ function createApi() {
         "googleClientId",
         "googleClientSecret",
         "ownerEmail",
-        "psn"
+        "psn",
+        "github",
+        "n8n",
+        "n8nUrl",
+        "voice"
       ];
       const name = String(req.body?.name ?? "");
       if (!allowed.includes(name)) {
@@ -3333,6 +3971,85 @@ function createApi() {
     "/bridge-status",
     guard(async (_req, res) => {
       res.json({ token: await bridgeToken(), ...await bridgeStatus() });
+    })
+  );
+  api.get(
+    "/notes",
+    guard(async (_req, res) => {
+      res.json({ notes: await liveNotes() });
+    })
+  );
+  api.post(
+    "/note-save",
+    guard(async (req, res) => {
+      res.json({
+        notes: await saveNoteBody(
+          String(req.body?.id ?? ""),
+          String(req.body?.title ?? ""),
+          String(req.body?.body ?? "")
+        )
+      });
+    })
+  );
+  api.post(
+    "/note-archive",
+    guard(async (req, res) => {
+      res.json({ notes: await archiveNote(String(req.body?.id ?? "")) });
+    })
+  );
+  api.get(
+    "/situations",
+    guard(async (_req, res) => {
+      res.json({ situations: await allSituations() });
+    })
+  );
+  api.get(
+    "/timers",
+    guard(async (_req, res) => {
+      res.json({ timers: await runningTimers() });
+    })
+  );
+  api.post(
+    "/timer-fired",
+    guard(async (req, res) => {
+      await markFired(String(req.body?.id ?? ""));
+      res.json({ ok: true });
+    })
+  );
+  api.get(
+    "/watches",
+    guard(async (_req, res) => {
+      res.json({ watches: await liveWatches() });
+    })
+  );
+  api.get(
+    "/github-view",
+    guard(async (_req, res) => {
+      if (!githubConfigured()) {
+        res.json({ configured: false });
+        return;
+      }
+      try {
+        res.json({ configured: true, ...await githubView() });
+      } catch (error) {
+        const failure = error;
+        res.status(failure.needsToken ? 409 : 502).json({ error: failure.message });
+      }
+    })
+  );
+  api.get(
+    "/n8n-view",
+    guard(async (_req, res) => {
+      if (!n8nConfigured()) {
+        res.json({ configured: false });
+        return;
+      }
+      try {
+        res.json({ configured: true, ...await n8nView() });
+      } catch (error) {
+        const failure = error;
+        res.status(failure.needsKey ? 409 : 502).json({ error: failure.message });
+      }
     })
   );
   api.get(

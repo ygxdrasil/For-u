@@ -128,7 +128,7 @@ export interface GraceState {
 /** Something Grace noticed that may want the user. */
 export interface Concern {
   id: string;
-  kind: 'diary' | 'mail' | 'reminder';
+  kind: 'diary' | 'mail' | 'reminder' | 'watch';
   text: string;
   urgency: 'now' | 'soon' | 'whenever';
   at?: string;
