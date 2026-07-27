@@ -99,8 +99,37 @@ export interface EncodedAudio {
  * only its first chunk carries the stream header, so a buffer of later chunks
  * on its own is undecodable.
  */
+/**
+ * Bring a quiet recording up to a workable level.
+ *
+ * The half of "I have to shout at her" that no threshold fixes. Detecting
+ * distant speech is one problem; handing a transcriber a recording at a
+ * twentieth of full scale is a different one, and it fails in the way that
+ * looks like mishearing — words come back wrong or not at all, so you repeat
+ * yourself louder, and louder works, which makes it look like she needs volume
+ * when she needed level.
+ *
+ * Peak normalisation rather than compression: it changes nothing about the
+ * recording except how loud it is, so nothing is introduced that was not said.
+ * The gain is capped, because the one thing worse than quiet speech is a room
+ * of quiet nothing amplified twenty times into something that sounds like
+ * speech to a transcriber willing to oblige.
+ */
+function normalise(samples: Float32Array): Float32Array {
+  let peak = 0;
+  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+
+  // Nothing worth lifting, or already loud enough to leave alone.
+  if (peak < 0.0015 || peak >= 0.7) return samples;
+
+  const gain = Math.min(12, 0.85 / peak);
+  const lifted = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) lifted[i] = samples[i] * gain;
+  return lifted;
+}
+
 export function wavFromSamples(samples: Float32Array, rate: number): EncodedAudio {
-  const resampled = resample(samples, rate, TARGET_RATE);
+  const resampled = resample(normalise(samples), rate, TARGET_RATE);
   return {
     base64: toBase64(encodeWav(resampled, TARGET_RATE)),
     mimeType: 'audio/wav',
@@ -112,7 +141,13 @@ export async function toWav(recording: Blob): Promise<EncodedAudio> {
   const context = new AudioContext();
   try {
     const decoded = await context.decodeAudioData(await recording.arrayBuffer());
-    const samples = resample(toMono(decoded), decoded.sampleRate, TARGET_RATE);
+    // Levelled the same way, so press-to-talk from across a room transcribes
+    // as well as always-listening does.
+    const samples = resample(
+      normalise(toMono(decoded)),
+      decoded.sampleRate,
+      TARGET_RATE,
+    );
     return {
       base64: toBase64(encodeWav(samples, TARGET_RATE)),
       mimeType: 'audio/wav',

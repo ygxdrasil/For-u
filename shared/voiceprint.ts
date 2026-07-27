@@ -233,14 +233,36 @@ export function printOf(samples: Float32Array, rate: number): Voiceprint {
   const imag = new Float32Array(FRAME);
   const magnitude = new Float32Array(FRAME / 2);
 
+  /*
+   * Which frames count as speech, decided relative to this clip.
+   *
+   * It was a fixed number, and that quietly made the speaker check depend on
+   * how close you were standing. An enrolment recorded at the laptop is loud, a
+   * request from across the room is a fraction of that — and under a fixed gate
+   * the distant one has no qualifying frames at all, comes back as silence, and
+   * is refused as "not a voice". Which is precisely the failure that reads as
+   * being ignored.
+   *
+   * A quarter of the clip's own loudest frame picks out speech over pauses at
+   * any distance, with an absolute floor so that a recording of genuine silence
+   * cannot promote its own noise into evidence.
+   */
+  const levels: number[] = [];
   for (let start = 0; start + FRAME <= samples.length; start += HOP) {
+    let energy = 0;
+    for (let i = start; i < start + FRAME; i += 1) energy += samples[i] * samples[i];
+    levels.push(Math.sqrt(energy / FRAME));
+  }
+  const loudest = levels.reduce((most, level) => Math.max(most, level), 0);
+  const gate = Math.max(0.0015, loudest * 0.25);
+
+  let index = -1;
+  for (let start = 0; start + FRAME <= samples.length; start += HOP) {
+    index += 1;
     frames += 1;
     const frame = samples.subarray(start, start + FRAME);
 
-    let energy = 0;
-    for (const sample of frame) energy += sample * sample;
-    const rms = Math.sqrt(energy / FRAME);
-    if (rms < 0.008) continue;
+    if (levels[index] < gate) continue;
     loudFrames += 1;
 
     // Hann window, or the frame edges ring across the whole spectrum.

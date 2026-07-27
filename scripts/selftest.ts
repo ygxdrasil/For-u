@@ -1111,7 +1111,15 @@ try {
   // Calibration has to start from the first reading. Started from the clock,
   // a slow worklet load consumed the whole window and left the room floor at
   // zero, with no way back because the window had passed.
-  assert.match(ambient, /if \(openedAt === 0\) openedAt = now;/);
+  assert.match(ambient, /if \(openedAt === 0\) \{\s*\n\s*openedAt = now;/);
+  // And the floor has to keep tracking the room rather than being fixed by
+  // whatever happened during the first six hundred milliseconds.
+  assert.match(ambient, /floor = rms < floor \? floor \* 0\.9/);
+  assert.match(
+    ambient,
+    /if \(!collected\) \{/,
+    'the floor must not be learned from someone talking',
+  );
   ok('listening falls back rather than failing silently, and calibrates late');
 
   // ---- she should not pause at every full stop ---------------------------

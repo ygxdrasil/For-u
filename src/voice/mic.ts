@@ -48,14 +48,36 @@ export function micSupported(): boolean {
 }
 
 /**
- * Plain `audio: true` unless a specific device was chosen.
+ * What to ask the microphone for, and why each one.
  *
- * Naming constraints like echoCancellation makes the whole request fail on any
- * device that does not offer them, which is indistinguishable from a broken
- * microphone. An exact deviceId is worth the risk because the user picked it.
+ * Every constraint here is `ideal`, never exact. An exact constraint a device
+ * cannot meet fails the whole request, which is indistinguishable from a broken
+ * microphone — an earlier version asked for nothing at all for exactly that
+ * reason, and lost three real improvements to avoid a failure mode that `ideal`
+ * already prevents. A device that cannot do these simply ignores them.
+ *
+ * autoGainControl brings a quiet or distant voice up before anything else sees
+ * it, which is the difference between speaking normally across a room and
+ * having to lean into the laptop.
+ *
+ * echoCancellation matters more than it used to. She can be interrupted
+ * mid-sentence now, so the microphone is live while she is talking, and this is
+ * what stops her own voice arriving back through it.
+ *
+ * noiseSuppression is deliberately declined. It is tuned for calls — the
+ * assumption is one close voice and everything else is rubbish — and a voice
+ * from the other side of a room looks a great deal like everything else. It
+ * removes exactly the speech this is trying to hear.
  */
 function constraintsFor(deviceId: string | undefined): MediaStreamConstraints {
-  return {audio: deviceId ? {deviceId: {exact: deviceId}} : true};
+  return {
+    audio: {
+      ...(deviceId ? {deviceId: {exact: deviceId}} : {}),
+      autoGainControl: {ideal: true},
+      echoCancellation: {ideal: true},
+      noiseSuppression: {ideal: false},
+    },
+  };
 }
 
 export class MicError extends Error {

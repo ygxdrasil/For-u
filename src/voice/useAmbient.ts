@@ -99,11 +99,19 @@ registerProcessor('grace-ears', Ears);
 `;
 
 const CALIBRATION_MS = 600;
-const SPEECH_FLOOR = 0.012;
+/**
+ * The quietest thing she will ever treat as speech.
+ *
+ * Was 0.012, which is a normal voice close to a laptop. A voice from across a
+ * room arrives at a third of that, so the floor was the reason for having to
+ * lean in and raise your voice — she was not mishearing it, she was never
+ * being handed it at all.
+ */
+const SPEECH_FLOOR = 0.004;
 /** Silence that ends an utterance. Longer than press-to-talk: nobody pressed. */
 const TRAILING_SILENCE_MS = 1100;
 /** Anything shorter is a cough, a door, or a keyboard. */
-const MIN_UTTERANCE_MS = 400;
+const MIN_UTTERANCE_MS = 320;
 /** Nobody speaks a single sentence for this long; stop and take what we have. */
 const MAX_UTTERANCE_MS = 15_000;
 
@@ -467,11 +475,32 @@ export function useAmbient({
       if (!document.hidden) setLevel(rms);
 
       const now = performance.now();
-      if (openedAt === 0) openedAt = now;
+      if (openedAt === 0) {
+        openedAt = now;
+        floor = rms;
+      }
 
-      // Measure the room first, so a noisy one doesn't trigger constantly.
+      /*
+       * The room's noise floor, tracked continuously rather than guessed once.
+       *
+       * It used to be an average of the first six hundred milliseconds, held
+       * for the rest of the session. That is wrong in both directions: a car
+       * passing during those six hundred milliseconds set a floor that then
+       * needed shouting to clear, and a room that got quieter later never got
+       * the benefit.
+       *
+       * Falls quickly and rises slowly, which is the right asymmetry — silence
+       * is evidence about the room, and a loud moment is usually evidence about
+       * a person. Only updated while nothing is being captured, so someone
+       * talking cannot slowly convince her that talking is the background.
+       */
+      if (!collected) {
+        floor = rms < floor ? floor * 0.9 + rms * 0.1 : floor * 0.997 + rms * 0.003;
+      }
+
+      // Still worth a moment of settling before acting on anything: the first
+      // readings after a microphone opens are frequently a click or a pop.
       if (now - openedAt < CALIBRATION_MS) {
-        floor = (floor * floorSamples + rms) / (floorSamples + 1);
         floorSamples += 1;
         return;
       }
@@ -495,15 +524,21 @@ export function useAmbient({
       }
 
       /*
-       * The threshold, and why it is lower than it was.
+       * How loud counts as talking.
        *
-       * Three times the measured room floor sounds prudent and is not: a
-       * calibration that catches a passing car sets a floor that then needs
-       * shouting to clear. Twice the floor, and never above a hard ceiling, so
-       * a noisy sixth of a second at start-up cannot leave her deaf for the
-       * rest of the session.
+       * Set to be sensitive rather than safe, because the two failure modes are
+       * not remotely equal. Too high and you have to raise your voice at a
+       * machine in your own home, every time, and eventually stop bothering.
+       * Too low and she occasionally transcribes a moment of nothing, finds no
+       * name in it, and discards it — a fraction of a penny and no interruption
+       * at all, because the wake word is what decides whether she answers.
+       *
+       * A little above the room rather than a multiple of it: at a genuinely
+       * quiet floor a multiple is a tiny number, and at a noisy one it is
+       * unreachable. The ceiling means no room, however loud, can leave her
+       * needing to be shouted at.
        */
-      const threshold = Math.min(0.05, Math.max(SPEECH_FLOOR, floor * 2));
+      const threshold = Math.min(0.03, Math.max(SPEECH_FLOOR, floor * 1.6 + 0.002));
       const loud = rms > threshold;
 
       if (loud) {

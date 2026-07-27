@@ -167,6 +167,23 @@ export function voiceChecks(assert: typeof import('node:assert/strict')) {
   const raised = verify(mine, probe(142, [730, 1280, 2600], 23));
   assert.ok(raised.ok, `a raised voice must still be recognised (${raised.score.toFixed(2)})`);
 
+  /*
+   * The same voice, from across the room.
+   *
+   * Enrolment happens at the machine and is loud; a real request often is not.
+   * Judging frames as speech by a fixed loudness made the check quietly
+   * distance-dependent — a distant clip had no qualifying frames at all, came
+   * back as silence, and was refused as "not a voice", which is the failure
+   * that reads as being ignored. Twentieth of the level, same person.
+   */
+  const distant = vowel(120, [705, 1210, 2480]);
+  for (let i = 0; i < distant.length; i += 1) distant[i] *= 0.05;
+  const faraway = verify(mine, printOf(scramble(distant, 0.0005, 61), RATE));
+  assert.ok(
+    faraway.ok,
+    `distance must not change who you are, scored ${faraway.score.toFixed(2)}`,
+  );
+
   // All that leeway is worth nothing if it lets the room in as well.
   assert.equal(verify(mine, probe(210, [520, 1900, 2900], 53)).ok, false);
 
