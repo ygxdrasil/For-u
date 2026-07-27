@@ -108,8 +108,21 @@ const CALIBRATION_MS = 600;
  * being handed it at all.
  */
 const SPEECH_FLOOR = 0.004;
-/** Silence that ends an utterance. Longer than press-to-talk: nobody pressed. */
-const TRAILING_SILENCE_MS = 1100;
+/**
+ * Silence that ends an utterance.
+ *
+ * Paid in full on every single spoken request, before anything else begins —
+ * she cannot start transcribing until she believes you have stopped. Eleven
+ * hundred milliseconds is longer than the pause most people leave between
+ * sentences, so it was buying patience nobody had asked for.
+ *
+ * Seven hundred still comfortably clears a mid-sentence breath, and the cost of
+ * being wrong is small in a way worth stating: if she cuts in early, the rest
+ * of what you said arrives as the next utterance and — because she stays awake
+ * for twelve seconds after being addressed — is treated as a follow-up rather
+ * than lost.
+ */
+const TRAILING_SILENCE_MS = 700;
 /** Anything shorter is a cough, a door, or a keyboard. */
 const MIN_UTTERANCE_MS = 320;
 /** Nobody speaks a single sentence for this long; stop and take what we have. */

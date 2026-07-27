@@ -378,21 +378,50 @@ export default function App() {
         </button>
       )}
 
+      {/*
+        A blocked page, made one tap rather than a paragraph.
+
+        A browser will not open a tab unless it believes a person asked, and
+        her instruction arrives seconds after you spoke, down a stream — by
+        which time it has stopped believing. Nothing in the page can talk it
+        round; that is the whole point of the protection.
+
+        But a tap *is* the gesture, so a button here always works. That turns a
+        refusal into one press, which is a far better answer than a sentence
+        about popup blockers, and the sentence is offered underneath for the
+        person who would rather fix it permanently.
+      */}
       {rooms.blocked.length > 0 && (
-        <div className="border-t border-ember/20 bg-ember/10 px-5 py-2 text-xs text-ember/90">
-          <span className="mr-2">Your browser blocked these — tap to open:</span>
-          {rooms.blocked.map((url) => (
-            <a
-              key={url}
-              href={url}
-              target="_blank"
-              rel="noreferrer"
+        <div className="glass edge-run mx-4 mb-2 p-3">
+          <p className="text-xs text-slate-200">
+            Your browser wouldn’t let me open{' '}
+            {rooms.blocked.length === 1 ? 'this' : 'these'} on my own.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {rooms.blocked.map((url) => (
+              <a
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={rooms.dismissBlocked}
+                className="inline-flex items-center gap-1.5 rounded-full border border-ice/40 bg-ice/15 px-3 py-1 text-xs text-ice transition hover:bg-ice/25">
+                <ExternalLink size={11} />
+                Open {new URL(url).hostname.replace(/^www\./, '')}
+              </a>
+            ))}
+            <button
+              type="button"
               onClick={rooms.dismissBlocked}
-              className="mr-2 inline-flex items-center gap-1 underline underline-offset-2">
-              <ExternalLink size={11} />
-              {new URL(url).hostname.replace(/^www\./, '')}
-            </a>
-          ))}
+              className="ml-auto rounded-full border border-edge px-3 py-1 text-xs text-mist hover:text-slate-200">
+              Not now
+            </button>
+          </div>
+          <p className="mt-2 text-[0.65rem] leading-relaxed text-mist/55">
+            To stop this happening: allow pop-ups for this site — in Chrome, the
+            icon at the right of the address bar, or Settings, Privacy and
+            security, Site settings, Pop-ups and redirects.
+          </p>
         </div>
       )}
 

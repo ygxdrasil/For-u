@@ -4457,7 +4457,7 @@ var LAPTOP_NOTE = `The laptop in their room is the one place you reach without t
 var PHONE_NOTE = `notify_phone reaches their phone when something genuinely wants them and they are not in front of you \u2014 a failed build, a finished timer. Never for a reply to something they just said, and never for anything that can wait until they next look.`;
 var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.
 
-They keep the app in rooms \u2014 Grace, Home, Work, Play, and any they have made. open_workspace moves them between them and opens whatever pages that room is set to open; open_pages opens anything else they name. Use them freely: opening a page undoes nothing, so there is nothing to confirm. Say which room you have moved them to, in a few words, and do not claim a page definitely opened \u2014 a browser may refuse, in which case they are shown a link instead.
+They keep the app in rooms \u2014 Grace, Home, Work, Play, and any they have made. open_workspace moves them between them and opens whatever pages that room is set to open; open_pages opens anything else they name. Use them freely: opening a page undoes nothing, so there is nothing to confirm. Say which room you have moved them to, in a few words, and do not claim a page definitely opened \u2014 a browser will often refuse to open a tab it does not believe a person asked for, and yours arrives moments after they spoke. When that happens they are shown a button to tap instead, so say "tap it if your browser blocked it" rather than insisting it worked. If it keeps happening, the fix is to allow pop-ups for this site in their browser's settings, and it is worth saying so once.
 
 Both only work while they are looking at you. A browser cannot be reached when nobody is on the page, so if they ask you to open something and then leave, say so rather than pretending.
 
@@ -4881,14 +4881,17 @@ function createApi() {
       }
       const controller = new AbortController();
       res.on("close", () => controller.abort());
-      const [, profile2, summary, policies, turns] = await Promise.all([
+      const [, profile2, summary, policies, turns, have, attention, briefing, style] = await Promise.all([
         record2("user", text, via),
         getProfile(),
         getSummary(),
         getPolicies(),
-        recentTurns()
+        recentTurns(),
+        available(),
+        getMode(),
+        buildBriefing().catch(() => null),
+        styleNote().catch(() => null)
       ]);
-      const have = await available();
       const system = buildSystemPrompt({
         available: have,
         profile: profile2,
@@ -4896,9 +4899,9 @@ function createApi() {
         policies,
         via,
         now: /* @__PURE__ */ new Date(),
-        mode: (await getMode()).mode,
-        briefing: await buildBriefing().catch(() => null),
-        style: await styleNote().catch(() => null)
+        mode: attention.mode,
+        briefing,
+        style
       });
       turns.push({ role: "user", text });
       let reply = "";

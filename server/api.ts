@@ -370,19 +370,31 @@ export function createApi(): Express {
       const controller = new AbortController();
       res.on('close', () => controller.abort());
 
-      // Everything the prompt needs, at once. Writing the user's turn used to
-      // happen first and alone, which put a round trip to the store in front
-      // of every single reply for no reason — the turn being recorded is not
-      // something the prompt builder waits on, since the text is right here.
-      const [, profile, summary, policies, turns] = await Promise.all([
-        record('user', text, via),
-        getProfile(),
-        getSummary(),
-        getPolicies(),
-        recentTurns(),
-      ]);
+      /*
+       * Everything the prompt needs, at once, and that word is load-bearing.
+       *
+       * Five of these used to be awaited one after another below the first
+       * batch — what is connected, the attention mode, the briefing, the
+       * writing style. Each is at least one round trip to the store, and the
+       * briefing is two more to Google on a cold instance, so they added up to
+       * something close to two seconds of silence before the model had even
+       * been asked the question. None of them depends on any other. Waiting for
+       * them in sequence bought nothing at all; the cost was simply the sum
+       * rather than the slowest.
+       */
+      const [, profile, summary, policies, turns, have, attention, briefing, style] =
+        await Promise.all([
+          record('user', text, via),
+          getProfile(),
+          getSummary(),
+          getPolicies(),
+          recentTurns(),
+          available(),
+          getMode(),
+          buildBriefing().catch(() => null),
+          styleNote().catch(() => null),
+        ]);
 
-      const have = await available();
       const system = buildSystemPrompt({
         available: have,
         profile,
@@ -390,9 +402,9 @@ export function createApi(): Express {
         policies,
         via,
         now: new Date(),
-        mode: (await getMode()).mode,
-        briefing: await buildBriefing().catch(() => null),
-        style: await styleNote().catch(() => null),
+        mode: attention.mode,
+        briefing,
+        style,
       });
 
       // The turn just recorded is not in `turns`, which was read alongside it.
