@@ -20,6 +20,9 @@ import type {
 } from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
 import {Day} from './Day';
+import {NotesPanel, SituationsPanel} from './Keep';
+import {Connections, LiveFeed, SpendGauge, Weather} from './Panels';
+import {GithubPanel, WorkflowsPanel} from './Work';
 import {Faculties, type Faculty} from './Faculties';
 import {Waveform} from './Waveform';
 
@@ -250,6 +253,15 @@ export function Dashboard({
       {(wants('day') || wants('needs') || wants('deeds')) && (
         <Day refreshKey={lastLookedAt} concerns={concerns} held={held} />
       )}
+
+      {wants('weather') && <Weather />}
+      {wants('github') && <GithubPanel />}
+      {wants('workflows') && <WorkflowsPanel />}
+      {wants('notes') && <NotesPanel />}
+      {wants('situations') && <SituationsPanel />}
+      {wants('activity') && <LiveFeed />}
+      {wants('connections') && <Connections google={google} />}
+      {wants('spend') && <SpendGauge spend={state.spend} />}
 
       {wants('faculties') && (
       <div>

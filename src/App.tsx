@@ -7,12 +7,16 @@ import {
   PanelRight,
 } from 'lucide-react';
 import {useEffect, useState} from 'react';
+import {Boot} from './components/Boot';
 import {Composer} from './components/Composer';
 import {ACCENT, Rail} from './components/Rail';
 import {Stage} from './components/Stage';
 import {Dashboard} from './components/Dashboard';
 import {Lock} from './components/Lock';
+import {Holo} from './components/Holo';
+import {Palette, type Command} from './components/Palette';
 import {ProfilePanel} from './components/ProfilePanel';
+import {Timers} from './components/Timers';
 import {Transcript} from './components/Transcript';
 import {VoiceCheck} from './components/VoiceCheck';
 import type {Mode} from './hooks/useGrace';
@@ -50,11 +54,15 @@ export default function App() {
   const [tab, setTab] = useState<'grace' | 'talk'>('grace');
   /** Her, taking over the screen. */
   const [stage, setStage] = useState(false);
+  const [holo, setHolo] = useState(false);
+  const [booting, setBooting] = useState(
+    () => typeof sessionStorage !== 'undefined' && !sessionStorage.getItem('grace-booted'),
+  );
   const [now, setNow] = useState(() => new Date());
   const [day, setDay] = useState<DayView | null>(null);
 
   useEffect(() => {
-    if (!stage) return;
+    if (!stage && !holo) return;
     const tick = window.setInterval(() => setNow(new Date()), 1000);
     const load = () => void api.fetchDay().then((next) => next && setDay(next));
     load();
@@ -63,7 +71,7 @@ export default function App() {
       window.clearInterval(tick);
       window.clearInterval(refresh);
     };
-  }, [stage]);
+  }, [stage, holo]);
 
   const {session, state, mode} = grace;
   const {opening} = grace;
@@ -132,6 +140,34 @@ export default function App() {
   };
 
   const accent = ACCENT[rooms.room?.accent ?? 'ice'];
+
+  // Everything the palette can reach. Rooms come from the server list, so a
+  // room the user makes appears here for free.
+  const commands: Command[] = [
+    ...rooms.rooms.map((room) => ({
+      id: `room:${room.id}`,
+      label: `Go to ${room.name}`,
+      hint: 'room',
+      run: () => rooms.enter(room.id, true),
+    })),
+    {id: 'talk', label: 'Talk to Grace', hint: 'mic', run: talk},
+    {
+      id: 'mic',
+      label: grace.micOn ? 'Stop always-listening' : 'Always-listen for “Grace”',
+      hint: 'mic',
+      run: () => grace.setMicOn(!grace.micOn),
+    },
+    {
+      id: 'voice',
+      label: grace.voiceOn ? 'Mute her voice' : 'Unmute her voice',
+      hint: 'voice',
+      run: () => grace.setVoiceOn(!grace.voiceOn),
+    },
+    {id: 'stage', label: 'Full screen', hint: 'view', run: () => setStage(true)},
+    {id: 'holo', label: 'Projection mode', hint: 'view', run: () => setHolo(true)},
+    {id: 'sound', label: 'Sound check', hint: 'audio', run: () => setSoundCheckOpen(true)},
+    {id: 'panel', label: 'What Grace knows', hint: 'settings', run: () => setPanelOpen(true)},
+  ];
 
   const dashboard = state && (
     <Dashboard
@@ -364,6 +400,21 @@ export default function App() {
         </p>
       )}
 
+      {booting && (
+        <Boot
+          onDone={() => {
+            sessionStorage.setItem('grace-booted', '1');
+            setBooting(false);
+          }}
+        />
+      )}
+
+      {holo && (
+        <Holo mode={mode} level={grace.recorder.level} now={now} onClose={() => setHolo(false)} />
+      )}
+
+      <Palette commands={commands} />
+
       {stage && state && (
         <Stage
           state={state}
@@ -383,6 +434,8 @@ export default function App() {
           onPickDevice={grace.setDeviceId}
         />
       )}
+
+      <Timers enabled={session === 'ok' || session === 'open'} />
 
       <Composer
         busy={mode === 'thinking'}

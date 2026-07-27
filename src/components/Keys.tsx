@@ -40,6 +40,26 @@ const FIELDS: {name: KeyName; label: string; blurb: string; secret: boolean}[] =
       'and paste the npsso value. She can see the console — never operate it.',
     secret: true,
   },
+  {
+    name: 'github',
+    label: 'GitHub',
+    blurb:
+      'A personal access token from github.com/settings/tokens. She only ever ' +
+      'reads: PRs, reviews, failing builds. Read scope is enough.',
+    secret: true,
+  },
+  {
+    name: 'n8nUrl',
+    label: 'n8n address',
+    blurb: 'Your n8n instance URL, e.g. https://you.app.n8n.cloud.',
+    secret: false,
+  },
+  {
+    name: 'n8n',
+    label: 'n8n API key',
+    blurb: 'From n8n: Settings → n8n API → create. So she can report failures.',
+    secret: true,
+  },
 ];
 
 /**

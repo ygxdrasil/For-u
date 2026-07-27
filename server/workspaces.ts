@@ -22,7 +22,7 @@ const DEFAULTS: Workspace[] = [
     icon: 'sparkles',
     accent: 'ice',
     opens: [],
-    panels: ['orb', 'faculties', 'attention', 'learned'],
+    panels: ['orb', 'faculties', 'attention', 'connections', 'spend', 'learned'],
     blurb: 'Her, and what she knows.',
   },
   {
@@ -31,7 +31,7 @@ const DEFAULTS: Workspace[] = [
     icon: 'house',
     accent: 'ice',
     opens: [],
-    panels: ['day', 'needs', 'deeds'],
+    panels: ['day', 'needs', 'weather', 'notes', 'situations', 'deeds'],
     blurb: 'Your day, and what wants you.',
   },
   {
@@ -41,7 +41,7 @@ const DEFAULTS: Workspace[] = [
     accent: 'amber',
     // Opened in order; the first is the one brought forward.
     opens: ['https://app.n8n.cloud', 'https://mail.google.com'],
-    panels: ['n8n', 'github', 'mail', 'needs'],
+    panels: ['needs', 'github', 'workflows', 'notes', 'activity'],
     blurb: 'Mail, workflows, and what is failing.',
     brief: 'Brief me on my workflows and anything in my mail that needs me.',
   },
@@ -51,7 +51,7 @@ const DEFAULTS: Workspace[] = [
     icon: 'gamepad',
     accent: 'violet',
     opens: [],
-    panels: ['playstation', 'games'],
+    panels: ['day', 'playstation', 'games', 'activity'],
     blurb: 'The console, and what you have been playing.',
   },
 ];

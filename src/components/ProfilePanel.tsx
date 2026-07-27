@@ -1,4 +1,5 @@
 import {Bridge} from './Bridge';
+import {VoicePicker} from './VoicePicker';
 import {Keys} from './Keys';
 import {Notifications} from './Notifications';
 import {Lock, Trash2, X} from 'lucide-react';
@@ -226,6 +227,10 @@ export function ProfilePanel({
 
         <Section title="The laptop bridge">
           <Bridge />
+        </Section>
+
+        <Section title="Her voice">
+          <VoicePicker />
         </Section>
 
         <Section title="Reaching you">

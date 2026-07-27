@@ -1246,8 +1246,8 @@ async function accessToken() {
   const saved = await store5.read();
   if (!saved) throw new GoogleError("Google is not connected yet.", true);
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
-  const cached4 = accessTokens.get(saved.refreshToken);
-  if (cached4 && cached4.expiresAt > Date.now() + 6e4) return cached4.token;
+  const cached5 = accessTokens.get(saved.refreshToken);
+  if (cached5 && cached5.expiresAt > Date.now() + 6e4) return cached5.token;
   const token2 = await postToken({
     client_id: googleClient().id,
     client_secret: googleClient().secret,
@@ -2573,7 +2573,7 @@ var DEFAULTS = [
     icon: "sparkles",
     accent: "ice",
     opens: [],
-    panels: ["orb", "faculties", "attention", "learned"],
+    panels: ["orb", "faculties", "attention", "connections", "spend", "learned"],
     blurb: "Her, and what she knows."
   },
   {
@@ -2582,7 +2582,7 @@ var DEFAULTS = [
     icon: "house",
     accent: "ice",
     opens: [],
-    panels: ["day", "needs", "deeds"],
+    panels: ["day", "needs", "weather", "notes", "situations", "deeds"],
     blurb: "Your day, and what wants you."
   },
   {
@@ -2592,7 +2592,7 @@ var DEFAULTS = [
     accent: "amber",
     // Opened in order; the first is the one brought forward.
     opens: ["https://app.n8n.cloud", "https://mail.google.com"],
-    panels: ["n8n", "github", "mail", "needs"],
+    panels: ["needs", "github", "workflows", "notes", "activity"],
     blurb: "Mail, workflows, and what is failing.",
     brief: "Brief me on my workflows and anything in my mail that needs me."
   },
@@ -2602,7 +2602,7 @@ var DEFAULTS = [
     icon: "gamepad",
     accent: "violet",
     opens: [],
-    panels: ["playstation", "games"],
+    panels: ["day", "playstation", "games", "activity"],
     blurb: "The console, and what you have been playing."
   }
 ];
@@ -3557,6 +3557,42 @@ async function styleNote() {
 ${description}`;
 }
 
+// server/weather.ts
+var cached4 = null;
+var FRESH_FOR_MS2 = 30 * 60 * 1e3;
+var PLACE = /\b(?:lives?|living|based|located|from|home)\b[^.]*?\bin\s+([A-Z][a-zA-Z .'-]{2,40})/;
+async function place() {
+  const { entries } = await getProfile();
+  for (const entry of entries) {
+    if (entry.supersededAt) continue;
+    const found = PLACE.exec(entry.text);
+    if (found) return found[1].trim();
+  }
+  return null;
+}
+async function weatherLine() {
+  if (cached4 && cached4.until > Date.now()) return cached4.line;
+  const where = await place();
+  if (!where) {
+    cached4 = { line: null, place: null, until: Date.now() + FRESH_FOR_MS2 };
+    return null;
+  }
+  try {
+    const line = await getProvider().complete({
+      system: "Answer in one short spoken sentence: the current weather and today for the place named. Temperature, conditions, and whether rain is likely. No preamble, no lists.",
+      turns: [{ role: "user", text: `Weather in ${where} right now and today.` }],
+      search: true,
+      temperature: 0,
+      maxOutputTokens: 120
+    });
+    cached4 = { line: line.trim() || null, place: where, until: Date.now() + FRESH_FOR_MS2 };
+    return cached4.line;
+  } catch {
+    cached4 = { line: null, place: where, until: Date.now() + FRESH_FOR_MS2 };
+    return null;
+  }
+}
+
 // server/api.ts
 function guard(handler) {
   return (req, res) => {
@@ -4023,6 +4059,16 @@ function createApi() {
     })
   );
   api.get(
+    "/weather",
+    guard(async (_req, res) => {
+      if (!isConfigured()) {
+        res.json({ line: null });
+        return;
+      }
+      res.json({ line: await weatherLine().catch(() => null) });
+    })
+  );
+  api.get(
     "/github-view",
     guard(async (_req, res) => {
       if (!githubConfigured()) {
@@ -4248,6 +4294,14 @@ function createApi() {
       const raw = req.body?.addressAs;
       const addressAs = typeof raw === "string" && raw.trim() ? raw.trim().slice(0, 40) : null;
       res.json(await setAddressAs(addressAs));
+    })
+  );
+  api.post(
+    "/memory-supersede",
+    guard(async (req, res) => {
+      const text = String(req.body?.text ?? "");
+      if (text) await supersedeEntry(text);
+      res.json(await getProfile());
     })
   );
   api.post(

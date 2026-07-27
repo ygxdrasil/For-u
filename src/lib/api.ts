@@ -198,6 +198,79 @@ export async function greeting(): Promise<{say: string | null; message?: Message
   return response.json();
 }
 
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  updatedAt: string;
+}
+
+export async function fetchNotes(): Promise<Note[]> {
+  const response = await fetch('/api/notes');
+  if (!response.ok) return [];
+  return ((await response.json()) as {notes: Note[]}).notes;
+}
+
+export async function saveNote(id: string, title: string, body: string): Promise<Note[]> {
+  const response = await expectOk(
+    await fetch('/api/note-save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id, title, body}),
+    }),
+  );
+  return ((await response.json()) as {notes: Note[]}).notes;
+}
+
+export async function archiveNote(id: string): Promise<Note[]> {
+  const response = await expectOk(
+    await fetch('/api/note-archive', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id}),
+    }),
+  );
+  return ((await response.json()) as {notes: Note[]}).notes;
+}
+
+export interface Situation {
+  id: string;
+  title: string;
+  status: 'open' | 'resolved';
+  updates: {at: string; text: string}[];
+}
+
+export async function fetchSituations(): Promise<Situation[]> {
+  const response = await fetch('/api/situations');
+  if (!response.ok) return [];
+  return ((await response.json()) as {situations: Situation[]}).situations;
+}
+
+export interface WatchRow {
+  id: string;
+  what: string;
+  keyword?: string;
+  lastCheckedAt?: string;
+}
+
+export async function fetchWatches(): Promise<WatchRow[]> {
+  const response = await fetch('/api/watches');
+  if (!response.ok) return [];
+  return ((await response.json()) as {watches: WatchRow[]}).watches;
+}
+
+/** Correcting what she has learned — the whole point of a memory you can see. */
+export async function supersede(text: string): Promise<Profile> {
+  const response = await expectOk(
+    await fetch('/api/memory-supersede', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text}),
+    }),
+  );
+  return response.json();
+}
+
 export async function fetchDay(): Promise<DayView | null> {
   const response = await fetch('/api/day');
   if (!response.ok) return null;
@@ -210,7 +283,11 @@ export type KeyName =
   | 'googleClientId'
   | 'googleClientSecret'
   | 'ownerEmail'
-  | 'psn';
+  | 'psn'
+  | 'github'
+  | 'n8n'
+  | 'n8nUrl'
+  | 'voice';
 
 export type KeyStatus = Record<
   KeyName,

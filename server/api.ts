@@ -59,9 +59,11 @@ import {
   record,
   recentTurns,
   setAddressAs,
+  supersedeEntry,
 } from './memory';
 import {buildSystemPrompt} from './persona';
 import {learnWritingStyle, styleNote} from './style';
+import {weatherLine} from './weather';
 import {getBackend} from './store/index';
 import {hideWorkspace, saveWorkspace, workspaces} from './workspaces';
 
@@ -721,6 +723,17 @@ export function createApi(): Express {
     }),
   );
 
+  api.get(
+    '/weather',
+    guard(async (_req, res) => {
+      if (!isConfigured()) {
+        res.json({line: null});
+        return;
+      }
+      res.json({line: await weatherLine().catch(() => null)});
+    }),
+  );
+
   // ---- the working world -------------------------------------------------
 
   api.get(
@@ -1046,6 +1059,22 @@ export function createApi(): Express {
 
   // The id travels in the body rather than the path: every route here is a
   // single segment on purpose. See the note above the route table.
+  /**
+   * Correcting what she has learned.
+   *
+   * Supersede rather than forget: the interface can mark a fact no longer
+   * true, and it drops out of what she believes while staying on the record.
+   * Deleting outright is profile-forget, kept for genuine mistakes.
+   */
+  api.post(
+    '/memory-supersede',
+    guard(async (req, res) => {
+      const text = String(req.body?.text ?? '');
+      if (text) await supersedeEntry(text);
+      res.json(await getProfile());
+    }),
+  );
+
   api.post(
     '/profile-forget',
     guard(async (req, res) => {
