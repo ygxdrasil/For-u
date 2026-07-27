@@ -3,7 +3,7 @@ import {VoicePicker} from './VoicePicker';
 import {WorkspaceEditor} from './WorkspaceEditor';
 import {Keys} from './Keys';
 import {Notifications} from './Notifications';
-import {Clock, Fingerprint, Lock, Trash2, X} from 'lucide-react';
+import {Clock, Fingerprint, Lock, Moon, Sun, Trash2, X} from 'lucide-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import type {
   ActionCategory,
@@ -64,6 +64,8 @@ interface ProfilePanelProps {
   onOpenVoiceLock?: () => void;
   /** Whether she is currently ignoring voices that are not the owner's. */
   voiceGuarded?: boolean;
+  theme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
 }
 
 export function ProfilePanel({
@@ -79,6 +81,8 @@ export function ProfilePanel({
   onKeysChanged,
   onOpenVoiceLock,
   voiceGuarded,
+  theme,
+  onToggleTheme,
 }: ProfilePanelProps) {
   const [address, setAddress] = useState(profile.addressAs ?? '');
   const [current, setCurrent] = useState(policies);
@@ -289,6 +293,28 @@ export function ProfilePanel({
         <Section title="The laptop bridge">
           <Bridge />
         </Section>
+
+        {onToggleTheme && (
+          <Section title="Look">
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['dark', 'light'] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => theme !== option && onToggleTheme()}
+                  aria-pressed={theme === option}
+                  className={`flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-xs transition ${
+                    theme === option
+                      ? 'border-ice/40 bg-ice/15 text-ice'
+                      : 'border-edge bg-surface/40 text-mist hover:border-ice/30'
+                  }`}>
+                  {option === 'dark' ? <Moon size={12} /> : <Sun size={12} />}
+                  {option === 'dark' ? 'Dark' : 'Daylight'}
+                </button>
+              ))}
+            </div>
+          </Section>
+        )}
 
         <Section title="Her voice">
           <VoicePicker />

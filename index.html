@@ -12,6 +12,31 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      The theme goes on before anything is drawn.
+
+      React cannot do this: by the time it mounts, a frame has already been
+      painted, and in daylight that frame is black. A flash of the wrong theme
+      on every single load is the sort of thing that is impossible to unsee
+      once noticed, and this is four lines.
+    -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('grace-theme');
+          document.documentElement.dataset.theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+          document.documentElement.style.colorScheme =
+            document.documentElement.dataset.theme;
+        } catch (error) {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -32,6 +32,24 @@ const COLOUR: Record<Mode, [number, number, number]> = {
   speaking: [216, 130, 250],
 };
 
+/**
+ * The same states, dark enough to see on white.
+ *
+ * The canvas cannot inherit a colour the way everything else does, so this is
+ * the one place the theme has to be named twice. Not the same hues dimmed: a
+ * bright violet on near-black and a bright violet on near-white are the same
+ * colour and completely different amounts of contrast, and these states carry
+ * meaning — "she is listening" has to be legible across a room either way.
+ */
+const DAYLIGHT: Record<Mode, [number, number, number]> = {
+  offline: [130, 122, 152],
+  idle: [109, 40, 217],
+  waiting: [109, 40, 217],
+  listening: [124, 58, 237],
+  thinking: [190, 24, 93],
+  speaking: [147, 51, 234],
+};
+
 export function Waveform({mode, level, height = 120, onPress}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Read inside the animation loop rather than closed over, so the loop is
@@ -81,7 +99,11 @@ export function Waveform({mode, level, height = 120, onPress}: Props) {
       time += state === 'thinking' ? 0.05 : 0.035;
 
       const middle = tall / 2;
-      const [red, green, blue] = COLOUR[state];
+      // Read per frame rather than closed over: the theme can change while she
+      // is on screen, and a waveform that keeps yesterday palette until the
+      // next reload is the sort of thing nobody reports and everybody notices.
+      const daylight = document.documentElement.dataset.theme === 'light';
+      const [red, green, blue] = (daylight ? DAYLIGHT : COLOUR)[state];
 
       /** The line's shape at a given point, offset in time and in phase. */
       const trace = (shift: number, lift: number) => {
@@ -112,15 +134,18 @@ export function Waveform({mode, level, height = 120, onPress}: Props) {
        * difference between a line that is coloured and a line that is glowing.
        * Only while there is something to see — at rest it would be a smear.
        */
-      if (energy > 0.05) {
+      // Skipped in daylight: additive blending on a white page adds towards
+      // white, so the fringe is invisible and the only thing it achieves is
+      // washing out the line it was meant to make glow.
+      if (energy > 0.05 && !daylight) {
         context.globalCompositeOperation = 'lighter';
         trace(0.35, 0.94);
-        context.strokeStyle = `rgba(120, 190, 255, ${0.3 * energy})`;
+        context.strokeStyle = `rgba(120, 190, 255, ${(daylight ? 0.15 : 0.3) * energy})`;
         context.lineWidth = 2;
         context.stroke();
 
         trace(-0.35, 1.06);
-        context.strokeStyle = `rgba(255, 120, 200, ${0.3 * energy})`;
+        context.strokeStyle = `rgba(255, 120, 200, ${(daylight ? 0.15 : 0.3) * energy})`;
         context.lineWidth = 2;
         context.stroke();
         context.globalCompositeOperation = 'source-over';
@@ -175,7 +200,7 @@ export function Waveform({mode, level, height = 120, onPress}: Props) {
       <span
         aria-hidden
         className="pointer-events-none absolute inset-x-6 top-1/2 -z-10 h-16 -translate-y-1/2 rounded-full opacity-60 blur-2xl transition"
-        style={{background: `rgb(${COLOUR[mode].join(' ')} / 0.35)`}}
+        style={{background: `rgb(var(--accent) / 0.28)`}}
       />
     </button>
   );

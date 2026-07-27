@@ -26,6 +26,7 @@ import type {DayView} from '../shared/types';
 import * as api from './lib/api';
 import {useFreshness} from './hooks/useFreshness';
 import {useRooms} from './hooks/useRooms';
+import {useTheme} from './hooks/useTheme';
 
 const MODE_LABEL: Record<Mode, string> = {
   offline: 'Not configured',
@@ -64,6 +65,7 @@ export default function App() {
   const rooms = useRooms();
   const wide = useWide();
   const freshness = useFreshness();
+  const {theme, toggle: toggleTheme} = useTheme();
   const [panelOpen, setPanelOpen] = useState(false);
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
   const [voiceLockOpen, setVoiceLockOpen] = useState(false);
@@ -188,6 +190,12 @@ export default function App() {
       label: 'Only answer to me',
       hint: 'audio',
       run: () => setVoiceLockOpen(true),
+    },
+    {
+      id: 'theme',
+      label: theme === 'dark' ? 'Switch to daylight' : 'Switch to dark',
+      hint: 'view',
+      run: toggleTheme,
     },
     {id: 'panel', label: 'What Grace knows', hint: 'settings', run: () => setPanelOpen(true)},
   ];
@@ -355,6 +363,8 @@ export default function App() {
               setVoiceLockOpen(true);
             }}
             voiceGuarded={Boolean(grace.guard?.on)}
+            theme={theme}
+            onToggleTheme={toggleTheme}
           />
         )}
       </main>
