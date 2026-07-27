@@ -749,6 +749,13 @@ export function useAmbient({
     dormant,
     // Waking her from the interface, for when saying her name is not
     // convenient — or when she went to sleep and you changed your mind.
+    // Sent to sleep from the interface or a typed command, not only by voice.
+    sleep: useCallback(() => {
+      dormantRef.current = true;
+      setDormant(true);
+      awakeUntilRef.current = 0;
+      setAwake(false);
+    }, []),
     rouse: useCallback(() => {
       dormantRef.current = false;
       setDormant(false);

@@ -43,6 +43,7 @@ import {buildSystemPrompt} from '../server/persona';
 import {BANDS} from '../shared/voiceprint';
 import {trimTrailingSilence} from '../shared/trim';
 import {heardName, isPhantom, toldToSleep} from '../shared/wake';
+import {parseCommand, suggest} from '../shared/commands';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
@@ -1277,6 +1278,29 @@ try {
     assert.equal(isPhantom(real), false, `"${real}" is somebody talking`);
   }
   ok('a transcriber inventing words into a silence is caught, and speech is not');
+
+  // ---- typed commands ----------------------------------------------------
+  // A slash counts only in front of a name she has. Someone typing a path, a
+  // fraction or a date is not issuing an instruction, and treating "/usr/bin"
+  // as a failed command rather than a message is the kind of cleverness that
+  // makes an input box feel hostile.
+  assert.deepEqual(parseCommand('/compact'), {name: 'compact', rest: ''});
+  assert.deepEqual(parseCommand('/research is the M4 worth it'), {
+    name: 'research',
+    rest: 'is the M4 worth it',
+  });
+  for (const typed of ['/usr/local/bin', '1/2 of the way', '/nonsense', 'compact', '']) {
+    assert.equal(parseCommand(typed), null, `"${typed}" is not a command`);
+  }
+  // The menu narrows as you type and vanishes once there is an argument,
+  // because by then you know what you are doing.
+  assert.ok(suggest('/').length >= 5);
+  assert.deepEqual(
+    suggest('/re').map((one) => one.name),
+    ['research'],
+  );
+  assert.deepEqual(suggest('/research something'), []);
+  ok('typed commands are recognised, and only when they were typed');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach

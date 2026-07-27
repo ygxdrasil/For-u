@@ -52,11 +52,13 @@ import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {available, forgetAvailable} from './available';
 import {trimTrailingSilence} from '../shared/trim';
+import {research} from './research';
 import {enrol, forgetVoice, isEnrolment, setGuard, voiceGuard} from './voiceguard';
 import {getMode, isMode, setMode} from './modes';
 import {
   clearConversation,
   compactIfNeeded,
+  compactNow,
   forget,
   getMessages,
   getProfile,
@@ -802,6 +804,40 @@ export function createApi(): Express {
    * sound in the room to ask whether it was you — is a far worse bargain than
    * the problem it solves.
    */
+  /**
+   * The typed commands.
+   *
+   * Kept off the chat route on purpose. These are instructions to the
+   * machinery rather than things said to her — they do not belong in the
+   * conversation, should not be interpreted by a model that might decline, and
+   * two of them cost real money in a way a sentence does not.
+   */
+  api.post(
+    '/research',
+    guard(async (req, res) => {
+      if (!isConfigured()) {
+        res.status(503).json({error: 'No Gemini API key is configured.'});
+        return;
+      }
+      try {
+        const found = await research(String(req.body?.topic ?? ''));
+        res.json(found);
+      } catch (error) {
+        res.status(400).json({error: (error as Error).message});
+      }
+    }),
+  );
+
+  api.post(
+    '/compact',
+    guard(async (_req, res) => {
+      // Forced rather than "if needed": asking for it is the whole point, and
+      // being told "not yet" by something you deliberately typed is useless.
+      const folded = await compactNow();
+      res.json({folded, summary: await getSummary()});
+    }),
+  );
+
   api.get(
     '/voice-guard',
     guard(async (_req, res) => {

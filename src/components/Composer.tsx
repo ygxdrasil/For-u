@@ -1,5 +1,6 @@
 import {AudioLines, Mic, MicOff, Send, Square, Volume2, VolumeX} from 'lucide-react';
-import {useState, type ReactNode} from 'react';
+import {useMemo, useState, type ReactNode} from 'react';
+import {suggest} from '../../shared/commands';
 
 interface ComposerProps {
   /** A request is in flight. Sending another would collide with it. */
@@ -77,6 +78,15 @@ export function Composer({
   onTalk,
 }: ComposerProps) {
   const [draft, setDraft] = useState('');
+  /** Which suggestion is highlighted, and the list itself. */
+  const [picked, setPicked] = useState(0);
+  const options = useMemo(() => suggest(draft), [draft]);
+
+  /** Fill the name in and leave the cursor ready for whatever it takes. */
+  const complete = (name: string) => {
+    setDraft(`/${name} `);
+    setPicked(0);
+  };
 
   const submit = () => {
     const text = draft.trim();
@@ -159,18 +169,83 @@ export function Composer({
         </button>
       )}
 
-      <input
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            submit();
-          }
-        }}
-        placeholder="Say something to Grace"
-        className="min-w-0 flex-1 rounded-full border border-edge bg-surface px-4 py-2.5 text-sm text-slate-200 placeholder:text-mist/50 focus:border-ice/40 focus:outline-none"
-      />
+      {/*
+        The command menu.
+
+        Appears on a lone slash and disappears the moment there is an argument,
+        because by then you know what you are doing and a list over the box is
+        just something covering the words you are typing. Arrow keys and Enter,
+        because anyone who types a slash expects arrow keys and Enter.
+      */}
+      <div className="relative min-w-0 flex-1">
+        {options.length > 0 && (
+          <div className="glass absolute bottom-full left-0 z-30 mb-2 w-full max-w-md overflow-hidden p-1">
+            {options.map((option, index) => (
+              <button
+                key={option.name}
+                type="button"
+                onMouseEnter={() => setPicked(index)}
+                onClick={() => complete(option.name)}
+                className={`flex w-full items-baseline gap-2 rounded-lg px-2.5 py-1.5 text-left transition ${
+                  index === picked ? 'bg-ice/15' : 'hover:bg-surface/60'
+                }`}>
+                <span
+                  className={`font-mono text-xs ${
+                    index === picked ? 'text-ice' : 'text-slate-200'
+                  }`}>
+                  /{option.name}
+                </span>
+                {option.takes && (
+                  <span className="font-mono text-[0.65rem] text-mist/50">
+                    {option.takes}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate text-[0.7rem] text-mist/70">
+                  {option.blurb}
+                </span>
+              </button>
+            ))}
+            {options.length === 1 && options[0].costs && (
+              <p className="px-2.5 pb-1 pt-0.5 text-[0.65rem] text-mist/45">
+                Costs: {options[0].costs}
+              </p>
+            )}
+          </div>
+        )}
+
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (options.length > 0) {
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                setPicked(
+                  (now) =>
+                    (now + (event.key === 'ArrowDown' ? 1 : options.length - 1)) %
+                    options.length,
+                );
+                return;
+              }
+              if (event.key === 'Tab' || event.key === 'Enter') {
+                event.preventDefault();
+                complete(options[picked].name);
+                return;
+              }
+              if (event.key === 'Escape') {
+                setDraft('');
+                return;
+              }
+            }
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              submit();
+            }
+          }}
+          placeholder="Say something to Grace, or / for commands"
+          className="w-full rounded-full border border-edge bg-surface px-4 py-2.5 text-sm text-slate-200 placeholder:text-mist/50 focus:border-ice/40 focus:outline-none"
+        />
+      </div>
 
       {canStop ? (
         <button

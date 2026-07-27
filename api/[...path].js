@@ -979,6 +979,9 @@ async function supersedeEntry(text) {
   }));
   return found;
 }
+function compactNow() {
+  return compactIfNeeded(true);
+}
 async function noteStyle(notes) {
   if (notes.length === 0) return;
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -1008,12 +1011,13 @@ async function clearConversation() {
   await messages.write([]);
   await meta.write({ summary: null, summarizedThrough: 0 });
 }
-async function compactIfNeeded() {
+async function compactIfNeeded(force = false) {
   const log = await messages.read();
   const current = await meta.read();
   const unsummarised = log.length - current.summarizedThrough;
-  if (unsummarised <= config.summarizeAfter) return false;
-  const foldUpTo = log.length - config.verbatimTurns;
+  if (!force && unsummarised <= config.summarizeAfter) return false;
+  const keep = force ? 6 : config.verbatimTurns;
+  const foldUpTo = log.length - keep;
   const pending = log.slice(current.summarizedThrough, foldUpTo);
   if (pending.length === 0) return false;
   const transcript = pending.map(
@@ -4354,6 +4358,71 @@ function trimTrailingSilence(input) {
   return output;
 }
 
+// server/research.ts
+var STRANDS = 4;
+async function research(topic) {
+  const asked = topic.trim().slice(0, 400);
+  if (asked.length < 3) throw new Error("there is no question there");
+  const plan = await getProvider().complete({
+    system: `You break a question into the separate things that must be looked up to answer it well. Return only a JSON array of strings, each a short search query, at most ${STRANDS} of them. No commentary.`,
+    turns: [{ role: "user", text: asked }],
+    temperature: 0.4,
+    maxOutputTokens: 300,
+    // A schema rather than a plea. Asking politely for JSON returns prose with
+    // JSON in it often enough that the parse below would be the common path.
+    json: {
+      type: "ARRAY",
+      items: { type: "STRING" }
+    },
+    fast: true
+  });
+  let strands = [];
+  try {
+    const parsed = JSON.parse(plan);
+    if (Array.isArray(parsed)) {
+      strands = parsed.filter((one) => typeof one === "string").map((one) => one.trim()).filter(Boolean).slice(0, STRANDS);
+    }
+  } catch {
+  }
+  if (strands.length === 0) strands = [asked];
+  const findings = await Promise.all(
+    strands.map(async (strand) => {
+      const found = await getProvider().complete({
+        system: "Answer from a web search, in plain prose. Include specifics \u2014 numbers, dates, names, prices \u2014 and say plainly when sources disagree or when you could not find something. No preamble.",
+        turns: [{ role: "user", text: strand }],
+        temperature: 0.3,
+        maxOutputTokens: 700,
+        search: true
+      }).catch(() => "");
+      return { strand, found };
+    })
+  );
+  const usable = findings.filter((one) => one.found.trim().length > 0);
+  if (usable.length === 0) {
+    throw new Error("the web was unreachable for all of it");
+  }
+  const report2 = await getProvider().complete({
+    system: "You write up research for one person who asked a question and wants an answer, not a literature review. Lead with what they should conclude, then the reasoning, then anything that would change the conclusion. Plain prose in short paragraphs \u2014 no markdown headings, no bullet salad. Say what is uncertain rather than smoothing it over. Where the findings disagree, say so and say which is better supported.",
+    turns: [
+      {
+        role: "user",
+        text: `The question: ${asked}
+
+` + usable.map((one) => `Looked up "${one.strand}":
+${one.found}`).join("\n\n")
+      }
+    ],
+    temperature: 0.5,
+    maxOutputTokens: 1800
+  });
+  const title = `Research \u2014 ${asked.slice(0, 60)}`;
+  await addFile(title, report2).catch(() => {
+  });
+  await noteDeed("acted", `Researched ${asked.slice(0, 50)}`).catch(() => {
+  });
+  return { title, report: report2, strands: usable.map((one) => one.strand) };
+}
+
 // shared/voiceprint.ts
 var BANDS = 24;
 
@@ -5179,6 +5248,28 @@ function createApi() {
     "/watches",
     guard(async (_req, res) => {
       res.json({ watches: await liveWatches() });
+    })
+  );
+  api.post(
+    "/research",
+    guard(async (req, res) => {
+      if (!isConfigured()) {
+        res.status(503).json({ error: "No Gemini API key is configured." });
+        return;
+      }
+      try {
+        const found = await research(String(req.body?.topic ?? ""));
+        res.json(found);
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    })
+  );
+  api.post(
+    "/compact",
+    guard(async (_req, res) => {
+      const folded = await compactNow();
+      res.json({ folded, summary: await getSummary() });
     })
   );
   api.get(

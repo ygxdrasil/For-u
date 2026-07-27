@@ -182,6 +182,11 @@ export async function supersedeEntry(text: string): Promise<boolean> {
   return found;
 }
 
+/** The same fold, demanded rather than triggered. */
+export function compactNow(): Promise<boolean> {
+  return compactIfNeeded(true);
+}
+
 /** What she currently believes — everything not overtaken by something newer. */
 export async function currentBeliefs(): Promise<ProfileEntry[]> {
   const {entries} = await profile.read();
@@ -234,14 +239,23 @@ export async function clearConversation(): Promise<void> {
  * Folds older turns into the rolling summary once the log outgrows the verbatim
  * window. Runs as its own request so it never sits inside a reply's latency.
  */
-export async function compactIfNeeded(): Promise<boolean> {
+export async function compactIfNeeded(force = false): Promise<boolean> {
   const log = await messages.read();
   const current = await meta.read();
   const unsummarised = log.length - current.summarizedThrough;
 
-  if (unsummarised <= config.summarizeAfter) return false;
+  if (!force && unsummarised <= config.summarizeAfter) return false;
 
-  const foldUpTo = log.length - config.verbatimTurns;
+  /*
+   * Asked for by hand, she keeps far less back.
+   *
+   * The automatic pass leaves the last thirty-two turns verbatim, because
+   * folding away something said a minute ago makes her look like she was not
+   * listening. Someone typing the command has decided the opposite — they want
+   * the context small — so only the last few exchanges stay as they were said.
+   */
+  const keep = force ? 6 : config.verbatimTurns;
+  const foldUpTo = log.length - keep;
   const pending = log.slice(current.summarizedThrough, foldUpTo);
   if (pending.length === 0) return false;
 

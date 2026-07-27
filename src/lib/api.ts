@@ -275,6 +275,24 @@ export async function supersede(text: string): Promise<Profile> {
   return response.json();
 }
 
+export async function deepResearch(
+  topic: string,
+): Promise<{title: string; report: string; strands: string[]}> {
+  const response = await expectOk(
+    await fetch('/api/research', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({topic}),
+    }),
+  );
+  return response.json();
+}
+
+export async function compactNow(): Promise<{folded: boolean; summary: string | null}> {
+  const response = await expectOk(await fetch('/api/compact', {method: 'POST'}));
+  return response.json();
+}
+
 export interface VoiceGuard {
   enrolment: Enrolment | null;
   on: boolean;

@@ -14,6 +14,7 @@ import {chimeAct, chimeDone, chimeWake} from '../lib/chime.ts';
 import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
 import {usePulse} from './usePulse.ts';
 import {useAmbient} from '../voice/useAmbient.ts';
+import {COMMANDS, parseCommand, type Parsed} from '../../shared/commands.ts';
 
 export type VoiceMode = 'all' | 'answers' | 'off';
 import type {GuardState} from '../voice/voiceprint.ts';
@@ -73,6 +74,8 @@ export function useGrace() {
   const setVoiceOn = useCallback((on: boolean) => setVoiceMode(on ? 'all' : 'off'), []);
 
   const abortRef = useRef<AbortController | null>(null);
+  /** Set once ambient listening exists, so /sleep can reach it. */
+  const ambientRef = useRef<(() => void) | null>(null);
   const handleRecordingRef = useRef<(audio: EncodedAudio) => void>(() => {});
   const speech = useSpeech(voiceOn);
 
@@ -150,10 +153,106 @@ export function useGrace() {
     );
   }, []);
 
+  /**
+   * A typed command, carried out here rather than said to her.
+   *
+   * Deliberately not routed through the model. These are instructions to the
+   * machinery — a model that might decline, or reword, or decide to ask first,
+   * is exactly wrong for "clear this" and "fold that up". They appear in the
+   * transcript as her reporting what happened, which is the part that should
+   * read like a conversation.
+   */
+  const runCommand = useCallback(
+    async ({name, rest}: Parsed) => {
+      const say = (spoken: string) =>
+        setMessages((current) => [
+          ...current,
+          {
+            id: `command-${Date.now()}`,
+            speaker: 'grace' as const,
+            text: spoken,
+            at: new Date().toISOString(),
+            via: 'text' as const,
+          },
+        ]);
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: `you-${Date.now()}`,
+          speaker: 'user' as const,
+          text: `/${name}${rest ? ` ${rest}` : ''}`,
+          at: new Date().toISOString(),
+          via: 'text' as const,
+        },
+      ]);
+
+      if (name === 'help') {
+        say(
+          COMMANDS.map((one) => `/${one.name}${one.takes ? ` ${one.takes}` : ''} — ${one.blurb}`).join(
+            '\n',
+          ),
+        );
+        return;
+      }
+
+      if (name === 'sleep') {
+        ambientRef.current?.();
+        say('Asleep. Say my name and I’m back.');
+        return;
+      }
+
+      if (name === 'clear') {
+        await api.clearConversation().catch(() => {});
+        setMessages([]);
+        return;
+      }
+
+      setBusy(true);
+      try {
+        if (name === 'compact') {
+          const {folded, summary} = await api.compactNow();
+          say(
+            folded
+              ? `Folded. What I'm carrying forward:\n\n${summary ?? ''}`
+              : 'Nothing to fold — this conversation is already short.',
+          );
+          await load().catch(() => {});
+          return;
+        }
+
+        if (name === 'research') {
+          if (!rest) {
+            say('Give me something to look into — /research followed by the question.');
+            return;
+          }
+          const found = await api.deepResearch(rest);
+          say(
+            `${found.report}\n\n(Looked up: ${found.strands.join('; ')}. Kept as “${found.title}” in Files.)`,
+          );
+          return;
+        }
+      } catch (cause) {
+        if (cause instanceof NeedsPassword) setSession('required');
+        else say(`That didn't work: ${(cause as Error).message}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load],
+  );
+
   const send = useCallback(
     async (text: string, via: InputMode) => {
       const spoken = text.trim();
       if (!spoken || abortRef.current) return;
+
+      // Typed commands never reach her, and never reach the model.
+      const command = via === 'text' ? parseCommand(spoken) : null;
+      if (command) {
+        void runCommand(command);
+        return;
+      }
 
       setError(null);
       setBusy(true);
@@ -251,7 +350,7 @@ export function useGrace() {
         api.reflect().then(addLearned).catch(() => {});
       }
     },
-    [addLearned, speech, voiceOn, voiceMode],
+    [addLearned, runCommand, speech, voiceOn, voiceMode],
   );
 
   const handleRequest = useCallback(
@@ -343,6 +442,8 @@ export function useGrace() {
   }, [ambient.awake]);
 
   ambientAwakeRef.current = ambient.awake || ambient.state === 'hearing';
+  // So /sleep reaches the listener without this hook depending on its order.
+  ambientRef.current = ambient.sleep;
 
   // Only worth holding the machine awake while she is actually listening.
   useWakeLock(micOn);
