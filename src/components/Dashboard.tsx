@@ -190,7 +190,7 @@ export function Dashboard({
       </div>
 
       <div className="text-center">
-        <p className="font-serif text-4xl tracking-wide text-slate-100 tabular-nums">
+        <p className="figure font-serif text-5xl tracking-wide text-slate-100">
           {/* Keyed on the minute, so the new figure settles in rather than
               swapping. It is the one thing on screen that is always true. */}
           <span key={now.getMinutes()} className="settle inline-block">
@@ -226,7 +226,7 @@ export function Dashboard({
 
       {wants('faculties') && (
       <div>
-        <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
+        <h3 className="label mb-2">
           Faculties
         </h3>
         <Faculties
@@ -273,7 +273,7 @@ export function Dashboard({
 
       {wants('attention') && (
       <div>
-        <h3 className="mb-2 text-[0.62rem] uppercase tracking-[0.14em] text-mist/50">
+        <h3 className="label mb-2">
           Attention {heldFor && <span className="text-mist/35">· {heldFor}</span>}
         </h3>
         <div className="grid grid-cols-2 gap-1.5">

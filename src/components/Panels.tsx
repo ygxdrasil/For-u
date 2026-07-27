@@ -20,6 +20,9 @@ import type {GraceState, JournalEntry} from '../../shared/types';
  * placeholder ever — a readout that isn't true is worse than no readout.
  */
 
+/** Bumped per panel so they arrive in sequence rather than in one frame. */
+let order = 0;
+
 export function Panel({
   title,
   bright,
@@ -29,11 +32,17 @@ export function Panel({
   bright?: boolean;
   children: ReactNode;
 }) {
+  // Worked out once on first render and kept, so a panel that updates does not
+  // fade itself back in every time its data changes.
+  const [delay] = useState(() => Math.min((order++ % 9) * 45, 400));
+
   return (
-    <div className={`glass bracket px-4 py-3 ${bright ? 'glass-bright attend' : ''}`}>
-      <h3 className="mb-2 text-[0.6rem] uppercase tracking-[0.2em] text-mist/55">
-        {title}
-      </h3>
+    <div
+      style={{'--in': `${delay}ms`} as React.CSSProperties}
+      className={`glass bracket cascade px-4 py-3 ${
+        bright ? 'glass-bright edge-run attend' : ''
+      }`}>
+      <h3 className="label mb-2">{title}</h3>
       {children}
     </div>
   );

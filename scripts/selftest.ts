@@ -39,6 +39,7 @@ import {recentDeeds} from '../server/journal';
 import {labelMail} from '../server/google/gmail';
 import {getMode, setMode} from '../server/modes';
 import {workspaces} from '../server/workspaces';
+import {buildSystemPrompt} from '../server/persona';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
@@ -1450,6 +1451,43 @@ try {
     'the offered list must be stable for the same set of connections',
   );
   ok('only connected tools are offered, and the offer is stable enough to cache');
+
+  // The prompt narrows on the same picture, for a reason beyond the tokens: a
+  // paragraph teaching her to pause a failing n8n workflow, on an account with
+  // no n8n and therefore no pause_workflow, can only teach her to promise
+  // something she has no way to do.
+  const wholeSelf = buildSystemPrompt({
+    profile: await getProfile(),
+    summary: null,
+    policies: [],
+    via: 'text',
+    now: new Date(),
+    mode: 'open',
+  });
+  const thisAccount = buildSystemPrompt({
+    profile: await getProfile(),
+    summary: null,
+    policies: [],
+    via: 'text',
+    now: new Date(),
+    mode: 'open',
+    available: unplugged,
+  });
+  assert.match(wholeSelf, /pause_workflow/, 'the whole of her still describes it');
+  assert.doesNotMatch(
+    thisAccount,
+    /pause_workflow|wake_playstation|open_on_laptop|notify_phone/,
+    'nothing unconnected may be described',
+  );
+  // The rules that hold whatever is plugged in must survive the narrowing.
+  for (const rule of ['never send', 'search_web', 'ask_choice', 'remember_this']) {
+    assert.ok(thisAccount.includes(rule), `"${rule}" is not conditional on anything`);
+  }
+  assert.ok(
+    thisAccount.length < wholeSelf.length * 0.9,
+    'and the narrowing should be worth doing',
+  );
+  ok('the prompt describes only the powers she actually has');
 
   // ---- guardrails are structural, not advisory ---------------------------
   for (const category of ['communication', 'purchase']) {

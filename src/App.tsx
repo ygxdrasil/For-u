@@ -211,8 +211,14 @@ export default function App() {
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden">
+      {/* The room, in layers, back to front: two bodies of light crossing at
+          different speeds, the ruled grid, a film of grain to stop the
+          gradients banding, and a vignette so the light has a direction. */}
       <div className="field pointer-events-none" />
+      <div className="field-counter pointer-events-none" />
       <div className="grid-veil" />
+      <div className="grain" />
+      <div className="vignette" />
 
       <header className="flex items-center justify-between border-b border-edge/70 px-4 py-3 sm:px-5">
         <h1 className="flex items-baseline gap-2 font-serif text-xl tracking-wide text-slate-100">

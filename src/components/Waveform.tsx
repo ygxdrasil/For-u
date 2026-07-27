@@ -83,39 +83,76 @@ export function Waveform({mode, level, height = 120, onPress}: Props) {
       const middle = tall / 2;
       const [red, green, blue] = COLOUR[state];
 
-      // Three passes at decreasing opacity make the line look like it is
-      // emitting light rather than being drawn in it.
-      for (let pass = 0; pass < 3; pass += 1) {
+      /** The line's shape at a given point, offset in time and in phase. */
+      const trace = (shift: number, lift: number) => {
         context.beginPath();
-        const thickness = [7, 3, 1.4][pass];
-        const alpha = [0.1, 0.28, 0.95][pass];
-
         for (let x = 0; x <= width; x += 2) {
           const across = x / width;
           // Pinned at both ends, fullest in the middle, so it reads as a
           // single object rather than a strip that has been cut off.
           const envelope = Math.sin(across * Math.PI) ** 1.6;
           const wave =
-            Math.sin(across * 11 + time * 1.7) * 0.55 +
-            Math.sin(across * 19 - time * 2.3) * 0.3 +
-            Math.sin(across * 4.5 + time * 0.9) * 0.15;
+            Math.sin(across * 11 + time * 1.7 + shift) * 0.55 +
+            Math.sin(across * 19 - time * 2.3 + shift) * 0.3 +
+            Math.sin(across * 4.5 + time * 0.9 + shift) * 0.15;
 
-          const y = middle + wave * envelope * energy * (tall * 0.42);
+          const y = middle + wave * envelope * energy * (tall * 0.42) * lift;
           if (x === 0) context.moveTo(x, y);
           else context.lineTo(x, y);
         }
+      };
 
-        context.strokeStyle = `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-        context.lineWidth = thickness;
-        context.lineCap = 'round';
+      context.lineCap = 'round';
+
+      /**
+       * Chromatic split: the same line drawn twice more, a hair out of phase,
+       * in the two colours either side of hers, added rather than painted over.
+       *
+       * This is what a bright emitter does to a lens, and it is most of the
+       * difference between a line that is coloured and a line that is glowing.
+       * Only while there is something to see — at rest it would be a smear.
+       */
+      if (energy > 0.05) {
+        context.globalCompositeOperation = 'lighter';
+        trace(0.35, 0.94);
+        context.strokeStyle = `rgba(120, 190, 255, ${0.3 * energy})`;
+        context.lineWidth = 2;
         context.stroke();
+
+        trace(-0.35, 1.06);
+        context.strokeStyle = `rgba(255, 120, 200, ${0.3 * energy})`;
+        context.lineWidth = 2;
+        context.stroke();
+        context.globalCompositeOperation = 'source-over';
       }
 
-      // A dot at rest, so she is never simply absent from the screen.
+      // Three passes at decreasing opacity make the line look like it is
+      // emitting light rather than being drawn in it. The widest pass is also
+      // blurred, so the falloff is soft the way real light is rather than a
+      // stack of three visible strokes.
+      for (let pass = 0; pass < 3; pass += 1) {
+        const thickness = [9, 3, 1.4][pass];
+        const alpha = [0.09, 0.26, 0.95][pass];
+        context.filter = pass === 0 ? 'blur(6px)' : 'none';
+        trace(0, 1);
+        context.strokeStyle = `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+        context.lineWidth = thickness;
+        context.stroke();
+      }
+      context.filter = 'none';
+
+      // A dot at rest, so she is never simply absent from the screen — with
+      // its own small halo, since a bare 2px circle reads as a dead pixel.
       if (energy < 0.04) {
+        const breath = 0.75 + Math.sin(time * 0.9) * 0.25;
+        context.beginPath();
+        context.arc(width / 2, middle, 9, 0, Math.PI * 2);
+        context.fillStyle = `rgba(${red}, ${green}, ${blue}, ${0.1 * breath})`;
+        context.fill();
+
         context.beginPath();
         context.arc(width / 2, middle, 2.5, 0, Math.PI * 2);
-        context.fillStyle = `rgba(${red}, ${green}, ${blue}, 0.85)`;
+        context.fillStyle = `rgba(${red}, ${green}, ${blue}, ${0.85 * breath})`;
         context.fill();
       }
 

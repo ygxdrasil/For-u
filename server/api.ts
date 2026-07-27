@@ -380,7 +380,9 @@ export function createApi(): Express {
         recentTurns(),
       ]);
 
+      const have = await available();
       const system = buildSystemPrompt({
+        available: have,
         profile,
         summary,
         policies,
@@ -427,7 +429,7 @@ export function createApi(): Express {
           onSearchFailed: (reason) => send({type: 'search-failed', reason}),
           // Only what is connected. Held for minutes at a time so the list
           // stays byte-identical between messages and keeps the cache discount.
-          tools: declarations(await available()),
+          tools: declarations(have),
           // What the model reads and what the user sees are different strings,
           // and only this layer holds both. The provider hands onToolUsed
           // whatever onToolCall returned — the raw result — so checking the
