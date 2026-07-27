@@ -1085,17 +1085,32 @@ try {
   // The worklet is only pulled if it reaches the destination; unconnected, its
   // process() is never called and she is silently deaf everywhere.
   assert.match(ambient, /silent\.connect\(context\.destination\)/);
-  // The frame clock still exists, and must stay strictly a fallback: named
-  // once where it is defined and reached exactly once, from the failure path.
+  // The frame clock still exists and must stay strictly a fallback. Two ways
+  // to reach it now, and both are failures: the worklet refusing to load, and
+  // the worklet loading but never being called — which is silent, and is
+  // exactly how she ended up hearing nothing at all while appearing to listen.
+  assert.equal(ambient.split('const watchOnScreen').length - 1, 1);
   assert.equal(
-    ambient.split('watchOnScreen').length - 1,
+    ambient.split('watchOnScreen();').length - 1,
     2,
-    'the frame clock must be the fallback, never a second live path',
+    'the frame clock is reached only from the two failure paths',
   );
   assert.ok(
     ambient.indexOf('audioWorklet.addModule') < ambient.indexOf('watchOnScreen()'),
     'the worklet is tried first; the frame clock only when it fails',
   );
+  // The watchdog is the whole point of the second path, so it is asserted
+  // rather than left to survive at the mercy of a future tidy-up.
+  assert.match(
+    ambient,
+    /if \(!runningRef\.current \|\| heardSomething\) return;/,
+    'a worklet that loads and then never runs must still be caught',
+  );
+  // Calibration has to start from the first reading. Started from the clock,
+  // a slow worklet load consumed the whole window and left the room floor at
+  // zero, with no way back because the window had passed.
+  assert.match(ambient, /if \(openedAt === 0\) openedAt = now;/);
+  ok('listening falls back rather than failing silently, and calibrates late');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach
