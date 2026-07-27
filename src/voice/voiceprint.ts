@@ -105,20 +105,57 @@ let lastBlend = 0;
 
 export async function keepUpWith(guard: GuardState, audio: Blob): Promise<void> {
   if (!guard.on || !guard.enrolment) return;
-  if (Date.now() - lastBlend < 10 * 60_000) return;
-
   try {
-    const moved = blend(guard.enrolment, await printFrom(audio));
-    if (!moved) return;
-    lastBlend = Date.now();
-    await fetch('/api/voice-enrol', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enrolment: moved}),
-    });
+    await keepUpWithPrint(guard, await printFrom(audio));
   } catch {
     // Nothing here is worth interrupting anyone over.
   }
+}
+
+async function keepUpWithPrint(guard: GuardState, print: Voiceprint): Promise<void> {
+  if (!guard.enrolment) return;
+  if (Date.now() - lastBlend < 10 * 60_000) return;
+
+  const moved = blend(guard.enrolment, print);
+  if (!moved) return;
+  lastBlend = Date.now();
+  await fetch('/api/voice-enrol', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enrolment: moved}),
+  });
+}
+
+/**
+ * The same two jobs, on raw samples.
+ *
+ * The ambient path holds actual audio rather than an encoded blob, so it can
+ * skip decoding entirely — which is not merely tidier. Decoding was an await
+ * in the middle of deciding whether to answer, and the whole point of checking
+ * the speaker before transcribing was to make an unrecognised voice cost
+ * nothing. Cost nothing, and take no time.
+ */
+export function wasYouSamples(
+  guard: GuardState,
+  samples: Float32Array,
+  rate: number,
+): Verdict {
+  if (!guard.on || !guard.enrolment) return {ok: true, score: 1, needed: 0};
+  try {
+    return verify(guard.enrolment, printOf(samples, rate), guard.strictness);
+  } catch {
+    // A broken recording is not an impostor.
+    return {ok: true, score: 1, needed: 0};
+  }
+}
+
+export function keepUpWithSamples(
+  guard: GuardState,
+  samples: Float32Array,
+  rate: number,
+): void {
+  if (!guard.on || !guard.enrolment) return;
+  void keepUpWithPrint(guard, printOf(samples, rate)).catch(() => {});
 }
 
 export async function wasYou(guard: GuardState, audio: Blob): Promise<Verdict> {

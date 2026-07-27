@@ -1,8 +1,9 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import * as api from '../lib/api';
 import {acquire, MicError, type MicLease} from './mic';
-import {toWav} from './wav';
-import {keepUpWith, wasYou, type GuardState} from './voiceprint';
+import {wavFromSamples} from './wav';
+import {keepUpWithSamples, wasYouSamples, type GuardState} from './voiceprint';
+import {heardName} from '../../shared/wake';
 
 /**
  * Always-on listening.
@@ -49,6 +50,7 @@ class Ears extends AudioWorkletProcessor {
     this.sum = 0;
     this.count = 0;
     this.frames = 0;
+    this.held = [];
   }
 
   process(inputs) {
@@ -59,12 +61,32 @@ class Ears extends AudioWorkletProcessor {
       this.sum += sum;
       this.count += channel.length;
       this.frames += channel.length;
+      this.held.push(channel.slice());
     }
 
     // Roughly every 50ms. Blocks are 128 frames, which would be 375 messages a
     // second — enough to make the main thread the bottleneck it was not.
     if (this.frames >= sampleRate * 0.05) {
-      this.port.postMessage(this.count > 0 ? Math.sqrt(this.sum / this.count) : 0);
+      // The audio itself travels with the reading. It is the only way to have
+      // the moment *before* someone started speaking: by the time loudness has
+      // crossed a threshold, the first syllable is already in the past, and a
+      // recorder started at that instant has missed it. Missing the first
+      // syllable of "Grace, put the lights on" is missing the word that
+      // decides whether she answers at all.
+      let total = 0;
+      for (const block of this.held) total += block.length;
+      const audio = new Float32Array(total);
+      let at = 0;
+      for (const block of this.held) {
+        audio.set(block, at);
+        at += block.length;
+      }
+      this.held = [];
+
+      this.port.postMessage(
+        {rms: this.count > 0 ? Math.sqrt(this.sum / this.count) : 0, audio},
+        [audio.buffer],
+      );
       this.sum = 0;
       this.count = 0;
       this.frames = 0;
@@ -75,9 +97,6 @@ class Ears extends AudioWorkletProcessor {
 }
 registerProcessor('grace-ears', Ears);
 `;
-
-/** "Grace", and the ways a transcriber writes her. */
-const WAKE = /\b(grace|grayce|greys|grace's)\b[\s,.:;!?-]*/i;
 
 const CALIBRATION_MS = 600;
 const SPEECH_FLOOR = 0.012;
@@ -101,6 +120,10 @@ interface AmbientOptions {
   onRequest: (text: string) => void;
   /** Whose voice she answers to, when that has been set up. */
   guard?: GuardState | null;
+  /** True while audio is actually coming out of the speakers. */
+  speaking?: boolean;
+  /** Called when her name is said mid-sentence: stop talking, listen. */
+  onBargeIn?: () => void;
 }
 
 export function useAmbient({
@@ -109,6 +132,8 @@ export function useAmbient({
   deviceId,
   onRequest,
   guard,
+  speaking,
+  onBargeIn,
 }: AmbientOptions) {
   const [state, setState] = useState<AmbientState>('off');
   const [level, setLevel] = useState(0);
@@ -126,7 +151,6 @@ export function useAmbient({
   const leaseRef = useRef<MicLease | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const earsRef = useRef<AudioWorkletNode | null>(null);
   const frameRef = useRef<number | undefined>(undefined);
   const awakeUntilRef = useRef(0);
@@ -134,6 +158,12 @@ export function useAmbient({
   const pausedRef = useRef(paused);
   const runningRef = useRef(false);
   const guardRef = useRef<GuardState | null>(null);
+  const speakingRef = useRef(false);
+  const onBargeInRef = useRef(onBargeIn);
+  /** Lets the blob path reach the sample path without a circular dependency. */
+  const considerRef = useRef<(samples: Float32Array, rate: number) => Promise<void>>(
+    async () => {},
+  );
 
   useEffect(() => {
     onRequestRef.current = onRequest;
@@ -146,15 +176,16 @@ export function useAmbient({
   useEffect(() => {
     guardRef.current = guard ?? null;
   }, [guard]);
+  useEffect(() => {
+    speakingRef.current = Boolean(speaking);
+  }, [speaking]);
+  useEffect(() => {
+    onBargeInRef.current = onBargeIn;
+  }, [onBargeIn]);
 
   const stop = useCallback(() => {
     runningRef.current = false;
     window.cancelAnimationFrame(frameRef.current ?? 0);
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      recorderRef.current.onstop = null;
-      recorderRef.current.stop();
-    }
-    recorderRef.current = null;
     earsRef.current?.port.close();
     earsRef.current?.disconnect();
     earsRef.current = null;
@@ -177,9 +208,27 @@ export function useAmbient({
    * is it" is how people actually talk. Once addressed she stays awake briefly,
    * so a follow-up needs no name at all.
    */
-  const consider = useCallback(async (audio: Blob) => {
+  /** The fallback's route in: decode the blob, then exactly the same path. */
+  const considerBlob = useCallback(
+    async (audio: Blob) => {
+      const context = new AudioContext();
+      try {
+        const decoded = await context.decodeAudioData(await audio.arrayBuffer());
+        await considerRef.current(decoded.getChannelData(0), decoded.sampleRate);
+      } catch (cause) {
+        console.warn('[grace] could not read the recording:', (cause as Error).message);
+      } finally {
+        await context.close().catch(() => {});
+      }
+    },
+    [],
+  );
+
+  const consider = useCallback(async (samples: Float32Array, rate: number) => {
     setState('working');
     try {
+      const wav = wavFromSamples(samples, rate);
+
       /*
        * Whose voice it was, decided here, before anything leaves the machine.
        *
@@ -193,7 +242,7 @@ export function useAmbient({
         on: false,
         strictness: 'normal' as const,
       };
-      const speaker = await wasYou(guarding, audio);
+      const speaker = wasYouSamples(guarding, samples, rate);
       if (guarding.on && guarding.enrolment) setLastScore(speaker.score);
       if (!speaker.ok) {
         // Counted, not just noted. One refusal is the television; several in a
@@ -204,22 +253,31 @@ export function useAmbient({
         return;
       }
       setStrangers(0);
-      void keepUpWith(guarding, audio);
+      void keepUpWithSamples(guarding, samples, rate);
 
-      const wav = await toWav(audio);
       const text = (await api.transcribe(wav.base64, wav.mimeType)).trim();
       if (!text) return;
 
       setHeard(text);
 
-      const match = WAKE.exec(text);
+      const {called, request} = heardName(text);
       const stillAwake = Date.now() < awakeUntilRef.current;
 
-      if (!match && !stillAwake) return;
+      /*
+       * Interrupting her.
+       *
+       * Saying her name while she is talking stops her, immediately, and what
+       * follows is treated as the next thing asked. That is how you cut a
+       * person off mid-sentence and it is the only natural way to do it — the
+       * alternative is waiting politely for a machine to finish reading out
+       * something you already have the answer to.
+       *
+       * Only her name will do it. Any loud noise would mean the television
+       * could silence her, and a stray cough would lose you the answer.
+       */
+      if (called && onBargeInRef.current) onBargeInRef.current();
 
-      const request = match
-        ? `${text.slice(0, match.index)}${text.slice(match.index + match[0].length)}`.trim()
-        : text;
+      if (!called && !stillAwake) return;
 
       // Just her name and nothing else: she is being got, not asked.
       if (!request) {
@@ -230,7 +288,7 @@ export function useAmbient({
 
       awakeUntilRef.current = 0;
       setAwake(false);
-      onRequestRef.current(request);
+      onRequestRef.current(called ? request : text);
     } catch (cause) {
       // A failed transcription in the background is not worth interrupting
       // anyone over; it will be tried again on the next thing said.
@@ -239,6 +297,8 @@ export function useAmbient({
       setState((current) => (current === 'working' ? 'listening' : current));
     }
   }, []);
+
+  considerRef.current = consider;
 
   const start = useCallback(async () => {
     if (runningRef.current) return;
@@ -282,34 +342,107 @@ export function useAmbient({
     let floorSamples = 0;
     let speakingSince = 0;
     let quietSince = 0;
-    let chunks: BlobPart[] = [];
     /** Has any reading arrived at all? The watchdog below turns on this. */
     let heardSomething = false;
+    /** True once the audio thread has been given up on. */
+    let fromFrames = false;
 
-    setState('listening');
+    /*
+     * The rolling buffer, and the reason the recorder is gone.
+     *
+     * Speech is only noticed once it is loud enough, and by then the first
+     * syllable has already happened. A recorder started at that instant has
+     * missed it — which for "Grace, put the lights on" means losing exactly the
+     * word that decides whether she answers at all, and is most of why the same
+     * sentence had to be said two or three times.
+     *
+     * So the last second and a half of audio is always in hand, and capture
+     * begins from *before* the moment speech was detected. MediaRecorder cannot
+     * do this: only its first chunk carries the stream header, so a buffer of
+     * later chunks is undecodable on its own. Raw samples have no such problem,
+     * and there is nothing to decode at the other end either.
+     */
+    const rate = context.sampleRate;
+    const PREROLL = Math.round(rate * 0.5);
+    const RING = Math.round(rate * 1.5);
+    let ring: Float32Array[] = [];
+    let ringLength = 0;
+    let collected: Float32Array[] | null = null;
+
+    const remember = (block: Float32Array) => {
+      ring.push(block);
+      ringLength += block.length;
+      while (ringLength - ring[0].length >= RING) {
+        ringLength -= (ring.shift() as Float32Array).length;
+      }
+    };
+
+    const joined = (blocks: Float32Array[]): Float32Array => {
+      const total = blocks.reduce((sum, block) => sum + block.length, 0);
+      const out = new Float32Array(total);
+      let at = 0;
+      for (const block of blocks) {
+        out.set(block, at);
+        at += block.length;
+      }
+      return out;
+    };
+
+    /*
+     * The fallback keeps a recorder, because it has no samples to keep.
+     *
+     * The frame clock only ever sees a loudness number; the raw audio arrives
+     * with the worklet's readings and nowhere else. Without this, a fall back
+     * to frames would leave her detecting speech perfectly and capturing
+     * nothing at all — which is a worse failure than the one being fallen back
+     * from, and completely silent.
+     */
+    let recorder: MediaRecorder | null = null;
+    let chunks: BlobPart[] = [];
 
     const beginCapture = () => {
-      chunks = [];
-      const recorder = new MediaRecorder(lease.stream);
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
-        if (blob.size > 0) void consider(blob);
-      };
-      recorder.start();
+      if (fromFrames) {
+        chunks = [];
+        recorder = new MediaRecorder(lease.stream);
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) chunks.push(event.data);
+        };
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, {type: 'audio/webm'});
+          if (blob.size > 0) void considerBlob(blob);
+        };
+        recorder.start();
+        setState('hearing');
+        return;
+      }
+
+      // Everything already in hand, trimmed to the pre-roll, so her name is
+      // whole rather than starting halfway through the "G".
+      const held = joined(ring);
+      collected = [held.subarray(Math.max(0, held.length - PREROLL)).slice()];
       setState('hearing');
     };
 
     const endCapture = (keep: boolean) => {
-      const recorder = recorderRef.current;
-      recorderRef.current = null;
-      if (!recorder || recorder.state === 'inactive') return;
-      if (!keep) recorder.onstop = null;
-      recorder.stop();
-      if (!keep) setState('listening');
+      if (fromFrames) {
+        const stopping = recorder;
+        recorder = null;
+        if (!stopping || stopping.state === 'inactive') return;
+        if (!keep) stopping.onstop = null;
+        stopping.stop();
+        if (!keep) setState('listening');
+        return;
+      }
+
+      const taken = collected;
+      collected = null;
+      if (!taken) return;
+      if (keep) {
+        const audio = joined(taken);
+        if (audio.length > 0) void consider(audio, rate);
+      } else {
+        setState('listening');
+      }
     };
 
     /**
@@ -319,10 +452,14 @@ export function useAmbient({
      * what lets the same judgement run from the audio thread, which never
      * stops, and from the frame clock, which does.
      */
-    const onLevel = (rms: number) => {
+    const onLevel = (rms: number, block?: Float32Array) => {
       if (!runningRef.current) return;
 
       heardSomething = true;
+      if (block) {
+        remember(block);
+        if (collected) collected.push(block);
+      }
 
       // Nobody is watching the meter on a tab nobody is looking at, and a
       // React render twenty times a second to move a bar that is not on screen
@@ -339,24 +476,45 @@ export function useAmbient({
         return;
       }
 
-      // Her own voice must never wake her, or she talks to herself forever.
-      if (pausedRef.current) {
-        if (recorderRef.current) endCapture(false);
+      /*
+       * While she is talking, she keeps listening — but only for her name.
+       *
+       * She used to go completely deaf whenever she spoke, which is why there
+       * was no way to cut her off. Now the microphone stays live and anything
+       * heard during her own speech is still transcribed; it simply has to
+       * contain her name to count, so the sound of her own voice coming back
+       * out of the speakers cannot start a conversation with itself.
+       *
+       * Thinking is different from speaking: while she is working on an answer
+       * nothing is coming out of the speakers, so there is nothing to guard
+       * against and no reason to hold the next thing you say.
+       */
+      if (pausedRef.current && !speakingRef.current) {
+        if (collected) endCapture(false);
         return;
       }
 
-      const threshold = Math.max(SPEECH_FLOOR, floor * 3);
+      /*
+       * The threshold, and why it is lower than it was.
+       *
+       * Three times the measured room floor sounds prudent and is not: a
+       * calibration that catches a passing car sets a floor that then needs
+       * shouting to clear. Twice the floor, and never above a hard ceiling, so
+       * a noisy sixth of a second at start-up cannot leave her deaf for the
+       * rest of the session.
+       */
+      const threshold = Math.min(0.05, Math.max(SPEECH_FLOOR, floor * 2));
       const loud = rms > threshold;
 
       if (loud) {
         quietSince = 0;
-        if (!recorderRef.current) {
+        if (!collected) {
           speakingSince = now;
           beginCapture();
         } else if (now - speakingSince > MAX_UTTERANCE_MS) {
           endCapture(true);
         }
-      } else if (recorderRef.current) {
+      } else if (collected) {
         if (quietSince === 0) quietSince = now;
         else if (now - quietSince > TRAILING_SILENCE_MS) {
           const spoken = quietSince - speakingSince;
@@ -404,7 +562,8 @@ export function useAmbient({
 
       const ears = new AudioWorkletNode(context, 'grace-ears');
       earsRef.current = ears;
-      ears.port.onmessage = (event: MessageEvent<number>) => onLevel(event.data);
+      ears.port.onmessage = (event: MessageEvent<{rms: number; audio: Float32Array}>) =>
+        onLevel(event.data.rms, event.data.audio);
 
       const silent = context.createGain();
       silent.gain.value = 0;
@@ -431,6 +590,7 @@ export function useAmbient({
         if (!runningRef.current || heardSomething) return;
         console.warn('[grace] the audio thread produced nothing; falling back');
         void context.resume().catch(() => {});
+        fromFrames = true;
         setEar('frames');
         watchOnScreen();
       }, 1500);
@@ -442,10 +602,11 @@ export function useAmbient({
         '[grace] audio worklet unavailable, listening only while visible:',
         (cause as Error).message,
       );
+      fromFrames = true;
       setEar('frames');
       watchOnScreen();
     }
-  }, [consider, deviceId]);
+  }, [consider, considerBlob, deviceId]);
 
   useEffect(() => {
     if (enabled) void start();

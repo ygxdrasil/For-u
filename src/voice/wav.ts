@@ -89,6 +89,25 @@ export interface EncodedAudio {
   seconds: number;
 }
 
+/**
+ * Samples straight to WAV, with no container in the middle.
+ *
+ * The ambient path captures raw audio off the audio thread rather than through
+ * MediaRecorder, so there is nothing to decode: no codec, no container, and no
+ * waiting for a recorder to stop before the words can be looked at. It also
+ * sidesteps the trap that makes pre-roll almost impossible with MediaRecorder —
+ * only its first chunk carries the stream header, so a buffer of later chunks
+ * on its own is undecodable.
+ */
+export function wavFromSamples(samples: Float32Array, rate: number): EncodedAudio {
+  const resampled = resample(samples, rate, TARGET_RATE);
+  return {
+    base64: toBase64(encodeWav(resampled, TARGET_RATE)),
+    mimeType: 'audio/wav',
+    seconds: resampled.length / TARGET_RATE,
+  };
+}
+
 export async function toWav(recording: Blob): Promise<EncodedAudio> {
   const context = new AudioContext();
   try {

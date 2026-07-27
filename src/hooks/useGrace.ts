@@ -273,6 +273,18 @@ export function useGrace() {
     paused: busy || speech.speaking || recorder.state !== 'idle' || transcribing,
     onRequest: handleRequest,
     guard,
+    /*
+     * Told apart from `paused` on purpose.
+     *
+     * Paused covers everything that should stop her acting on what she hears.
+     * This one is narrower: audio is genuinely coming out of the speakers right
+     * now. During that, and only that, she keeps listening for her name so she
+     * can be cut off mid-sentence — which is how you interrupt a person, and
+     * the only alternative is waiting politely for a machine to finish reading
+     * out something you already know.
+     */
+    speaking: speech.speaking,
+    onBargeIn: () => speech.cancel(),
   });
 
   // One note when she wakes to her name, and not once per frame of hearing it.

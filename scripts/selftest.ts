@@ -42,6 +42,7 @@ import {workspaces} from '../server/workspaces';
 import {buildSystemPrompt} from '../server/persona';
 import {BANDS} from '../shared/voiceprint';
 import {trimTrailingSilence} from '../shared/trim';
+import {heardName} from '../shared/wake';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
@@ -1170,6 +1171,46 @@ try {
   const garbage = new Uint8Array([1, 2, 3, 4, 5]);
   assert.equal(trimTrailingSilence(garbage), garbage, 'a non-WAV is left alone');
   ok('trailing silence is cut from her speech, and only when it is understood');
+
+  // ---- did somebody say her name -----------------------------------------
+  // Nothing here ever sees the word "Grace". It sees a transcriber's guess at
+  // a word, from a second of speech in a room, from someone who may have an
+  // accent and may be across it. The old test was a literal match against four
+  // spellings, and everything else was silently not-for-her — which from the
+  // other side of the room looks exactly like being heard and ignored.
+  for (const said of [
+    'Grace, what time is it',
+    'grace whats on today',
+    'sorry Grace, one more thing',
+    'Gracie turn the lights off',
+    'greys put the kettle on',
+    'Race, what is the weather',
+    'okay grays lights out',
+    'Grease, open my mail',
+  ]) {
+    assert.equal(heardName(said).called, true, `"${said}" should reach her`);
+  }
+
+  // And the words that must not, because they turn up in ordinary speech and
+  // waking on them would be worse than missing one call.
+  for (const said of [
+    'that was a great idea',
+    'the grade came back',
+    'brace yourself',
+    'leave a space there',
+    'trace it back to Tuesday',
+  ]) {
+    assert.equal(heardName(said).called, false, `"${said}" must not wake her`);
+  }
+
+  // Her name comes out of the request, and takes its punctuation with it —
+  // a request that begins ", what time is it" reads to the model as a
+  // transcription fault and gets remarked upon instead of answered.
+  assert.equal(heardName('Grace, what time is it').request, 'what time is it');
+  assert.equal(heardName('sorry Grace, one more thing').request, 'sorry one more thing');
+  assert.equal(heardName('Grace').request, '', 'her name alone is not a request');
+  assert.equal(heardName('Grace!').request, '');
+  ok('her name is recognised however it was transcribed, and only her name');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach
