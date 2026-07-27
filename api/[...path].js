@@ -643,6 +643,9 @@ function meter(model, usage) {
   ).catch(() => {
   });
 }
+function voiceFor(request) {
+  return request.voice || chosenVoice() || config.voice;
+}
 var SPEAK_DIRECTION = "Read the following aloud in a calm, warm, unhurried voice, the way a composed personal assistant would speak to someone they know well. Read only the text itself:";
 function sampleRateOf(mimeType) {
   const rate = Number(/rate=(\d+)/.exec(mimeType ?? "")?.[1]);
@@ -796,7 +799,7 @@ ${request.text}` }]
         responseModalities: ["AUDIO"],
         speechConfig: {
           // A pasted choice wins over the deploy-time default, like every key.
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: chosenVoice() || config.voice } }
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceFor(request) } }
         }
       }
     });
@@ -1784,7 +1787,7 @@ function essence(text) {
 function findForReading(notes, title) {
   const exact = match(notes, title);
   if (exact) return exact;
-  const asked = words(title);
+  const asked = words(title).filter((word) => !FILLER.has(word));
   if (asked.length === 0) return void 0;
   return notes.find((note) => {
     const own = new Set(words(note.title));
@@ -1876,7 +1879,7 @@ function essence2(text) {
 function findForResolving(list, title) {
   const exact = find(list, title);
   if (exact) return exact;
-  const asked = words2(title);
+  const asked = words2(title).filter((word) => !FILLER2.has(word));
   if (asked.length === 0) return void 0;
   return list.find((one) => {
     const own = new Set(words2(one.title));

@@ -294,14 +294,18 @@ export default function App() {
         {/* One mount, whichever shape the screen is. Rendering it in both a
             desktop aside and a phone tab looked free — CSS hid one — but a
             hidden component still runs, so every panel polled its services
-            twice. On a page that lives open all day, that doubled her bill. */}
-        {wide ? (
-          <aside className="w-80 shrink-0 border-r border-edge/70">{dashboard}</aside>
-        ) : (
-          <div className={`min-h-0 flex-1 ${tab === 'grace' ? '' : 'hidden'}`}>
-            {dashboard}
-          </div>
-        )}
+            twice. On a page that lives open all day, that doubled her bill.
+            One ELEMENT too, not a ternary of two: branching on the breakpoint
+            remounted the whole tree at 1024px, which threw away an unsaved
+            note edit mid-drag. The element stays; only its clothes change. */}
+        <aside
+          className={
+            wide
+              ? 'w-80 shrink-0 border-r border-edge/70'
+              : `min-h-0 flex-1 ${tab === 'grace' ? '' : 'hidden'}`
+          }>
+          {dashboard}
+        </aside>
 
         <section
           className={`min-w-0 flex-1 flex-col lg:flex ${

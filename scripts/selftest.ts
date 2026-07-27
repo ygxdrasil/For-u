@@ -632,6 +632,42 @@ try {
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
 
+  // ---- an audition is heard in the voice being auditioned ------------------
+  // The override was once applied with a pattern that no longer matched the
+  // file: the edit silently changed nothing, shipped, and every audition
+  // played in the current voice. The resolution order is now a bare function
+  // precisely so this can be proved without a network.
+  const {voiceFor} = await import('../server/llm/gemini');
+  assert.equal(
+    voiceFor({text: 'sample', voice: 'Aoede'}),
+    'Aoede',
+    'a sample must come out in the voice being auditioned',
+  );
+  assert.ok(
+    voiceFor({text: 'sample'}).length > 0,
+    'and with no override she still has a voice to fall back to',
+  );
+  ok('auditioning a voice is heard in that voice, not the current one');
+
+  // ---- filler words never hide a page or a situation -----------------------
+  // "my Berlin" is asking for Berlin; "the govee order" should settle
+  // "Govee order EU641959". Both once returned nothing, because the asked-side
+  // filler was never dropped before the whole-word check.
+  await runTool({name: 'write_note', args: {title: 'Berlin trip', text: 'Packing list started'}});
+  const askedWithMy = await runTool({name: 'read_note', args: {title: 'my Berlin'}});
+  assert.match(askedWithMy.result, /Packing list/, '"my Berlin" finds the Berlin trip');
+
+  await runTool({
+    name: 'track_situation',
+    args: {title: 'Govee order EU641959', update: 'Shipped from the EU warehouse.'},
+  });
+  const settledLoose = await runTool({
+    name: 'resolve_situation',
+    args: {title: 'the govee order'},
+  });
+  assert.match(settledLoose.result, /resolved/i, '"the govee order" settles it');
+  ok('filler words never hide a note or keep a situation open');
+
   // ---- a near-miss title is a new page, never a wrong merge ----------------
   // Substring matching used to file "Oscar plans" into a note called "car",
   // because "oscar" contains "car" — and a wrong merge is invisible in a way

@@ -57,6 +57,19 @@ function meter(model: string, usage: Usage | undefined): void {
     .catch(() => {});
 }
 
+/**
+ * Which voice one utterance comes out in.
+ *
+ * The audition override wins, then the voice the user chose, then the default.
+ * Exported bare so the self-test can prove the order — the first version of
+ * the override was applied with a pattern that no longer matched this file,
+ * silently changed nothing, and shipped: every audition played in the current
+ * voice, and no test could have noticed because the logic lived inline.
+ */
+export function voiceFor(request: SpeakRequest): string {
+  return request.voice || chosenVoice() || config.voice;
+}
+
 const SPEAK_DIRECTION =
   'Read the following aloud in a calm, warm, unhurried voice, the way a ' +
   'composed personal assistant would speak to someone they know well. Read ' +
@@ -256,7 +269,7 @@ export class GeminiProvider implements LlmProvider {
         responseModalities: ['AUDIO'],
         speechConfig: {
           // A pasted choice wins over the deploy-time default, like every key.
-          voiceConfig: {prebuiltVoiceConfig: {voiceName: chosenVoice() || config.voice}},
+          voiceConfig: {prebuiltVoiceConfig: {voiceName: voiceFor(request)}},
         },
       },
     });

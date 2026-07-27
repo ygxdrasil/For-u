@@ -80,7 +80,10 @@ function findForResolving(list: Situation[], title: string): Situation | undefin
   const exact = find(list, title);
   if (exact) return exact;
 
-  const asked = words(title);
+  // Filler drops from the asked side too: "the govee order" must settle a
+  // situation called "Govee order EU641959", and "the" is not a word anyone
+  // stores. The all-filler guard stays, since every() over nothing is true.
+  const asked = words(title).filter((word) => !FILLER.has(word));
   if (asked.length === 0) return undefined;
   return list.find((one) => {
     const own = new Set(words(one.title));

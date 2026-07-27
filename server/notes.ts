@@ -84,7 +84,9 @@ function findForReading(notes: Note[], title: string): Note | undefined {
   const exact = match(notes, title);
   if (exact) return exact;
 
-  const asked = words(title);
+  // Filler drops from the asked side too — "my Berlin" is asking for
+  // "Berlin", and "my" is not a word of any stored title.
+  const asked = words(title).filter((word) => !FILLER.has(word));
   if (asked.length === 0) return undefined;
   return notes.find((note) => {
     const own = new Set(words(note.title));
