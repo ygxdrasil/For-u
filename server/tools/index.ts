@@ -101,6 +101,7 @@ const LABELS: Record<string, string> = {
   start_watch: 'Started watching something',
   list_watches: 'Checked the watches',
   stop_watch: 'Stopped a watch',
+  search_files: 'Looked through your documents',
   check_github: 'Checked GitHub',
   check_workflows: 'Checked the workflows',
 };

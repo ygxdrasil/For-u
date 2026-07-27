@@ -1670,11 +1670,90 @@ ${soon}`,
   return { say: said, message: await record2("grace", said, "text") };
 }
 
-// server/notes.ts
+// server/files.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-var store10 = new Document("notes", () => []);
+var MAX_CHARS = 4e4;
+var MAX_FILES = 40;
+var store10 = new Document("files", () => []);
+async function liveFiles() {
+  return (await store10.read()).filter((file) => !file.archivedAt).sort((left, right) => right.addedAt.localeCompare(left.addedAt));
+}
+async function addFile(name, text) {
+  const clean = name.trim().slice(0, 120) || "untitled";
+  const body = text.trim().slice(0, MAX_CHARS);
+  if (!body) throw new Error("there was no readable text in that file");
+  const file = {
+    id: randomUUID5(),
+    name: clean,
+    text: body,
+    chars: body.length,
+    addedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await store10.update((files) => {
+    const others = files.filter((one) => one.name !== clean || one.archivedAt);
+    const kept = [file, ...others];
+    const live = kept.filter((one) => !one.archivedAt);
+    if (live.length > MAX_FILES) {
+      const cut = live.slice(MAX_FILES).map((one) => one.id);
+      return kept.map(
+        (one) => cut.includes(one.id) ? { ...one, archivedAt: (/* @__PURE__ */ new Date()).toISOString() } : one
+      );
+    }
+    return kept;
+  });
+  return file;
+}
+async function archiveFile(id) {
+  await store10.update(
+    (files) => files.map(
+      (file) => file.id === id ? { ...file, archivedAt: (/* @__PURE__ */ new Date()).toISOString() } : file
+    )
+  );
+  return liveFiles();
+}
+var NOISE2 = /* @__PURE__ */ new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "of",
+  "to",
+  "in",
+  "on",
+  "for",
+  "with",
+  "is",
+  "was",
+  "what",
+  "does",
+  "say",
+  "about",
+  "my",
+  "the",
+  "that",
+  "this",
+  "it"
+]);
+async function searchFiles(query) {
+  const needles = query.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !NOISE2.has(word));
+  if (needles.length === 0) return [];
+  const files = await liveFiles();
+  return files.map((file) => {
+    const lower = file.text.toLowerCase();
+    const hits = needles.filter((needle) => lower.includes(needle));
+    if (hits.length === 0) return null;
+    const at = lower.indexOf(hits[0]);
+    const excerpt = file.text.slice(Math.max(0, at - 120), at + 400).trim();
+    return { name: file.name, excerpt, score: hits.length };
+  }).filter((row) => Boolean(row)).sort((left, right) => right.score - left.score).slice(0, 4).map(({ name, excerpt }) => ({ name, excerpt }));
+}
+
+// server/notes.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
+var store11 = new Document("notes", () => []);
 async function liveNotes() {
-  const all = await store10.read();
+  const all = await store11.read();
   return all.filter((note) => !note.archivedAt).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 function match(notes, title) {
@@ -1687,7 +1766,7 @@ async function writeNote(title, text, mode = "append") {
   if (!clean || !body) throw new Error("a note needs a title and something to say");
   const now = (/* @__PURE__ */ new Date()).toISOString();
   let saved = null;
-  await store10.update((notes) => {
+  await store11.update((notes) => {
     const existing = match(
       notes.filter((note) => !note.archivedAt),
       clean
@@ -1703,7 +1782,7 @@ ${dateLine(now)} ${body}`,
       return notes.map((note) => note.id === existing.id ? saved : note);
     }
     saved = {
-      id: randomUUID5(),
+      id: randomUUID6(),
       title: clean,
       body: `${dateLine(now)} ${body}`,
       createdAt: now,
@@ -1721,7 +1800,7 @@ async function readNote(title) {
 }
 async function saveNoteBody(id, title, body) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  await store10.update(
+  await store11.update(
     (notes) => notes.map(
       (note) => note.id === id ? { ...note, title: title.trim().slice(0, 80), body: body.trim(), updatedAt: now } : note
     )
@@ -1730,20 +1809,20 @@ async function saveNoteBody(id, title, body) {
 }
 async function archiveNote(id) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  await store10.update(
+  await store11.update(
     (notes) => notes.map((note) => note.id === id ? { ...note, archivedAt: now } : note)
   );
   return liveNotes();
 }
 
 // server/situations.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
-var store11 = new Document("situations", () => []);
+import { randomUUID as randomUUID7 } from "node:crypto";
+var store12 = new Document("situations", () => []);
 function allSituations() {
-  return store11.read();
+  return store12.read();
 }
 async function openSituations() {
-  const all = await store11.read();
+  const all = await store12.read();
   return all.filter((one) => one.status === "open").sort((left, right) => lastMove(right).localeCompare(lastMove(left)));
 }
 function lastMove(one) {
@@ -1759,7 +1838,7 @@ async function trackSituation(title, update) {
   if (!clean || !text) throw new Error("a situation needs a title and an update");
   const now = (/* @__PURE__ */ new Date()).toISOString();
   let saved = null;
-  await store11.update((list) => {
+  await store12.update((list) => {
     const existing = find(
       list.filter((one) => one.status === "open"),
       clean
@@ -1769,7 +1848,7 @@ async function trackSituation(title, update) {
       return list.map((one) => one.id === existing.id ? saved : one);
     }
     saved = {
-      id: randomUUID6(),
+      id: randomUUID7(),
       title: clean,
       status: "open",
       updates: [{ at: now, text }],
@@ -1782,7 +1861,7 @@ async function trackSituation(title, update) {
 async function resolveSituation(title) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   let resolved = null;
-  await store11.update((list) => {
+  await store12.update((list) => {
     const one = find(
       list.filter((s) => s.status === "open"),
       title.trim()
@@ -2163,10 +2242,10 @@ async function notify(title, body) {
 }
 
 // server/watch.ts
-import { createHash as createHash2, randomUUID as randomUUID7 } from "node:crypto";
-var store12 = new Document("watches", () => []);
+import { createHash as createHash2, randomUUID as randomUUID8 } from "node:crypto";
+var store13 = new Document("watches", () => []);
 async function liveWatches() {
-  return (await store12.read()).filter((watch) => !watch.archivedAt);
+  return (await store13.read()).filter((watch) => !watch.archivedAt);
 }
 async function startWatch(what, url, keyword) {
   const clean = what.trim().slice(0, 100);
@@ -2175,19 +2254,19 @@ async function startWatch(what, url, keyword) {
     throw new Error("a watch needs something to watch and a full https address");
   }
   const watch = {
-    id: randomUUID7(),
+    id: randomUUID8(),
     what: clean,
     url: address,
     keyword: keyword?.trim() || void 0,
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  await store12.update((list) => [...list, watch]);
+  await store13.update((list) => [...list, watch]);
   return watch;
 }
 async function stopWatch(what) {
   const needle = what.toLowerCase().trim();
   let found = false;
-  await store12.update(
+  await store13.update(
     (list) => list.map((watch) => {
       if (watch.archivedAt || !watch.what.toLowerCase().includes(needle)) return watch;
       found = true;
@@ -2223,7 +2302,7 @@ async function checkWatches() {
   const readings = await Promise.all(
     watches.map(async (watch) => ({ watch, reading: await observe(watch) }))
   );
-  await store12.update(
+  await store13.update(
     (list) => list.map((stored) => {
       const found = readings.find((r) => r.watch.id === stored.id);
       if (!found || found.reading === null) return stored;
@@ -2444,14 +2523,14 @@ var askTools = [
 ];
 
 // server/tools/timers.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
-var store13 = new Document("timers", () => []);
+import { randomUUID as randomUUID9 } from "node:crypto";
+var store14 = new Document("timers", () => []);
 async function runningTimers() {
   const now = Date.now();
-  return (await store13.read()).filter((timer) => !timer.firedAt && new Date(timer.at).getTime() > now - 6e4).sort((left, right) => left.at.localeCompare(right.at));
+  return (await store14.read()).filter((timer) => !timer.firedAt && new Date(timer.at).getTime() > now - 6e4).sort((left, right) => left.at.localeCompare(right.at));
 }
 async function markFired(id) {
-  await store13.update(
+  await store14.update(
     (list) => list.map(
       (timer) => timer.id === id ? { ...timer, firedAt: (/* @__PURE__ */ new Date()).toISOString() } : timer
     )
@@ -2487,12 +2566,12 @@ var timerTools = [
       const ms = parseDuration(String(args.duration ?? ""));
       if (!ms) return "I could not make a length of time out of that.";
       const timer = {
-        id: randomUUID8(),
+        id: randomUUID9(),
         label: String(args.label ?? "").trim() || "timer",
         at: new Date(Date.now() + ms).toISOString(),
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
-      await store13.update((list) => [...list, timer]);
+      await store14.update((list) => [...list, timer]);
       const minutes = Math.round(ms / 6e4);
       return `Timer set: ${timer.label}, ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${Math.round(ms / 1e3)} seconds`}.`;
     }
@@ -2565,7 +2644,7 @@ var timerTools = [
 ];
 
 // server/workspaces.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 var DEFAULTS = [
   {
     id: "grace",
@@ -2582,7 +2661,7 @@ var DEFAULTS = [
     icon: "house",
     accent: "ice",
     opens: [],
-    panels: ["day", "needs", "weather", "notes", "situations", "deeds"],
+    panels: ["day", "needs", "weather", "notes", "situations", "files", "deeds"],
     blurb: "Your day, and what wants you."
   },
   {
@@ -2606,9 +2685,9 @@ var DEFAULTS = [
     blurb: "The console, and what you have been playing."
   }
 ];
-var store14 = new Document("workspaces", () => DEFAULTS);
+var store15 = new Document("workspaces", () => DEFAULTS);
 async function workspaces() {
-  const saved = await store14.read();
+  const saved = await store15.read();
   const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
   return [...saved, ...missing].filter((one) => !one.hidden);
 }
@@ -2620,7 +2699,7 @@ async function findWorkspace(said) {
 }
 async function saveWorkspace(patch) {
   const clean = {
-    id: patch.id?.trim() || randomUUID9().slice(0, 8),
+    id: patch.id?.trim() || randomUUID10().slice(0, 8),
     name: (patch.name ?? "Untitled").trim().slice(0, 24),
     icon: patch.icon ?? "sparkles",
     accent: patch.accent ?? "ice",
@@ -2629,7 +2708,7 @@ async function saveWorkspace(patch) {
     blurb: patch.blurb?.slice(0, 80),
     brief: patch.brief?.slice(0, 200)
   };
-  await store14.update((current) => {
+  await store15.update((current) => {
     const rest = current.filter((one) => one.id !== clean.id);
     const at = current.findIndex((one) => one.id === clean.id);
     if (at < 0) return [...current, clean];
@@ -2640,7 +2719,7 @@ async function saveWorkspace(patch) {
   return workspaces();
 }
 async function hideWorkspace(id) {
-  await store14.update((current) => {
+  await store15.update((current) => {
     const known = current.some((one) => one.id === id);
     const base = known ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
     return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
@@ -2945,6 +3024,21 @@ ${note.body}`;
       const one = await resolveSituation(String(args.title));
       return one ? `Marked "${one.title}" resolved.` : "Nothing open by that name.";
     }
+  },
+  {
+    name: "search_files",
+    description: "Search the documents the user has given you to keep. Use it when they ask about something that might be in a document they uploaded \u2014 a contract, notes, a spec. Returns the relevant passages.",
+    category: "research",
+    parameters: {
+      about: { type: "string", description: "What to look for." }
+    },
+    required: ["about"],
+    run: async (args) => {
+      const hits = await searchFiles(String(args.about));
+      if (hits.length === 0) return "Nothing in their documents mentions that.";
+      return hits.map((hit) => `From ${hit.name}:
+"${hit.excerpt}"`).join("\n\n");
+    }
   }
 ];
 
@@ -3011,7 +3105,7 @@ var playstationTools = [
 ];
 
 // server/tools/recall.ts
-var NOISE2 = /* @__PURE__ */ new Set([
+var NOISE3 = /* @__PURE__ */ new Set([
   "the",
   "a",
   "an",
@@ -3057,7 +3151,7 @@ var NOISE2 = /* @__PURE__ */ new Set([
   "again"
 ]);
 function terms(text) {
-  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !NOISE2.has(word));
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !NOISE3.has(word));
 }
 function score(haystack, needles) {
   const text = haystack.toLowerCase();
@@ -3261,6 +3355,7 @@ var LABELS = {
   start_watch: "Started watching something",
   list_watches: "Checked the watches",
   stop_watch: "Stopped a watch",
+  search_files: "Looked through your documents",
   check_github: "Checked GitHub",
   check_workflows: "Checked the workflows"
 };
@@ -3383,7 +3478,7 @@ When you need a decision and the sensible answers are a short list, use ask_choi
 
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
 
-Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch checks a web page hourly and you speak up when it changes \u2014 prefer a keyword to watch for. check_github and check_workflows read their code and their n8n; both are read-only and both say plainly when their key is missing.
+Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch checks a web page hourly and you speak up when it changes \u2014 prefer a keyword to watch for. search_files reaches into documents they have given you to keep. check_github and check_workflows read their code and their n8n; both are read-only and both say plainly when their key is missing.
 
 You keep every word either of you has ever said, and search_memory reaches into it. You are shown only the recent conversation and a short summary of what came before, so when they refer to something you cannot see \u2014 a decision, a name, something from last week \u2014 search for it rather than saying you don't remember. Saying you have forgotten something that is sitting in the record is the same as being wrong.
 
@@ -3503,7 +3598,7 @@ ${summary}` : null;
 }
 
 // server/style.ts
-var store15 = new Document("style", () => ({
+var store16 = new Document("style", () => ({
   description: null,
   samples: 0,
   builtAt: null
@@ -3511,14 +3606,14 @@ var store15 = new Document("style", () => ({
 var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
 var SAMPLES = 8;
 async function writingStyle() {
-  return (await store15.read()).description;
+  return (await store16.read()).description;
 }
 function fresh(style) {
   if (!style.description || !style.builtAt) return false;
   return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
 }
 async function learnWritingStyle(force = false) {
-  const current = await store15.read();
+  const current = await store16.read();
   if (!force && fresh(current)) return false;
   const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
   if (sent.length < 3) return false;
@@ -3542,7 +3637,7 @@ ${body}`).join("\n\n")
     fast: true
   }).catch(() => "");
   if (!description.trim()) return false;
-  await store15.write({
+  await store16.write({
     description: description.trim(),
     samples: bodies.length,
     builtAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -4031,6 +4126,33 @@ function createApi() {
     "/note-archive",
     guard(async (req, res) => {
       res.json({ notes: await archiveNote(String(req.body?.id ?? "")) });
+    })
+  );
+  api.get(
+    "/files",
+    guard(async (_req, res) => {
+      const files = await liveFiles();
+      res.json({
+        files: files.map((file) => ({ id: file.id, name: file.name, chars: file.chars }))
+      });
+    })
+  );
+  api.post(
+    "/file-add",
+    guard(async (req, res) => {
+      try {
+        const file = await addFile(String(req.body?.name ?? ""), String(req.body?.text ?? ""));
+        res.json({ ok: true, id: file.id, name: file.name, chars: file.chars });
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    })
+  );
+  api.post(
+    "/file-archive",
+    guard(async (req, res) => {
+      await archiveFile(String(req.body?.id ?? ""));
+      res.json({ ok: true });
     })
   );
   api.get(

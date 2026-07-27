@@ -34,6 +34,7 @@ import {
 } from './google/oauth';
 import {greet} from './greeting';
 import {recentDeeds} from './journal';
+import {addFile, archiveFile, liveFiles} from './files';
 import {archiveNote, liveNotes, saveNoteBody} from './notes';
 import {allSituations} from './situations';
 import {GithubError, githubConfigured, githubView} from './github';
@@ -690,6 +691,38 @@ export function createApi(): Express {
     '/note-archive',
     guard(async (req, res) => {
       res.json({notes: await archiveNote(String(req.body?.id ?? ''))});
+    }),
+  );
+
+  api.get(
+    '/files',
+    guard(async (_req, res) => {
+      // The text is not sent back — a list is for choosing, not re-reading a
+      // contract into the browser. Name and size are enough.
+      const files = await liveFiles();
+      res.json({
+        files: files.map((file) => ({id: file.id, name: file.name, chars: file.chars})),
+      });
+    }),
+  );
+
+  api.post(
+    '/file-add',
+    guard(async (req, res) => {
+      try {
+        const file = await addFile(String(req.body?.name ?? ''), String(req.body?.text ?? ''));
+        res.json({ok: true, id: file.id, name: file.name, chars: file.chars});
+      } catch (error) {
+        res.status(400).json({error: (error as Error).message});
+      }
+    }),
+  );
+
+  api.post(
+    '/file-archive',
+    guard(async (req, res) => {
+      await archiveFile(String(req.body?.id ?? ''));
+      res.json({ok: true});
     }),
   );
 

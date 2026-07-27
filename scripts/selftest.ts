@@ -743,6 +743,28 @@ try {
   assert.match(edited.notes[0].body, /Corrected by the user/, 'the user can fix a note');
   ok('notes are visible and the user can correct what she wrote');
 
+  // Files: text kept, searchable, listed without the body, and capped.
+  await call('/file-add', {
+    method: 'POST',
+    body: JSON.stringify({name: 'lease.txt', text: 'The notice period is two months.'}),
+  });
+  const filed = (await (await call('/files')).json()) as {
+    files: {name: string; chars: number}[];
+  };
+  assert.ok(filed.files.some((f) => f.name === 'lease.txt'), 'the file is kept');
+  assert.ok(
+    !JSON.stringify(filed.files).includes('notice period'),
+    'but the list never ships the body back',
+  );
+  const found = await runTool({name: 'search_files', args: {about: 'notice period'}});
+  assert.match(found.result, /two months/, 'and she can search the text');
+  const emptyAdd = await call('/file-add', {
+    method: 'POST',
+    body: JSON.stringify({name: 'blank.txt', text: '   '}),
+  });
+  assert.equal(emptyAdd.status, 400, 'an empty document is refused, not stored');
+  ok('documents are kept as text, searchable, and never handed back wholesale');
+
   const weather = (await (await call('/weather')).json()) as {line: string | null};
   assert.equal(weather.line, null, 'no location fact means no invented forecast');
   ok('weather stays silent rather than guess a city it was never given');

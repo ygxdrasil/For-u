@@ -31,7 +31,7 @@ const DEFAULTS: Workspace[] = [
     icon: 'house',
     accent: 'ice',
     opens: [],
-    panels: ['day', 'needs', 'weather', 'notes', 'situations', 'deeds'],
+    panels: ['day', 'needs', 'weather', 'notes', 'situations', 'files', 'deeds'],
     blurb: 'Your day, and what wants you.',
   },
   {

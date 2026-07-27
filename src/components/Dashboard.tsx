@@ -20,6 +20,7 @@ import type {
 } from '../../shared/types';
 import type {Mode} from '../hooks/useGrace';
 import {Day} from './Day';
+import {Files} from './Files';
 import {NotesPanel, SituationsPanel} from './Keep';
 import {Connections, LiveFeed, SpendGauge, Weather} from './Panels';
 import {GithubPanel, WorkflowsPanel} from './Work';
@@ -258,6 +259,7 @@ export function Dashboard({
       {wants('github') && <GithubPanel />}
       {wants('workflows') && <WorkflowsPanel />}
       {wants('notes') && <NotesPanel />}
+      {wants('files') && <Files />}
       {wants('situations') && <SituationsPanel />}
       {wants('activity') && <LiveFeed />}
       {wants('connections') && <Connections google={google} />}

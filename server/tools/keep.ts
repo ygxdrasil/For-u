@@ -1,3 +1,4 @@
+import {searchFiles} from '../files';
 import {liveNotes, readNote, writeNote} from '../notes';
 import {openSituations, resolveSituation, trackSituation} from '../situations';
 import type {Tool} from './types';
@@ -102,6 +103,23 @@ export const keepTools: Tool[] = [
     run: async (args) => {
       const one = await resolveSituation(String(args.title));
       return one ? `Marked "${one.title}" resolved.` : 'Nothing open by that name.';
+    },
+  },
+  {
+    name: 'search_files',
+    description:
+      'Search the documents the user has given you to keep. Use it when they ' +
+      'ask about something that might be in a document they uploaded — a ' +
+      'contract, notes, a spec. Returns the relevant passages.',
+    category: 'research',
+    parameters: {
+      about: {type: 'string', description: 'What to look for.'},
+    },
+    required: ['about'],
+    run: async (args) => {
+      const hits = await searchFiles(String(args.about));
+      if (hits.length === 0) return 'Nothing in their documents mentions that.';
+      return hits.map((hit) => `From ${hit.name}:\n"${hit.excerpt}"`).join('\n\n');
     },
   },
 ];
