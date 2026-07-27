@@ -44,9 +44,24 @@ const MODE_DOT: Record<Mode, string> = {
   speaking: 'bg-ice',
 };
 
+/** Whether the desktop layout applies. Drives which dashboard mount exists. */
+function useWide(): boolean {
+  const [wide, setWide] = useState(
+    () => window.matchMedia('(min-width: 1024px)').matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1024px)');
+    const onChange = () => setWide(query.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+  return wide;
+}
+
 export default function App() {
   const grace = useGrace();
   const rooms = useRooms();
+  const wide = useWide();
   const freshness = useFreshness();
   const [panelOpen, setPanelOpen] = useState(false);
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
@@ -276,14 +291,17 @@ export default function App() {
           onPick={(id) => rooms.enter(id, true)}
         />
 
-        <aside className="hidden w-80 shrink-0 border-r border-edge/70 lg:block">
-          {dashboard}
-        </aside>
-
-        {/* Narrow screens show one or the other. */}
-        <div className={`min-h-0 flex-1 lg:hidden ${tab === 'grace' ? '' : 'hidden'}`}>
-          {dashboard}
-        </div>
+        {/* One mount, whichever shape the screen is. Rendering it in both a
+            desktop aside and a phone tab looked free — CSS hid one — but a
+            hidden component still runs, so every panel polled its services
+            twice. On a page that lives open all day, that doubled her bill. */}
+        {wide ? (
+          <aside className="w-80 shrink-0 border-r border-edge/70">{dashboard}</aside>
+        ) : (
+          <div className={`min-h-0 flex-1 ${tab === 'grace' ? '' : 'hidden'}`}>
+            {dashboard}
+          </div>
+        )}
 
         <section
           className={`min-w-0 flex-1 flex-col lg:flex ${

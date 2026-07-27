@@ -64,6 +64,8 @@ export interface TranscribeRequest {
 export interface SpeakRequest {
   text: string;
   signal?: AbortSignal;
+  /** Override the configured voice for this one utterance — auditioning. */
+  voice?: string;
 }
 
 export interface SpokenAudio {

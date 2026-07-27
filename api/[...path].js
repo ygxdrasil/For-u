@@ -1769,7 +1769,27 @@ async function liveNotes() {
 }
 function match(notes, title) {
   const needle = title.toLowerCase().trim();
-  return notes.find((note) => note.title.toLowerCase() === needle) ?? notes.find((note) => note.title.toLowerCase().includes(needle)) ?? notes.find((note) => needle.includes(note.title.toLowerCase()));
+  const meaning = essence(title);
+  return notes.find(
+    (note) => note.title.toLowerCase().trim() === needle || meaning.length > 0 && essence(note.title) === meaning
+  );
+}
+function words(text) {
+  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+var FILLER = /* @__PURE__ */ new Set(["the", "a", "an", "my", "our", "this", "that", "of", "for"]);
+function essence(text) {
+  return words(text).filter((word) => !FILLER.has(word)).sort().join(" ");
+}
+function findForReading(notes, title) {
+  const exact = match(notes, title);
+  if (exact) return exact;
+  const asked = words(title);
+  if (asked.length === 0) return void 0;
+  return notes.find((note) => {
+    const own = new Set(words(note.title));
+    return asked.every((word) => own.has(word));
+  });
 }
 async function writeNote(title, text, mode = "append") {
   const clean = title.trim().slice(0, 80);
@@ -1807,7 +1827,7 @@ function dateLine(iso) {
   return `[${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}]`;
 }
 async function readNote(title) {
-  return match(await liveNotes(), title.trim()) ?? null;
+  return findForReading(await liveNotes(), title.trim()) ?? null;
 }
 async function saveNoteBody(id, title, body) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -1841,7 +1861,27 @@ function lastMove(one) {
 }
 function find(list, title) {
   const needle = title.toLowerCase().trim();
-  return list.find((one) => one.title.toLowerCase() === needle) ?? list.find((one) => one.title.toLowerCase().includes(needle)) ?? list.find((one) => needle.includes(one.title.toLowerCase()));
+  const meaning = essence2(title);
+  return list.find(
+    (one) => one.title.toLowerCase().trim() === needle || meaning.length > 0 && essence2(one.title) === meaning
+  );
+}
+function words2(text) {
+  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+var FILLER2 = /* @__PURE__ */ new Set(["the", "a", "an", "my", "our", "this", "that", "of", "for"]);
+function essence2(text) {
+  return words2(text).filter((word) => !FILLER2.has(word)).sort().join(" ");
+}
+function findForResolving(list, title) {
+  const exact = find(list, title);
+  if (exact) return exact;
+  const asked = words2(title);
+  if (asked.length === 0) return void 0;
+  return list.find((one) => {
+    const own = new Set(words2(one.title));
+    return asked.every((word) => own.has(word));
+  });
 }
 async function trackSituation(title, update) {
   const clean = title.trim().slice(0, 80);
@@ -1873,7 +1913,7 @@ async function resolveSituation(title) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   let resolved = null;
   await store12.update((list) => {
-    const one = find(
+    const one = findForResolving(
       list.filter((s) => s.status === "open"),
       title.trim()
     );
@@ -2536,13 +2576,18 @@ var askTools = [
 // server/tools/timers.ts
 import { randomUUID as randomUUID9 } from "node:crypto";
 var store14 = new Document("timers", () => []);
+var KEEP_AFTER_MS = 24 * 36e5;
+function prune(list) {
+  const cutoff = Date.now() - KEEP_AFTER_MS;
+  return list.filter((timer) => new Date(timer.at).getTime() > cutoff);
+}
 async function runningTimers() {
   const now = Date.now();
   return (await store14.read()).filter((timer) => !timer.firedAt && new Date(timer.at).getTime() > now - 6e4).sort((left, right) => left.at.localeCompare(right.at));
 }
 async function markFired(id) {
   await store14.update(
-    (list) => list.map(
+    (list) => prune(list).map(
       (timer) => timer.id === id ? { ...timer, firedAt: (/* @__PURE__ */ new Date()).toISOString() } : timer
     )
   );
@@ -2582,7 +2627,7 @@ var timerTools = [
         at: new Date(Date.now() + ms).toISOString(),
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
-      await store14.update((list) => [...list, timer]);
+      await store14.update((list) => [...prune(list), timer]);
       const minutes = Math.round(ms / 6e4);
       return `Timer set: ${timer.label}, ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${Math.round(ms / 1e3)} seconds`}.`;
     }
@@ -2605,7 +2650,7 @@ var timerTools = [
   },
   {
     name: "start_watch",
-    description: 'Watch a web page and speak up when it changes \u2014 a price, availability, a status page, a release. Checked hourly. Far more reliable with a keyword: watching whether "in stock" appears beats watching a whole page, which half the web rewrites on every load. Ask for a keyword if one is not obvious.',
+    description: 'Watch a web page and speak up when it changes \u2014 a price, availability, a status page, a release. Checked about once an hour while she is open somewhere. Far more reliable with a keyword: watching whether "in stock" appears beats watching a whole page, which half the web rewrites on every load. Ask for a keyword if one is not obvious.',
     category: "research",
     parameters: {
       what: { type: "string", description: "What is being watched, in their words." },
@@ -3489,7 +3534,7 @@ When you need a decision and the sensible answers are a short list, use ask_choi
 
 If a tool comes back saying it needs the user's go-ahead, say exactly what you are about to do and wait. Never say you have done something a tool did not do.
 
-Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch checks a web page hourly and you speak up when it changes \u2014 prefer a keyword to watch for. search_files reaches into documents they have given you to keep. check_github and check_workflows read their code and their n8n; both are read-only and both say plainly when their key is missing.
+Beyond the list, you keep richer records, and you are expected to keep them up without being told: write_note holds a running page per project or topic \u2014 when they tell you where something has got to, add it. track_situation follows things in progress that have a state \u2014 an order, a dispute, a setup \u2014 one update per development, resolve_situation when it settles. set_timer is a countdown that rings ("twenty minutes for the pasta"); anything tied to a date is add_reminder instead. start_watch keeps an eye on a web page and you speak up when it changes \u2014 prefer a keyword to watch for. Be honest about how the watching works: you check roughly once an hour while you are open somewhere, such as the laptop that stays on in their room, not from some place outside it. search_files reaches into documents they have given you to keep. check_github and check_workflows read their code and their n8n; both are read-only and both say plainly when their key is missing.
 
 You keep every word either of you has ever said, and search_memory reaches into it. You are shown only the recent conversation and a short summary of what came before, so when they refer to something you cannot see \u2014 a decision, a name, something from last week \u2014 search for it rather than saying you don't remember. Saying you have forgotten something that is sitting in the record is the same as being wrong.
 
@@ -4326,6 +4371,12 @@ function createApi() {
     })
   );
   api.get(
+    "/journal",
+    guard(async (_req, res) => {
+      res.json({ deeds: await recentDeeds(20) });
+    })
+  );
+  api.get(
     "/day",
     guard(async (_req, res) => {
       const google = await connection().catch(() => null);
@@ -4411,8 +4462,9 @@ function createApi() {
         res.status(400).json({ error: "nothing to say" });
         return;
       }
+      const voice = String(req.body?.voice ?? "").replace(/[^a-zA-Z]/g, "").slice(0, 24);
       try {
-        res.json(await getProvider().speak({ text }));
+        res.json(await getProvider().speak({ text, ...voice ? { voice } : {} }));
       } catch (error) {
         const detail = error.message ?? "unknown error";
         console.error("[grace] speech failed:", detail);

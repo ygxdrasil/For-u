@@ -40,13 +40,52 @@ function lastMove(one: Situation): string {
   return one.updates[one.updates.length - 1]?.at ?? one.createdAt;
 }
 
+/**
+ * Writes merge only when titles mean the same thing once filler words are
+ * dropped — substring matching used to file updates about "PS5 bridge" under
+ * a situation called "PS5", and a misfiled update is invisible in a way a
+ * second question is not.
+ */
 function find(list: Situation[], title: string): Situation | undefined {
   const needle = title.toLowerCase().trim();
-  return (
-    list.find((one) => one.title.toLowerCase() === needle) ??
-    list.find((one) => one.title.toLowerCase().includes(needle)) ??
-    list.find((one) => needle.includes(one.title.toLowerCase()))
+  const meaning = essence(title);
+  return list.find(
+    (one) =>
+      one.title.toLowerCase().trim() === needle ||
+      (meaning.length > 0 && essence(one.title) === meaning),
   );
+}
+
+function words(text: string): string[] {
+  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/** Words that carry no identity — "the deposit dispute" is "deposit dispute". */
+const FILLER = new Set(['the', 'a', 'an', 'my', 'our', 'this', 'that', 'of', 'for']);
+
+/** A title reduced to its meaningful words, order ignored. */
+function essence(text: string): string {
+  return words(text)
+    .filter((word) => !FILLER.has(word))
+    .sort()
+    .join(' ');
+}
+
+
+/**
+ * Resolving may be looser: "the govee order" should settle a situation called
+ * "Govee order EU641959". Whole words only, so near-miss titles still refuse.
+ */
+function findForResolving(list: Situation[], title: string): Situation | undefined {
+  const exact = find(list, title);
+  if (exact) return exact;
+
+  const asked = words(title);
+  if (asked.length === 0) return undefined;
+  return list.find((one) => {
+    const own = new Set(words(one.title));
+    return asked.every((word) => own.has(word));
+  });
 }
 
 /** Note something new about a situation, opening it if it is unheard of. */
@@ -87,7 +126,7 @@ export async function resolveSituation(title: string): Promise<Situation | null>
   let resolved: Situation | null = null;
 
   await store.update((list) => {
-    const one = find(
+    const one = findForResolving(
       list.filter((s) => s.status === 'open'),
       title.trim(),
     );

@@ -37,13 +37,59 @@ export async function liveNotes(): Promise<Note[]> {
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
+/**
+ * Writes merge only when the titles mean the same thing: identical, or
+ * identical once filler words are dropped ("the deposit dispute" is "deposit
+ * dispute"). There used to be a substring fallback here, and it silently
+ * merged strangers — a note called "car" captured everything written to
+ * "Oscar plans", because "oscar" contains "car". A wrong merge is invisible
+ * in a way a second question is not, so fragments never match.
+ */
 function match(notes: Note[], title: string): Note | undefined {
   const needle = title.toLowerCase().trim();
-  return (
-    notes.find((note) => note.title.toLowerCase() === needle) ??
-    notes.find((note) => note.title.toLowerCase().includes(needle)) ??
-    notes.find((note) => needle.includes(note.title.toLowerCase()))
+  const meaning = essence(title);
+  return notes.find(
+    (note) =>
+      note.title.toLowerCase().trim() === needle ||
+      (meaning.length > 0 && essence(note.title) === meaning),
   );
+}
+
+/** The words of a title, for matching that never trips on a fragment. */
+function words(text: string): string[] {
+  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/** Words that carry no identity — "the deposit dispute" is "deposit dispute". */
+const FILLER = new Set(['the', 'a', 'an', 'my', 'our', 'this', 'that', 'of', 'for']);
+
+/** A title reduced to its meaningful words, order ignored. */
+function essence(text: string): string {
+  return words(text)
+    .filter((word) => !FILLER.has(word))
+    .sort()
+    .join(' ');
+}
+
+
+/**
+ * Reads may be looser, because a wrong read shows and a wrong write hides.
+ *
+ * "Berlin" finds the "Berlin trip" note — asking by half a title is how
+ * people talk, especially aloud. But looseness stops at whole words: "car"
+ * still refuses "Oscar plans", because "car" is not a word of that title,
+ * only a fragment of one.
+ */
+function findForReading(notes: Note[], title: string): Note | undefined {
+  const exact = match(notes, title);
+  if (exact) return exact;
+
+  const asked = words(title);
+  if (asked.length === 0) return undefined;
+  return notes.find((note) => {
+    const own = new Set(words(note.title));
+    return asked.every((word) => own.has(word));
+  });
 }
 
 /**
@@ -100,7 +146,7 @@ function dateLine(iso: string): string {
 }
 
 export async function readNote(title: string): Promise<Note | null> {
-  return match(await liveNotes(), title.trim()) ?? null;
+  return findForReading(await liveNotes(), title.trim()) ?? null;
 }
 
 /** Direct edit from the interface, so the user can fix what she wrote. */

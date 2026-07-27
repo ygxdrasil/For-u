@@ -17,6 +17,18 @@ export interface RunningTimer {
   at: string;
 }
 
+/**
+ * One AudioContext for every alarm this page ever rings.
+ *
+ * Two silent-alarm bugs lived in the per-fire version. A context created in a
+ * tab with no user gesture starts suspended, and the old code never resumed
+ * it — so the alarm made no sound at all on exactly the machine this is for,
+ * the always-on laptop nobody has clicked. And Chrome also caps live contexts
+ * at about six; creating one per fire and never closing them meant the
+ * seventh timer onwards threw, was swallowed, and rang nothing forever.
+ */
+let bell: AudioContext | null = null;
+
 /** Three rising notes, louder than her ordinary chimes. It is an alarm. */
 function ring(): void {
   try {
@@ -24,7 +36,9 @@ function ring(): void {
       window.AudioContext ??
       (window as {webkitAudioContext?: typeof AudioContext}).webkitAudioContext;
     if (!Ctor) return;
-    const audio = new Ctor();
+    if (!bell) bell = new Ctor();
+    const audio = bell;
+    if (audio.state === 'suspended') void audio.resume();
 
     [523, 659, 784, 659, 784, 1047].forEach((hz, index) => {
       const oscillator = audio.createOscillator();
@@ -58,6 +72,16 @@ export function useTimers(enabled: boolean) {
       })
       .catch(() => {});
   }, []);
+
+  // A timer whose sound is blocked and whose notification was never allowed
+  // is a timer that fires into a void. Asking the moment one actually exists
+  // is the honest time to ask — the user just set it, so the "why" is obvious.
+  useEffect(() => {
+    if (timers.length === 0) return;
+    if ('Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission();
+    }
+  }, [timers.length]);
 
   useEffect(() => {
     if (!enabled) return;

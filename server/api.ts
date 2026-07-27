@@ -943,6 +943,20 @@ export function createApi(): Express {
   );
 
   /**
+   * The journal alone, for the live activity feed.
+   *
+   * The feed used to poll /day for this, which fans out to Google and the
+   * console — a whole day's aggregation pulled every minute to render seven
+   * lines of deeds. This reads one document and nothing else.
+   */
+  api.get(
+    '/journal',
+    guard(async (_req, res) => {
+      res.json({deeds: await recentDeeds(20)});
+    }),
+  );
+
+  /**
    * The three questions the dashboard exists to answer: what does my day look
    * like, what needs me, and what has she been doing.
    */
@@ -1060,8 +1074,12 @@ export function createApi(): Express {
         return;
       }
 
+      // An audition, not a commitment: the picker sends the voice it wants a
+      // sample in, without that becoming her voice.
+      const voice = String(req.body?.voice ?? '').replace(/[^a-zA-Z]/g, '').slice(0, 24);
+
       try {
-        res.json(await getProvider().speak({text}));
+        res.json(await getProvider().speak({text, ...(voice ? {voice} : {})}));
       } catch (error) {
         const detail = (error as Error).message ?? 'unknown error';
         console.error('[grace] speech failed:', detail);

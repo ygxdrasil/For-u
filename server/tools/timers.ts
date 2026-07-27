@@ -29,6 +29,20 @@ export function allTimers(): Promise<Timer[]> {
 }
 
 /** Timers still counting, soonest first. */
+/**
+ * Old timers fall off the list a day after they were due.
+ *
+ * Nothing else she keeps is discarded, but a rung kitchen timer is not a
+ * record of anything — it is scaffolding, and a list that only ever grows is
+ * a document that gets slower to read and write every single day.
+ */
+const KEEP_AFTER_MS = 24 * 3_600_000;
+
+function prune(list: Timer[]): Timer[] {
+  const cutoff = Date.now() - KEEP_AFTER_MS;
+  return list.filter((timer) => new Date(timer.at).getTime() > cutoff);
+}
+
 export async function runningTimers(): Promise<Timer[]> {
   const now = Date.now();
   return (await store.read())
@@ -38,7 +52,7 @@ export async function runningTimers(): Promise<Timer[]> {
 
 export async function markFired(id: string): Promise<void> {
   await store.update((list) =>
-    list.map((timer) =>
+    prune(list).map((timer) =>
       timer.id === id ? {...timer, firedAt: new Date().toISOString()} : timer,
     ),
   );
@@ -91,7 +105,7 @@ export const timerTools: Tool[] = [
         at: new Date(Date.now() + ms).toISOString(),
         createdAt: new Date().toISOString(),
       };
-      await store.update((list) => [...list, timer]);
+      await store.update((list) => [...prune(list), timer]);
 
       const minutes = Math.round(ms / 60_000);
       return `Timer set: ${timer.label}, ${
@@ -121,7 +135,8 @@ export const timerTools: Tool[] = [
     name: 'start_watch',
     description:
       'Watch a web page and speak up when it changes — a price, availability, ' +
-      'a status page, a release. Checked hourly. Far more reliable with a ' +
+      'a status page, a release. Checked about once an hour while she is open ' +
+      'somewhere. Far more reliable with a ' +
       'keyword: watching whether "in stock" appears beats watching a whole ' +
       'page, which half the web rewrites on every load. Ask for a keyword if ' +
       'one is not obvious.',

@@ -151,11 +151,13 @@ export async function transcribe(
 export async function speak(
   text: string,
   signal?: AbortSignal,
+  /** Audition a voice without it becoming hers. */
+  voice?: string,
 ): Promise<{audio: string; mimeType: string}> {
   const response = await fetch('/api/speak', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({text}),
+    body: JSON.stringify({text, ...(voice ? {voice} : {})}),
     signal,
   });
 

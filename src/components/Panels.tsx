@@ -59,13 +59,17 @@ export function LiveFeed() {
   const [deeds, setDeeds] = useState<JournalEntry[]>([]);
 
   useEffect(() => {
-    const load = () =>
-      fetch('/api/day')
+    // The journal alone — /day aggregates Google and the console, which is
+    // far too dear to pull once a minute for seven lines of activity.
+    const load = () => {
+      if (document.hidden) return;
+      fetch('/api/journal')
         .then((response) => (response.ok ? response.json() : null))
         .then((body: {deeds?: JournalEntry[]} | null) => body?.deeds && setDeeds(body.deeds))
         .catch(() => {});
+    };
     load();
-    const timer = window.setInterval(load, 45_000);
+    const timer = window.setInterval(load, 90_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -144,7 +148,12 @@ export function Connections({google}: {google: {connected: boolean; problem: str
       });
     };
     load();
-    const timer = window.setInterval(load, 60_000);
+    // Five upstream services sit behind these. Once a minute was sixty
+    // fan-outs an hour to keep six dots coloured; five minutes reads the same
+    // to a person and costs a twelfth of it. Nothing polls a hidden tab.
+    const timer = window.setInterval(() => {
+      if (!document.hidden) load();
+    }, 5 * 60_000);
     return () => window.clearInterval(timer);
   }, []);
 

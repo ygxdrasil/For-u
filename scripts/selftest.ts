@@ -632,6 +632,33 @@ try {
   );
   ok('she can look at the PlayStation, and says so when it is not connected');
 
+  // ---- a near-miss title is a new page, never a wrong merge ----------------
+  // Substring matching used to file "Oscar plans" into a note called "car",
+  // because "oscar" contains "car" — and a wrong merge is invisible in a way
+  // a second question is not. Exact titles only, for notes and situations.
+  await runTool({name: 'write_note', args: {title: 'car', text: 'MOT booked'}});
+  await runTool({name: 'write_note', args: {title: 'Oscar plans', text: 'dinner Friday'}});
+  const {liveNotes: liveN} = await import('../server/notes');
+  const titles = (await liveN()).map((note) => note.title);
+  assert.ok(
+    titles.includes('car') && titles.includes('Oscar plans'),
+    `"Oscar plans" must be its own note, not merged into "car" — got ${titles.join(', ')}`,
+  );
+
+  await runTool({name: 'track_situation', args: {title: 'PS5', update: 'bought'}});
+  await runTool({name: 'track_situation', args: {title: 'PS5 bridge', update: 'pairing'}});
+  const {allSituations: allBySub} = await import('../server/situations');
+  const sitTitles = (await allBySub()).map((one) => one.title);
+  assert.ok(
+    sitTitles.includes('PS5') && sitTitles.includes('PS5 bridge'),
+    `"PS5 bridge" must be its own situation — got ${sitTitles.join(', ')}`,
+  );
+  // Left open they would leak into the "Nothing open" assertion below; a test
+  // that dirties shared state is a test of nothing.
+  await runTool({name: 'resolve_situation', args: {title: 'PS5'}});
+  await runTool({name: 'resolve_situation', args: {title: 'PS5 bridge'}});
+  ok('near-miss titles start their own note and situation, never a wrong merge');
+
   // ---- notes, situations, timers, watches ----------------------------------
   // The keeping tools: everything appends or files; nothing destroys.
   const noted = await runTool({
@@ -671,7 +698,9 @@ try {
     'resolved means off the open list',
   );
   const {allSituations: allSit} = await import('../server/situations');
-  assert.equal((await allSit()).length, 1, 'but filed, never deleted');
+  const depositFiled = (await allSit()).find((one) => /deposit/.test(one.title));
+  assert.ok(depositFiled, 'but filed, never deleted');
+  assert.equal(depositFiled.status, 'resolved');
   ok('a situation carries its history, resolves, and is never destroyed');
 
   const timed = await runTool({

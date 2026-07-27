@@ -41,10 +41,11 @@ export function VoicePicker() {
   const preview = async (name: string) => {
     setPlaying(name);
     try {
-      // Save first, so the sample is generated in the voice being auditioned.
-      await saveKey('voice', name);
-      setChosen(name);
-      const {audio, mimeType} = await speak(SAMPLE);
+      // An audition, not a commitment. This used to save first so the sample
+      // came out in the right voice, which meant browsing the list silently
+      // re-chose her voice on every tap — whoever you heard last was who she
+      // became. The sample now carries its own voice override instead.
+      const {audio, mimeType} = await speak(SAMPLE, undefined, name);
       const element = audioRef.current ?? new Audio();
       audioRef.current = element;
       element.src = `data:${mimeType};base64,${audio}`;
@@ -57,31 +58,47 @@ export function VoicePicker() {
     }
   };
 
+  const choose = async (name: string) => {
+    await saveKey('voice', name).catch(() => {});
+    setChosen(name);
+  };
+
   return (
     <div className="space-y-1.5">
       <p className="mb-1 text-[0.62rem] leading-relaxed text-mist/50">
-        Tap to hear each. The one with a tick is hers now.
+        Tap a name to hear it — listening changes nothing. “Use” makes it hers.
       </p>
       {VOICES.map((voice) => (
-        <button
+        <div
           key={voice.name}
-          type="button"
-          onClick={() => void preview(voice.name)}
-          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${
+          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 transition ${
             chosen === voice.name
               ? 'border-ice/40 bg-ice/10'
               : 'border-edge bg-surface/40 hover:border-ice/30'
           }`}>
-          {playing === voice.name ? (
-            <Loader2 size={13} className="animate-spin text-ice" />
-          ) : chosen === voice.name ? (
-            <Check size={13} className="text-ice" />
+          <button
+            type="button"
+            onClick={() => void preview(voice.name)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left">
+            {playing === voice.name ? (
+              <Loader2 size={13} className="animate-spin text-ice" />
+            ) : (
+              <Play size={12} className="text-mist/50" />
+            )}
+            <span className="flex-1 text-xs text-slate-200">{voice.name}</span>
+            <span className="text-[0.6rem] text-mist/45">{voice.note}</span>
+          </button>
+          {chosen === voice.name ? (
+            <Check size={13} className="shrink-0 text-ice" />
           ) : (
-            <Play size={12} className="text-mist/50" />
+            <button
+              type="button"
+              onClick={() => void choose(voice.name)}
+              className="shrink-0 rounded-md border border-ice/40 bg-ice/10 px-2 py-0.5 text-[0.62rem] text-ice transition hover:bg-ice/25">
+              Use
+            </button>
           )}
-          <span className="flex-1 text-xs text-slate-200">{voice.name}</span>
-          <span className="text-[0.6rem] text-mist/45">{voice.note}</span>
-        </button>
+        </div>
       ))}
     </div>
   );
