@@ -40,6 +40,7 @@ import {setMode} from '../server/modes';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
+import {worthLearningFrom} from '../server/learn';
 import {allReminders, outstanding} from '../server/tools/reminders';
 import type {Backend} from '../server/store/types';
 
@@ -230,7 +231,7 @@ try {
   ok('signed in, and she opens up');
 
   // ---- a single exchange, start to finish -------------------------------
-  const events = await chat('Morning, Grace.', 'voice');
+  const events = await chat('Morning Grace. I always take my tea in the afternoon.', 'voice');
 
   const deltas = events.filter((e) => e.type === 'delta');
   assert.equal(
@@ -251,6 +252,14 @@ try {
   assert.equal(learned[0]?.text, LEARNED_FACT);
   assert.equal((await getProfile()).entries[0].text, LEARNED_FACT);
   ok('reflect extracted a durable fact after the reply, not during it');
+
+  // The gate that keeps most turns from paying for a learning call at all.
+  assert.equal(worthLearningFrom('ok thanks'), false, 'trivia teaches nothing');
+  assert.equal(worthLearningFrom('open work'), false, 'a bare command teaches nothing');
+  assert.equal(worthLearningFrom('what is the weather'), false, 'a passing question either');
+  assert.ok(worthLearningFrom('I moved to Berlin last month'), 'but a personal fact does');
+  assert.ok(worthLearningFrom('anything', true), 'and a sweep always runs');
+  ok('the learning gate spends a model call only when there is something to learn');
 
   assert.equal((await getMessages()).length, 2, 'both sides of the exchange stored');
   ok('conversation and profile persisted through the storage layer');

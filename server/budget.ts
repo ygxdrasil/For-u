@@ -23,6 +23,8 @@ export interface Spend {
   month: string;
   dollars: number;
   requests: number;
+  /** Where the money actually went, by model. Guessing at this cost a week. */
+  byModel?: Record<string, number>;
   /** Set when the cap has been hit, so the reason survives a restart. */
   stoppedAt: string | null;
 }
@@ -86,6 +88,10 @@ export async function record(
     ...current,
     dollars: current.dollars + cost,
     requests: current.requests + 1,
+    byModel: {
+      ...current.byModel,
+      [model]: (current.byModel?.[model] ?? 0) + cost,
+    },
     stoppedAt:
       current.dollars + cost >= monthlyCap()
         ? (current.stoppedAt ?? new Date().toISOString())

@@ -83,7 +83,13 @@ export async function recentTurns(): Promise<Turn[]> {
 
   return log.slice(from).map((message) => ({
     role: message.speaker === 'grace' ? ('assistant' as const) : ('user' as const),
-    text: message.text,
+    // One enormous message would otherwise ride along verbatim on every turn
+    // for the life of the window — thirty-odd re-sends of the same wall of
+    // text. The full version stays in the log and search_memory can reach it.
+    text:
+      message.text.length > 1600
+        ? `${message.text.slice(0, 1600)} […cut for length; search_memory has the rest]`
+        : message.text,
   }));
 }
 
@@ -262,6 +268,9 @@ Write plain prose, past tense, no more than 300 words. Return only the summary.`
       turns: [{role: 'user', text: prompt}],
       temperature: 0.3,
       maxOutputTokens: 700,
+      // Summarising is compression, not reasoning; deliberation tokens here
+      // were pure waste billed at the output rate.
+      fast: true,
     });
 
     if (!summary.trim()) return false;

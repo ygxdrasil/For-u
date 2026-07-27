@@ -68,6 +68,33 @@ interface Extraction {
   style?: string[];
 }
 
+/** Words that suggest a message might actually contain something personal. */
+const PERSONAL = /\b(i|i'm|im|my|me|we|our|mine|myself)\b/i;
+
+/** Pure acknowledgements and commands, which teach nothing about anyone. */
+const NOISE =
+  /^(ok(ay)?|yes|no|yeah|yep|nah|sure|thanks?|thank you|cheers|nice|cool|good|great|fine|stop|cancel|open .{0,40}|go to .{0,40}|switch to .{0,40})[.!?]?$/i;
+
+/**
+ * Whether an exchange is worth a learning pass at all.
+ *
+ * Learning used to run after every single reply — a second full model call to
+ * discover, most of the time, that "ok thanks" contains no biographical
+ * information. It was the largest avoidable line on the bill. The sweep
+ * parameter forces a pass every so often regardless, so a run of borderline
+ * messages cannot dodge learning forever.
+ */
+export function worthLearningFrom(userText: string, sweep = false): boolean {
+  if (sweep) return true;
+  const text = userText.trim();
+  if (text.length < 12) return false;
+  if (NOISE.test(text)) return false;
+  // No first-person signal and short: a bare question or command. The reply
+  // to it teaches nothing about the user that the next sweep won't catch.
+  if (!PERSONAL.test(text) && text.length < 80) return false;
+  return true;
+}
+
 /**
  * Runs after a reply is delivered, never in front of one. A failure here costs
  * a fact Grace would otherwise have picked up, and nothing more.
@@ -78,7 +105,11 @@ export async function learnFrom(
 ): Promise<ProfileEntry[]> {
   if (!config.learnFromConversation) return [];
 
-  const known = (await getProfile()).entries.filter((entry) => !entry.supersededAt);
+  // The whole profile used to ride along on every pass; at a few hundred
+  // entries that is real money for diminishing duplicate-detection value.
+  const known = (await getProfile()).entries
+    .filter((entry) => !entry.supersededAt)
+    .slice(-60);
   const knownList =
     known.length > 0
       ? known.map((entry) => `- ${entry.text}`).join('\n')
@@ -96,6 +127,9 @@ export async function learnFrom(
       temperature: 0,
       json: SCHEMA,
       maxOutputTokens: 700,
+      // Extraction is transcription of what was said, not reasoning about it.
+      // Left at the default this deliberated at length, billed as output.
+      fast: true,
     });
 
     const parsed = JSON.parse(raw) as Extraction;

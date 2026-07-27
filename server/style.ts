@@ -92,6 +92,7 @@ export async function learnWritingStyle(force = false): Promise<boolean> {
       ],
       temperature: 0.2,
       maxOutputTokens: 400,
+      fast: true,
     })
     .catch(() => '');
 

@@ -506,6 +506,10 @@ async function record(model, inputTokens, outputTokens) {
     ...current,
     dollars: current.dollars + cost,
     requests: current.requests + 1,
+    byModel: {
+      ...current.byModel,
+      [model]: (current.byModel?.[model] ?? 0) + cost
+    },
     stoppedAt: current.dollars + cost >= monthlyCap() ? current.stoppedAt ?? (/* @__PURE__ */ new Date()).toISOString() : current.stoppedAt
   };
   cached = next;
@@ -857,7 +861,10 @@ async function recentTurns() {
   );
   return log.slice(from).map((message) => ({
     role: message.speaker === "grace" ? "assistant" : "user",
-    text: message.text
+    // One enormous message would otherwise ride along verbatim on every turn
+    // for the life of the window — thirty-odd re-sends of the same wall of
+    // text. The full version stays in the log and search_memory can reach it.
+    text: message.text.length > 1600 ? `${message.text.slice(0, 1600)} [\u2026cut for length; search_memory has the rest]` : message.text
   }));
 }
 function setAddressAs(addressAs) {
@@ -982,7 +989,10 @@ ${transcript}`;
       system,
       turns: [{ role: "user", text: prompt }],
       temperature: 0.3,
-      maxOutputTokens: 700
+      maxOutputTokens: 700,
+      // Summarising is compression, not reasoning; deliberation tokens here
+      // were pure waste billed at the output rate.
+      fast: true
     });
     if (!summary.trim()) return false;
     await meta.write({ summary: summary.trim(), summarizedThrough: foldUpTo });
@@ -1046,9 +1056,19 @@ Also return two other things when they apply, and empty lists when they do not.
 "outdated": anything in the known profile this exchange contradicts, copied word for word from the list you were given. If they used to work mornings and have just said they now work nights, the morning entry is outdated. Do not list something merely because it went unmentioned.
 
 "style": how to deal with this person, learned from how they actually behave rather than what they claim. Not facts about their life \u2014 habits of dealing with them. "Cuts you off when you give more than two sentences." "Asks follow-up questions rather than accepting the first answer." "Says thanks and moves on; does not want elaboration." "Prefers being given the answer before the reasoning." Only add one when the exchange genuinely showed it. Most exchanges show nothing, and an empty list is the right answer.`;
+var PERSONAL = /\b(i|i'm|im|my|me|we|our|mine|myself)\b/i;
+var NOISE = /^(ok(ay)?|yes|no|yeah|yep|nah|sure|thanks?|thank you|cheers|nice|cool|good|great|fine|stop|cancel|open .{0,40}|go to .{0,40}|switch to .{0,40})[.!?]?$/i;
+function worthLearningFrom(userText, sweep = false) {
+  if (sweep) return true;
+  const text = userText.trim();
+  if (text.length < 12) return false;
+  if (NOISE.test(text)) return false;
+  if (!PERSONAL.test(text) && text.length < 80) return false;
+  return true;
+}
 async function learnFrom(userText, graceText) {
   if (!config.learnFromConversation) return [];
-  const known = (await getProfile()).entries.filter((entry) => !entry.supersededAt);
+  const known = (await getProfile()).entries.filter((entry) => !entry.supersededAt).slice(-60);
   const knownList = known.length > 0 ? known.map((entry) => `- ${entry.text}`).join("\n") : "(nothing recorded yet)";
   try {
     const raw = await getProvider().complete({
@@ -1066,7 +1086,10 @@ Grace: ${graceText}`
       ],
       temperature: 0,
       json: SCHEMA,
-      maxOutputTokens: 700
+      maxOutputTokens: 700,
+      // Extraction is transcription of what was said, not reasoning about it.
+      // Left at the default this deliberated at length, billed as output.
+      fast: true
     });
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed.entries)) return [];
@@ -2436,7 +2459,7 @@ var playstationTools = [
 ];
 
 // server/tools/recall.ts
-var NOISE = /* @__PURE__ */ new Set([
+var NOISE2 = /* @__PURE__ */ new Set([
   "the",
   "a",
   "an",
@@ -2482,7 +2505,7 @@ var NOISE = /* @__PURE__ */ new Set([
   "again"
 ]);
 function terms(text) {
-  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !NOISE.has(word));
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !NOISE2.has(word));
 }
 function score(haystack, needles) {
   const text = haystack.toLowerCase();
@@ -2818,22 +2841,27 @@ It reached you through transcription, so treat the exact wording as approximate.
   const recall = summary ? `Where you left off in earlier conversations:
 ${summary}` : null;
   return [
+    // Never changes between deploys.
     IDENTITY,
     REGISTER,
-    address,
     BREVITY,
     JUDGEMENT,
     MEMORY_GUIDE,
+    LIMITS,
+    TOOLS_NOTE,
+    PHASE_NOTE,
+    // Changes rarely.
+    address,
+    describePolicies(policies),
+    // Changes a few times a day.
     describeProfile(profile2),
     describeStyle(profile2),
-    recall,
-    TOOLS_NOTE,
-    describePolicies(policies),
-    briefing ?? null,
-    LIMITS,
-    PHASE_NOTE,
-    briefing ? CONNECTED_NOTE : null,
     style ?? null,
+    recall,
+    // Changes constantly. Everything below is cache-hostile by nature, and
+    // must stay at the end where its churn costs only itself.
+    briefing ? CONNECTED_NOTE : null,
+    briefing ?? null,
     clock,
     channel,
     `The user has you in ${MODES[mode].label} mode. ${MODES[mode].guidance}`
@@ -2876,7 +2904,8 @@ ${body}`).join("\n\n")
       }
     ],
     temperature: 0.2,
-    maxOutputTokens: 400
+    maxOutputTokens: 400,
+    fast: true
   }).catch(() => "");
   if (!description.trim()) return false;
   await store11.write({
@@ -3018,7 +3047,13 @@ function createApi() {
         spend: {
           dollars: Math.round(money.dollars * 100) / 100,
           cap: monthlyCap(),
-          requests: money.requests
+          requests: money.requests,
+          byModel: Object.fromEntries(
+            Object.entries(money.byModel ?? {}).map(([model, dollars]) => [
+              model,
+              Math.round(dollars * 1e3) / 1e3
+            ])
+          )
         }
       };
       res.json(state);
@@ -3119,6 +3154,10 @@ function createApi() {
           signal: controller.signal,
           temperature: 0.7,
           fast: true,
+          // Output tokens cost eight times input. Room for a genuinely long
+          // answer when asked for one; a stop before a runaway reply can
+          // spend a day's budget in one go.
+          maxOutputTokens: 2048,
           onGrounded: () => {
             if (!grounded) {
               grounded = true;
@@ -3183,7 +3222,8 @@ function createApi() {
       const log = await getMessages();
       const graceAt = log.findLastIndex((message) => message.speaker === "grace");
       const userAt = log.slice(0, Math.max(graceAt, 0)).findLastIndex((message) => message.speaker === "user");
-      const learned = graceAt >= 0 && userAt >= 0 ? await learnFrom(log[userAt].text, log[graceAt].text) : [];
+      const sweep = log.length % 12 < 2;
+      const learned = graceAt >= 0 && userAt >= 0 && worthLearningFrom(log[userAt].text, sweep) ? await learnFrom(log[userAt].text, log[graceAt].text) : [];
       const compacted = await compactIfNeeded();
       learnWritingStyle().catch(() => {
       });

@@ -116,7 +116,13 @@ export interface GraceState {
   /** Where memory is kept, and whether it is encrypted at rest. */
   storage: {backend: string; encrypted: boolean};
   /** What she has spent this month against her cap, in dollars. */
-  spend: {dollars: number; cap: number; requests: number};
+  spend: {
+    dollars: number;
+    cap: number;
+    requests: number;
+    /** Where it went — chat, speech, transcription — so nobody guesses. */
+    byModel?: Record<string, number>;
+  };
 }
 
 /** Something Grace noticed that may want the user. */

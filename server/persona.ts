@@ -200,23 +200,36 @@ It reached you through transcription, so treat the exact wording as approximate.
     ? `Where you left off in earlier conversations:\n${summary}`
     : null;
 
+  // Ordered by volatility, deliberately. Gemini bills cached input at a
+  // quarter of the full rate, and the cache is a byte-identical prefix: one
+  // changed character invalidates everything after it. The clock changes
+  // every minute and the briefing every ninety seconds, so putting either
+  // early — as this used to — meant no two requests ever shared a prefix and
+  // every input token was billed at full price on every turn. Fixed text
+  // first, the profile and summary (which change a few times a day) next,
+  // and the live material last, where its churn costs only itself.
   return [
+    // Never changes between deploys.
     IDENTITY,
     REGISTER,
-    address,
     BREVITY,
     JUDGEMENT,
     MEMORY_GUIDE,
+    LIMITS,
+    TOOLS_NOTE,
+    PHASE_NOTE,
+    // Changes rarely.
+    address,
+    describePolicies(policies),
+    // Changes a few times a day.
     describeProfile(profile),
     describeStyle(profile),
-    recall,
-    TOOLS_NOTE,
-    describePolicies(policies),
-    briefing ?? null,
-    LIMITS,
-    PHASE_NOTE,
-    briefing ? CONNECTED_NOTE : null,
     style ?? null,
+    recall,
+    // Changes constantly. Everything below is cache-hostile by nature, and
+    // must stay at the end where its churn costs only itself.
+    briefing ? CONNECTED_NOTE : null,
+    briefing ?? null,
     clock,
     channel,
     `The user has you in ${MODES[mode].label} mode. ${MODES[mode].guidance}`,

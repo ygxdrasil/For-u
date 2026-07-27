@@ -19,7 +19,7 @@ import {bridgeStatus, bridgeToken, claim, report} from './bridge';
 import {monthlyCap, spend} from './budget';
 import {config, isConfigured} from './config';
 import {keyStatus, loadKeys, setKey} from './keys';
-import {learnFrom} from './learn';
+import {learnFrom, worthLearningFrom} from './learn';
 import {buildBriefing} from './google/briefing';
 import {upcoming} from './google/calendar';
 import {recentMail} from './google/gmail';
@@ -265,6 +265,12 @@ export function createApi(): Express {
           dollars: Math.round(money.dollars * 100) / 100,
           cap: monthlyCap(),
           requests: money.requests,
+          byModel: Object.fromEntries(
+            Object.entries(money.byModel ?? {}).map(([model, dollars]) => [
+              model,
+              Math.round(dollars * 1000) / 1000,
+            ]),
+          ),
         },
       };
       res.json(state);
@@ -390,6 +396,10 @@ export function createApi(): Express {
           signal: controller.signal,
           temperature: 0.7,
           fast: true,
+          // Output tokens cost eight times input. Room for a genuinely long
+          // answer when asked for one; a stop before a runaway reply can
+          // spend a day's budget in one go.
+          maxOutputTokens: 2048,
           onGrounded: () => {
             if (!grounded) {
               grounded = true;
@@ -474,8 +484,11 @@ export function createApi(): Express {
         .slice(0, Math.max(graceAt, 0))
         .findLastIndex((message) => message.speaker === 'user');
 
+      // A sweep every sixth exchange catches whatever the cheap gate missed;
+      // in between, trivial turns cost nothing at all.
+      const sweep = log.length % 12 < 2;
       const learned =
-        graceAt >= 0 && userAt >= 0
+        graceAt >= 0 && userAt >= 0 && worthLearningFrom(log[userAt].text, sweep)
           ? await learnFrom(log[userAt].text, log[graceAt].text)
           : [];
 
