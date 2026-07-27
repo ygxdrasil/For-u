@@ -1540,6 +1540,7 @@ try {
     print: {bands: new Array(BANDS).fill(0.1), pitch: 118, voiced: 0.9},
     samples: 3,
     tightness: 0.94,
+    spread: new Array(BANDS).fill(0.2),
     at: '2026-01-01T00:00:00.000Z',
   };
   const enrolled = await call('/voice-enrol', {

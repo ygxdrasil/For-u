@@ -480,6 +480,47 @@ export default function App() {
         />
       )}
 
+      {/*
+        The lockout, made visible.
+
+        She used to ignore a voice and give no sign at all, which is
+        indistinguishable from being broken — and that is exactly how it was
+        reported. Three refusals in a row is no longer the television; it is
+        somebody trying to be heard, so it says so and offers the two ways out.
+      */}
+      {grace.ambient.strangers >= 3 && grace.guard?.on && !voiceLockOpen && (
+        <div className="glass edge-run fixed inset-x-4 bottom-24 z-30 mx-auto max-w-md p-3 lg:bottom-6">
+          <p className="text-xs leading-relaxed text-slate-200">
+            I’ve ignored {grace.ambient.strangers} things I didn’t recognise as your
+            voice. If one of those was you, I’m being too fussy.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void api.saveVoice({strictness: 'lenient'}).then(grace.setGuard);
+              }}
+              className="rounded-full border border-ice/40 bg-ice/15 px-3 py-1 text-xs text-ice hover:bg-ice/25">
+              Be less fussy
+            </button>
+            <button
+              type="button"
+              onClick={() => setVoiceLockOpen(true)}
+              className="rounded-full border border-edge px-3 py-1 text-xs text-mist hover:text-slate-200">
+              Record my voice again
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void api.saveVoice({on: false}).then(grace.setGuard);
+              }}
+              className="ml-auto rounded-full border border-edge px-3 py-1 text-xs text-mist hover:text-slate-200">
+              Turn it off
+            </button>
+          </div>
+        </div>
+      )}
+
       {voiceLockOpen && (
         <VoiceLock
           guard={grace.guard}

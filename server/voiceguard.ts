@@ -50,7 +50,16 @@ export function isEnrolment(value: unknown): value is Enrolment {
     candidate.tightness > 0 &&
     candidate.tightness <= 1 &&
     typeof candidate.samples === 'number' &&
-    candidate.samples > 0
+    candidate.samples > 0 &&
+    // Optional, because an enrolment made before spread existed is still a
+    // perfectly good print — the comparison simply weights every band equally,
+    // which is what it did back then. Present but malformed is refused.
+    (candidate.spread === undefined ||
+      (Array.isArray(candidate.spread) &&
+        candidate.spread.length === BANDS &&
+        candidate.spread.every(
+          (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0,
+        )))
   );
 }
 

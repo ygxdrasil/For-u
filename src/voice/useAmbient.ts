@@ -2,7 +2,7 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import * as api from '../lib/api';
 import {acquire, MicError, type MicLease} from './mic';
 import {toWav} from './wav';
-import {wasYou, type GuardState} from './voiceprint';
+import {keepUpWith, wasYou, type GuardState} from './voiceprint';
 
 /**
  * Always-on listening.
@@ -116,8 +116,8 @@ export function useAmbient({
   const [awake, setAwake] = useState(false);
   /** The last thing she heard, whether or not it was for her. */
   const [heard, setHeard] = useState('');
-  /** When she last turned someone away, so the interface can say so. */
-  const [stranger, setStranger] = useState(0);
+  /** Voices turned away in a row. Reset the moment she recognises you. */
+  const [strangers, setStrangers] = useState(0);
 
   const leaseRef = useRef<MicLease | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -183,11 +183,22 @@ export function useAmbient({
        * paid for before being thrown out — this way somebody else's voice
        * costs nothing at all, which makes the guard cheaper than not having it.
        */
-      const speaker = await wasYou(guardRef.current ?? {enrolment: null, on: false, strictness: 'normal'}, audio);
+      const guarding = guardRef.current ?? {
+        enrolment: null,
+        on: false,
+        strictness: 'normal' as const,
+      };
+      const speaker = await wasYou(guarding, audio);
       if (!speaker.ok) {
-        setStranger(Date.now());
+        // Counted, not just noted. One refusal is the television; several in a
+        // row is the owner being locked out of their own house, and the
+        // interface has to be able to say so — the first version failed
+        // silently, which left no way to tell the two apart.
+        setStrangers((count) => count + 1);
         return;
       }
+      setStrangers(0);
+      void keepUpWith(guarding, audio);
 
       const wav = await toWav(audio);
       const text = (await api.transcribe(wav.base64, wav.mimeType)).trim();
@@ -401,5 +412,5 @@ export function useAmbient({
     };
   }, [enabled, start, stop]);
 
-  return {state, level, error, awake, heard, stranger};
+  return {state, level, error, awake, heard, strangers};
 }

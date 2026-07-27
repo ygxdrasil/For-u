@@ -34,7 +34,29 @@ export interface Voiceprint {
   pitch: number;
   /** How much of the sample was actually voiced, 0 to 1. Quality, not identity. */
   voiced: number;
+  /**
+   * Seconds of actual speech behind this print.
+   *
+   * The measurement nobody thinks to keep, and the one that caused the first
+   * version to start refusing its owner. Enrolment is a whole spoken phrase;
+   * an ordinary request is "Grace, lights off" — a second and a half. A print
+   * from a second of speech is a noisy estimate of the same voice, scores
+   * lower against the enrolment than the enrolment scored against itself, and
+   * gets turned away. Knowing how much evidence there was is what lets the
+   * check decline to rule rather than rule wrongly.
+   */
+  seconds: number;
 }
+
+/**
+ * Below this there is not enough speech to tell anyone from anyone.
+ *
+ * Under a second of voiced audio, the honest answer is "cannot say" — and the
+ * right thing to do with "cannot say" is let it through, because the cost of
+ * a wrong refusal here is the owner being ignored in their own house, and the
+ * cost of a wrong admission is that the television gets one sentence answered.
+ */
+export const MIN_EVIDENCE_SECONDS = 0.9;
 
 export interface Enrolment {
   print: Voiceprint;
@@ -51,6 +73,17 @@ export interface Enrolment {
    * and everything after is judged as a fraction of it.
    */
   tightness: number;
+  /**
+   * How much each band wandered between your own takes.
+   *
+   * The answer to "recognise me even when my voice is a bit cracked". A cold,
+   * tiredness, or simply a different sentence move some bands a great deal and
+   * others hardly at all — and which ones are stable is personal. Measuring
+   * that during enrolment lets the comparison lean on the parts of your voice
+   * that hold steady and discount the parts that never did, which is both more
+   * forgiving of you and harder for somebody else to pass.
+   */
+  spread: number[];
   at: string;
 }
 
@@ -242,7 +275,7 @@ export function printOf(samples: Float32Array, rate: number): Voiceprint {
   }
 
   if (loudFrames === 0) {
-    return {bands: new Array<number>(BANDS).fill(0), pitch: 0, voiced: 0};
+    return {bands: new Array<number>(BANDS).fill(0), pitch: 0, voiced: 0, seconds: 0};
   }
 
   const bands = totals.map((total) => total / loudFrames);
@@ -252,6 +285,7 @@ export function printOf(samples: Float32Array, rate: number): Voiceprint {
     bands: bands.map((value) => value - mean),
     pitch: median(pitches),
     voiced: frames > 0 ? loudFrames / frames : 0,
+    seconds: (loudFrames * HOP) / rate,
   };
 }
 
@@ -259,7 +293,7 @@ export function printOf(samples: Float32Array, rate: number): Voiceprint {
 export function combine(prints: Voiceprint[]): Voiceprint {
   const usable = prints.filter((print) => print.voiced > 0);
   if (usable.length === 0) {
-    return {bands: new Array<number>(BANDS).fill(0), pitch: 0, voiced: 0};
+    return {bands: new Array<number>(BANDS).fill(0), pitch: 0, voiced: 0, seconds: 0};
   }
 
   const bands = new Array<number>(BANDS).fill(0);
@@ -273,17 +307,55 @@ export function combine(prints: Voiceprint[]): Voiceprint {
     // a harmonic should not drag the whole enrolment an octave up.
     pitch: median(usable.map((print) => print.pitch).filter((hz) => hz > 0)),
     voiced: usable.reduce((sum, print) => sum + print.voiced, 0) / usable.length,
+    seconds: usable.reduce((sum, print) => sum + print.seconds, 0),
   };
 }
 
-function cosine(a: number[], b: number[]): number {
+/**
+ * How much each band wandered between takes, as a standard deviation.
+ *
+ * A single take gives no information about spread at all — there is nothing to
+ * vary against — so it comes back flat, which the weighting reads as "trust
+ * everything equally". That is the correct behaviour and not a fallback.
+ */
+export function spreadOf(prints: Voiceprint[]): number[] {
+  const usable = prints.filter((print) => print.voiced > 0);
+  if (usable.length < 2) return new Array<number>(BANDS).fill(0);
+
+  return Array.from({length: BANDS}, (_, band) => {
+    const values = usable.map((print) => print.bands[band]);
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance =
+      values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+    return Math.sqrt(variance);
+  });
+}
+
+/**
+ * Weights for the comparison: steady bands count, wandering bands don't.
+ *
+ * Normalised to average one so the weighting changes the *shape* of the
+ * comparison without changing its scale — otherwise a voice that happens to be
+ * consistent everywhere would score differently from one that isn't, on top of
+ * whatever the actual match was.
+ */
+function weightsFrom(spread: number[] | undefined): number[] {
+  if (!spread || spread.length !== BANDS) return new Array<number>(BANDS).fill(1);
+
+  const raw = spread.map((deviation) => 1 / (deviation + 0.35));
+  const mean = raw.reduce((sum, value) => sum + value, 0) / BANDS;
+  return mean > 0 ? raw.map((value) => value / mean) : new Array<number>(BANDS).fill(1);
+}
+
+function cosine(a: number[], b: number[], weights?: number[]): number {
   let dot = 0;
   let leftSize = 0;
   let rightSize = 0;
   for (let i = 0; i < a.length; i += 1) {
-    dot += a[i] * b[i];
-    leftSize += a[i] * a[i];
-    rightSize += b[i] * b[i];
+    const weight = weights?.[i] ?? 1;
+    dot += weight * a[i] * b[i];
+    leftSize += weight * a[i] * a[i];
+    rightSize += weight * b[i] * b[i];
   }
   if (leftSize === 0 || rightSize === 0) return 0;
   return dot / Math.sqrt(leftSize * rightSize);
@@ -301,7 +373,11 @@ function cosine(a: number[], b: number[]): number {
  * enormous difference at the bottom of a voice and nothing at the top, and
  * treating those the same is how a scorer ends up biased by register.
  */
-export function similarity(enrolled: Voiceprint, heard: Voiceprint): number {
+export function similarity(
+  enrolled: Voiceprint,
+  heard: Voiceprint,
+  spread?: number[],
+): number {
   if (enrolled.voiced === 0 || heard.voiced === 0) return 0;
 
   /*
@@ -311,15 +387,21 @@ export function similarity(enrolled: Voiceprint, heard: Voiceprint): number {
    * Stretching the top of the range is what turns a number that is technically
    * correct into one that can be thresholded.
    */
-  const raw = cosine(enrolled.bands, heard.bands);
+  const raw = cosine(enrolled.bands, heard.bands, weightsFrom(spread));
   const timbre = Math.min(1, Math.max(0, (raw - 0.85) / 0.15));
 
   let pitch = 0.5;
   if (enrolled.pitch > 0 && heard.pitch > 0) {
     const octaves = Math.abs(Math.log2(heard.pitch / enrolled.pitch));
-    // A quarter of an octave apart is a different person far more often than
-    // it is you with a cold, which is where the falloff is centred.
-    pitch = Math.max(0, 1 - octaves / 0.5);
+    /*
+     * A third of an octave of slack, widened from a quarter because a voice
+     * genuinely moves that much. A cold drops it, tiredness drops it, shouting
+     * across a room lifts it, and the first thing anyone does on being refused
+     * is repeat themselves louder — which lifts it further. Someone else's
+     * voice is usually much further away than that, so the cost of the extra
+     * room is small and the cost of not having it was the owner being ignored.
+     */
+    pitch = Math.max(0, 1 - octaves / 0.66);
   }
 
   return timbre * 0.65 + pitch * 0.35;
@@ -338,9 +420,9 @@ export function similarity(enrolled: Voiceprint, heard: Voiceprint): number {
  * "she occasionally answers someone else" is a decision a person can make.
  */
 export const STRICTNESS = {
-  lenient: 0.78,
-  normal: 0.88,
-  strict: 0.94,
+  lenient: 0.62,
+  normal: 0.74,
+  strict: 0.86,
 } as const;
 
 export type Strictness = keyof typeof STRICTNESS;
@@ -349,7 +431,8 @@ export type Strictness = keyof typeof STRICTNESS;
 export function tightnessOf(prints: Voiceprint[], combined: Voiceprint): number {
   const usable = prints.filter((print) => print.voiced > 0);
   if (usable.length === 0) return 0;
-  const scores = usable.map((print) => similarity(combined, print));
+  const spread = spreadOf(usable);
+  const scores = usable.map((print) => similarity(combined, print, spread));
   return scores.reduce((sum, score) => sum + score, 0) / scores.length;
 }
 
@@ -358,14 +441,19 @@ export interface Verdict {
   score: number;
   /** What it had to beat, so the interface can be specific rather than coy. */
   needed: number;
+  /** True when there was too little speech to judge, and it was let through. */
+  unsure?: boolean;
 }
 
 /**
  * Is this you?
  *
- * Never answers yes to silence, and never answers yes when there is nothing
- * enrolled to compare against — an unenrolled account should fall back to
- * answering everyone, not to answering no one.
+ * Three ways to answer yes, and only one of them is a match. Silence never
+ * matches. Nothing enrolled means everyone is you, because an unenrolled
+ * account should answer everybody rather than nobody. And too little speech to
+ * judge is answered yes as well, deliberately: the cost of being wrong there is
+ * the television getting one sentence answered, against the cost of the owner
+ * being ignored in their own house, and those are not close.
  */
 export function verify(
   enrolment: Enrolment | null,
@@ -373,8 +461,49 @@ export function verify(
   strictness: Strictness = 'normal',
 ): Verdict {
   if (!enrolment || enrolment.tightness <= 0) return {ok: true, score: 1, needed: 0};
+  if (heard.voiced === 0) return {ok: false, score: 0, needed: 0};
 
   const needed = enrolment.tightness * STRICTNESS[strictness];
-  const score = similarity(enrolment.print, heard);
+  const score = similarity(enrolment.print, heard, enrolment.spread);
+
+  if (heard.seconds < MIN_EVIDENCE_SECONDS) {
+    return {ok: true, score, needed, unsure: true};
+  }
+
   return {ok: score >= needed, score, needed};
+}
+
+/**
+ * Fold a confidently-matched utterance back into the print.
+ *
+ * Voices drift — a cold comes on over three days, a new microphone arrives, a
+ * room changes. Without this, an enrolment made once slowly stops describing
+ * the person who made it, and the first sign is being refused.
+ *
+ * Only comfortable matches are folded in, and gently, so a lucky pass by
+ * someone else moves the print by almost nothing and would need to happen
+ * dozens of times to matter. The bar is set well above the acceptance
+ * threshold on purpose: drifting towards a voice that merely scraped through
+ * is how these things slowly learn the wrong person.
+ */
+export function blend(enrolment: Enrolment, heard: Voiceprint): Enrolment | null {
+  if (heard.seconds < MIN_EVIDENCE_SECONDS * 2) return null;
+
+  const score = similarity(enrolment.print, heard, enrolment.spread);
+  if (score < enrolment.tightness * 0.95) return null;
+
+  const weight = 0.05;
+  return {
+    ...enrolment,
+    print: {
+      ...enrolment.print,
+      bands: enrolment.print.bands.map(
+        (band, i) => band * (1 - weight) + heard.bands[i] * weight,
+      ),
+      pitch:
+        heard.pitch > 0
+          ? enrolment.print.pitch * (1 - weight) + heard.pitch * weight
+          : enrolment.print.pitch,
+    },
+  };
 }

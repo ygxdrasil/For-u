@@ -4307,7 +4307,12 @@ function isEnrolment(value) {
   if (!value || typeof value !== "object") return false;
   const candidate = value;
   const print = candidate.print;
-  return Boolean(print) && Array.isArray(print?.bands) && print.bands.length === BANDS && print.bands.every((band) => typeof band === "number" && Number.isFinite(band)) && typeof print.pitch === "number" && Number.isFinite(print.pitch) && typeof print.voiced === "number" && print.voiced > 0 && typeof candidate.tightness === "number" && candidate.tightness > 0 && candidate.tightness <= 1 && typeof candidate.samples === "number" && candidate.samples > 0;
+  return Boolean(print) && Array.isArray(print?.bands) && print.bands.length === BANDS && print.bands.every((band) => typeof band === "number" && Number.isFinite(band)) && typeof print.pitch === "number" && Number.isFinite(print.pitch) && typeof print.voiced === "number" && print.voiced > 0 && typeof candidate.tightness === "number" && candidate.tightness > 0 && candidate.tightness <= 1 && typeof candidate.samples === "number" && candidate.samples > 0 && // Optional, because an enrolment made before spread existed is still a
+  // perfectly good print — the comparison simply weights every band equally,
+  // which is what it did back then. Present but malformed is refused.
+  (candidate.spread === void 0 || Array.isArray(candidate.spread) && candidate.spread.length === BANDS && candidate.spread.every(
+    (value2) => typeof value2 === "number" && Number.isFinite(value2) && value2 >= 0
+  ));
 }
 async function enrol(enrolment) {
   const current = await store16.read();

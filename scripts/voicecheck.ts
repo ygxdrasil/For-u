@@ -10,8 +10,11 @@
 
 import assertions from 'node:assert/strict';
 import {
+  blend,
   combine,
+  MIN_EVIDENCE_SECONDS,
   printOf,
+  spreadOf,
   STRICTNESS,
   tightnessOf,
   verify,
@@ -31,7 +34,7 @@ const RATE = 16_000;
 export function vowel(
   fundamental: number,
   formants: [number, number, number],
-  seconds = 1.2,
+  seconds = 1.6,
 ): Float32Array {
   const samples = new Float32Array(Math.floor(RATE * seconds));
 
@@ -70,19 +73,30 @@ function scramble(samples: Float32Array, amount: number, seed = 1): Float32Array
 }
 
 export function voiceChecks(assert: typeof import('node:assert/strict')) {
-  // Three takes of the same voice, as an enrolment would be: the same person,
-  // never identical twice. Every probe below carries the same amount of noise,
-  // so what is being compared is the voice and not the recording quality.
+  /*
+   * Five takes, genuinely varied, as the five enrolment phrases produce.
+   *
+   * The first version used three near-identical ones, and that is precisely
+   * what started refusing the owner: takes that agree perfectly say the voice
+   * never varies, which sets a bar the same voice cannot clear on an ordinary
+   * day. The variation here is the point of the exercise, not noise in it —
+   * how much *you* move is what decides how much movement is allowed, and
+   * enrolling from one narrow way of speaking is enrolling a stranger who
+   * happens to sound like you at your most careful.
+   */
   const takes = [
     printOf(scramble(vowel(118, [700, 1200, 2500]), 0.01, 3), RATE),
-    printOf(scramble(vowel(122, [690, 1220, 2450]), 0.01, 7), RATE),
-    printOf(scramble(vowel(115, [710, 1180, 2550]), 0.01, 99), RATE),
+    printOf(scramble(vowel(126, [680, 1260, 2420]), 0.01, 7), RATE),
+    printOf(scramble(vowel(112, [720, 1150, 2570]), 0.01, 99), RATE),
+    printOf(scramble(vowel(122, [660, 1300, 2480]), 0.01, 11), RATE),
+    printOf(scramble(vowel(115, [730, 1180, 2380]), 0.01, 41), RATE),
   ];
   const print = combine(takes);
   const mine: Enrolment = {
     print,
     samples: takes.length,
     tightness: tightnessOf(takes, print),
+    spread: spreadOf(takes),
     at: '2026-01-01T00:00:00.000Z',
   };
 
@@ -121,6 +135,61 @@ export function voiceChecks(assert: typeof import('node:assert/strict')) {
     'strict must demand more than lenient',
   );
 
+  /*
+   * The bug that started refusing the owner.
+   *
+   * Enrolment is a whole spoken phrase; a real request is "Grace, lights off" —
+   * a second and a half. A print from that little speech is a noisy estimate of
+   * the same voice, scores below what the enrolment scored against itself, and
+   * gets turned away. Below a second there is not enough to judge, and the
+   * right answer to "cannot say" is to let it through.
+   */
+  const brief = printOf(scramble(vowel(120, [705, 1210, 2480], 0.5), 0.01, 13), RATE);
+  assert.ok(brief.seconds < MIN_EVIDENCE_SECONDS, 'half a second is not much evidence');
+  const briefVerdict = verify(mine, brief, 'strict');
+  assert.equal(briefVerdict.ok, true, 'too little speech must never be a refusal');
+  assert.equal(briefVerdict.unsure, true, 'and it must say that it could not tell');
+
+  /*
+   * "Recognise me even if my voice is a bit cracked."
+   *
+   * A cold: the fundamental drops, the higher formants shift and dampen, and
+   * the whole thing is noisier. It must still be recognisably the same person,
+   * because being refused on the day you feel worst is exactly when it matters.
+   */
+  const rough = verify(mine, probe(104, [660, 1120, 2300], 17));
+  assert.ok(
+    rough.ok,
+    `a cold must not lock the owner out, scored ${rough.score.toFixed(2)} against ${rough.needed.toFixed(2)}`,
+  );
+  // Shouting across a room, which lifts pitch — and is the first thing anyone
+  // does after being ignored once.
+  const raised = verify(mine, probe(142, [730, 1280, 2600], 23));
+  assert.ok(raised.ok, `a raised voice must still be recognised (${raised.score.toFixed(2)})`);
+
+  // All that leeway is worth nothing if it lets the room in as well.
+  assert.equal(verify(mine, probe(210, [520, 1900, 2900], 53)).ok, false);
+
+  // Drift: a comfortable match nudges the print, a poor one never does. A
+  // proper sentence, because drift correction on a scrap of audio is how a
+  // print wanders off on noise.
+  const proper = (fundamental: number, formants: [number, number, number], seed: number) =>
+    printOf(scramble(vowel(fundamental, formants, 4), 0.01, seed), RATE);
+
+  assert.ok(blend(mine, proper(120, [705, 1210, 2480], 31)), 'a good match may nudge it');
+  assert.equal(
+    blend(mine, proper(210, [520, 1900, 2900], 53)),
+    null,
+    'a stranger must never teach her their voice',
+  );
+  assert.equal(blend(mine, brief), null, 'nor may a scrap of audio');
+
+  // And the nudge is small: one utterance must never redraw the print.
+  const nudged = blend(mine, proper(120, [705, 1210, 2480], 31));
+  assert.ok(
+    nudged && Math.abs(nudged.print.pitch - mine.print.pitch) < 1,
+    'drift correction moves it by a hair, not a step',
+  );
   // Silence is not a voice, and must never match — otherwise a quiet room
   // is indistinguishable from you speaking.
   const nothing = printOf(new Float32Array(RATE), RATE);

@@ -16,13 +16,28 @@ import {enrolmentFrom, type GuardState} from '../voice/voiceprint';
  * anywhere else would either lock you out or let the room in.
  */
 
+/**
+ * Five phrases, chosen for coverage rather than for meaning.
+ *
+ * Between them they run through the vowels a voice actually differs on — the
+ * open ones, the close ones, the rounded ones — and each ends up long enough
+ * to hold four or five seconds of real speech. The old three were short and
+ * sounded alike, which produced a print that described one narrow way of
+ * talking and then refused every other way, including the owner's.
+ *
+ * The last one is deliberately awkward to say. Speaking carefully and speaking
+ * naturally are different voices, and a print built only from careful speech
+ * will not know you when you are being ordinary.
+ */
 const PHRASES = [
-  'Grace, are you listening to me',
-  'What have I got on today',
-  'Put the kettle on and tell me the news',
+  'Grace, are you listening to me right now',
+  'What have I got on today, and is any of it urgent',
+  'Put the kettle on and tell me the news from this morning',
+  'Turn the lights down low, it is getting late here',
+  'Honestly, I have no idea where I put those keys again',
 ];
 
-const TAKE_SECONDS = 4;
+const TAKE_SECONDS = 6;
 
 const STRICTNESS_SAYS: {id: Strictness; label: string; blurb: string}[] = [
   {id: 'lenient', label: 'Forgiving', blurb: 'Rarely refuses you. May answer someone similar'},
@@ -206,8 +221,10 @@ export function VoiceLock({guard, deviceId, onSave, onForget, onClose}: Props) {
           <>
             <p className="text-xs leading-relaxed text-mist/75">
               Say each line out loud, in your ordinary voice, from where you normally
-              sit. Three takes — the differences between them are what set how fussy
-              she needs to be.
+              sit. Five of them, six seconds each — and don’t try to sound the same
+              every time. How much your voice moves is exactly what sets how much
+              movement she allows, so a careful, identical reading is what makes her
+              refuse you on an ordinary day.
             </p>
 
             <ol className="mt-3 space-y-1.5">

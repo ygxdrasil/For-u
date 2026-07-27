@@ -1,6 +1,8 @@
 import {
+  blend,
   combine,
   printOf,
+  spreadOf,
   tightnessOf,
   verify,
   type Enrolment,
@@ -72,6 +74,10 @@ export async function enrolmentFrom(clips: Blob[]): Promise<Enrolment | null> {
     print,
     samples: prints.length,
     tightness: tightnessOf(prints, print),
+    // Which parts of this voice hold still and which wander. Measured here
+    // because it can only be measured across takes, and this is the only
+    // moment several takes of the same voice exist together.
+    spread: spreadOf(prints),
     at: new Date().toISOString(),
   };
 }
@@ -83,6 +89,38 @@ export async function enrolmentFrom(clips: Blob[]): Promise<Enrolment | null> {
  * failure that matters here is not letting a stranger through — it is locking
  * the owner out of their own assistant.
  */
+/**
+ * Let the print follow the voice as it drifts.
+ *
+ * A cold comes on over three days, a microphone gets replaced, a room changes.
+ * Without this, an enrolment made once slowly stops describing the person who
+ * made it, and the first thing they notice is being refused.
+ *
+ * Throttled hard, and only on comfortable matches, so this is a slow correction
+ * rather than a thing that learns whoever spoke last. Failures are swallowed:
+ * an assistant that stops listening because a background save went wrong would
+ * be worse than one that never adapted at all.
+ */
+let lastBlend = 0;
+
+export async function keepUpWith(guard: GuardState, audio: Blob): Promise<void> {
+  if (!guard.on || !guard.enrolment) return;
+  if (Date.now() - lastBlend < 10 * 60_000) return;
+
+  try {
+    const moved = blend(guard.enrolment, await printFrom(audio));
+    if (!moved) return;
+    lastBlend = Date.now();
+    await fetch('/api/voice-enrol', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enrolment: moved}),
+    });
+  } catch {
+    // Nothing here is worth interrupting anyone over.
+  }
+}
+
 export async function wasYou(guard: GuardState, audio: Blob): Promise<Verdict> {
   if (!guard.on || !guard.enrolment) return {ok: true, score: 1, needed: 0};
   try {
