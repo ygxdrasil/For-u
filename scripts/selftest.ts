@@ -1067,6 +1067,34 @@ try {
   );
   ok('the bridge opens web addresses only, and never through a shell');
 
+  // ---- she keeps listening while you are reading something else ----------
+  // The detection loop ran on requestAnimationFrame, which every browser stops
+  // for a tab nobody is looking at — so she went deaf the moment another site
+  // was opened and could hear again the instant you came back. An AudioWorklet
+  // is driven by the soundcard and does not know whether anyone is watching.
+  const ambient = readFileSync('src/voice/useAmbient.ts', 'utf8');
+  assert.match(ambient, /audioWorklet\.addModule/, 'listening must run on the audio thread');
+  assert.match(
+    ambient,
+    /registerProcessor\('grace-ears'/,
+    'the worklet itself has to be there, not merely referenced',
+  );
+  // The worklet is only pulled if it reaches the destination; unconnected, its
+  // process() is never called and she is silently deaf everywhere.
+  assert.match(ambient, /silent\.connect\(context\.destination\)/);
+  // The frame clock still exists, and must stay strictly a fallback: named
+  // once where it is defined and reached exactly once, from the failure path.
+  assert.equal(
+    ambient.split('watchOnScreen').length - 1,
+    2,
+    'the frame clock must be the fallback, never a second live path',
+  );
+  assert.ok(
+    ambient.indexOf('audioWorklet.addModule') < ambient.indexOf('watchOnScreen()'),
+    'the worklet is tried first; the frame clock only when it fails',
+  );
+  ok('listening runs on the audio thread, so a hidden tab still hears');
+
   // This is the only route that anything on the open internet can reach
   // without the password, so what it refuses matters more than what it does.
   const refused = await fetch(`${base}/bridge`, {

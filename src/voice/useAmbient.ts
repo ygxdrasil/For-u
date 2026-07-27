@@ -15,7 +15,65 @@ import {toWav} from './wav';
  * to a remote service, holds the microphone against everything else that wants
  * it, and stops on its own schedule without saying so. This is the thing it was
  * pretending to be.
+ *
+ * The listening itself happens on the audio thread, in a worklet, and that is
+ * the whole reason she can still hear you while you are reading something else.
+ * This loop used to run on requestAnimationFrame, which every browser stops
+ * dead for a tab you are not looking at — so the moment you opened another
+ * site she went deaf, and came back the instant you returned, which is a very
+ * confusing thing to experience. An AudioWorklet is driven by the soundcard
+ * rather than the screen. It does not know or care whether anyone is watching.
+ *
+ * The limit that remains is real and worth being straight about: her tab has to
+ * be open somewhere. A page that has been closed is not running, and no amount
+ * of cleverness changes that — hearing you with the browser shut would need a
+ * browser extension or a program installed on the machine.
  */
+
+/**
+ * The ear itself, as source text.
+ *
+ * Kept as a string and handed over as a blob rather than shipped as its own
+ * file, because a worklet module is fetched by URL at runtime and a separate
+ * asset is one more thing to get wrong in a build, a deploy, or a cache.
+ *
+ * All it does is measure loudness and post it back about twenty times a second.
+ * Every decision stays on the main thread where the rest of this file can see
+ * it; the audio thread is only there because it keeps running.
+ */
+const EARS = `
+class Ears extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.sum = 0;
+    this.count = 0;
+    this.frames = 0;
+  }
+
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel) {
+      let sum = 0;
+      for (let i = 0; i < channel.length; i++) sum += channel[i] * channel[i];
+      this.sum += sum;
+      this.count += channel.length;
+      this.frames += channel.length;
+    }
+
+    // Roughly every 50ms. Blocks are 128 frames, which would be 375 messages a
+    // second — enough to make the main thread the bottleneck it was not.
+    if (this.frames >= sampleRate * 0.05) {
+      this.port.postMessage(this.count > 0 ? Math.sqrt(this.sum / this.count) : 0);
+      this.sum = 0;
+      this.count = 0;
+      this.frames = 0;
+    }
+
+    return true;
+  }
+}
+registerProcessor('grace-ears', Ears);
+`;
 
 /** "Grace", and the ways a transcriber writes her. */
 const WAKE = /\b(grace|grayce|greys|grace's)\b[\s,.:;!?-]*/i;
@@ -54,6 +112,7 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
   const contextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const earsRef = useRef<AudioWorkletNode | null>(null);
   const frameRef = useRef<number | undefined>(undefined);
   const awakeUntilRef = useRef(0);
   const onRequestRef = useRef(onRequest);
@@ -75,6 +134,9 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
       recorderRef.current.stop();
     }
     recorderRef.current = null;
+    earsRef.current?.port.close();
+    earsRef.current?.disconnect();
+    earsRef.current = null;
     sourceRef.current?.disconnect();
     sourceRef.current = null;
     void contextRef.current?.close().catch(() => {});
@@ -191,17 +253,20 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
       if (!keep) setState('listening');
     };
 
-    const tick = () => {
+    /**
+     * One loudness reading, and everything that follows from it.
+     *
+     * Deliberately knows nothing about where the reading came from. That is
+     * what lets the same judgement run from the audio thread, which never
+     * stops, and from the frame clock, which does.
+     */
+    const onLevel = (rms: number) => {
       if (!runningRef.current) return;
 
-      analyser.getByteTimeDomainData(samples);
-      let sum = 0;
-      for (const sample of samples) {
-        const value = sample / 128 - 1;
-        sum += value * value;
-      }
-      const rms = Math.sqrt(sum / samples.length);
-      setLevel(rms);
+      // Nobody is watching the meter on a tab nobody is looking at, and a
+      // React render twenty times a second to move a bar that is not on screen
+      // is the one part of this that genuinely wastes a laptop's battery.
+      if (!document.hidden) setLevel(rms);
 
       const now = performance.now();
 
@@ -209,14 +274,12 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
       if (now - openedAt < CALIBRATION_MS) {
         floor = (floor * floorSamples + rms) / (floorSamples + 1);
         floorSamples += 1;
-        frameRef.current = window.requestAnimationFrame(tick);
         return;
       }
 
       // Her own voice must never wake her, or she talks to herself forever.
       if (pausedRef.current) {
         if (recorderRef.current) endCapture(false);
-        frameRef.current = window.requestAnimationFrame(tick);
         return;
       }
 
@@ -244,11 +307,58 @@ export function useAmbient({enabled, paused, deviceId, onRequest}: AmbientOption
         awakeUntilRef.current = 0;
         setAwake(false);
       }
-
-      frameRef.current = window.requestAnimationFrame(tick);
     };
 
-    tick();
+    /** The frame clock. Correct, and stops the moment you look away. */
+    const watchOnScreen = () => {
+      const tick = () => {
+        if (!runningRef.current) return;
+        analyser.getByteTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) {
+          const value = sample / 128 - 1;
+          sum += value * value;
+        }
+        onLevel(Math.sqrt(sum / samples.length));
+        frameRef.current = window.requestAnimationFrame(tick);
+      };
+      tick();
+    };
+
+    /**
+     * The audio thread. Runs whether or not this tab is the one you are on.
+     *
+     * The worklet has to reach the destination or nothing pulls audio through
+     * it and process() is never called — so it goes through a gain of zero,
+     * which keeps the graph alive and puts not one sample into the speakers.
+     */
+    try {
+      const url = URL.createObjectURL(new Blob([EARS], {type: 'text/javascript'}));
+      try {
+        await context.audioWorklet.addModule(url);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+
+      const ears = new AudioWorkletNode(context, 'grace-ears');
+      earsRef.current = ears;
+      ears.port.onmessage = (event: MessageEvent<number>) => onLevel(event.data);
+
+      const silent = context.createGain();
+      silent.gain.value = 0;
+      sourceRef.current.connect(ears);
+      ears.connect(silent);
+      silent.connect(context.destination);
+    } catch (cause) {
+      // Every browser worth naming has had AudioWorklet for years, but a
+      // failure here would mean she cannot hear at all, and hearing you only
+      // while you are looking at her is enormously better than that.
+      console.warn(
+        '[grace] audio worklet unavailable, listening only while visible:',
+        (cause as Error).message,
+      );
+      watchOnScreen();
+    }
   }, [consider, deviceId]);
 
   useEffect(() => {
