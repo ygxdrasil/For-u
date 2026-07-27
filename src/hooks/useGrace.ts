@@ -10,6 +10,7 @@ import type {
   ProfileEntry,
 } from '../../shared/types.ts';
 import * as api from '../lib/api.ts';
+import {chimeAct, chimeDone, chimeWake} from '../lib/chime.ts';
 import {NeedsPassword, type SessionStatus} from '../lib/api.ts';
 import {usePulse} from './usePulse.ts';
 import {useAmbient} from '../voice/useAmbient.ts';
@@ -170,6 +171,7 @@ export function useGrace() {
             const {message} = event;
             setStreaming('');
             setMessages((current) => [...current, message]);
+            chimeDone();
             landed = true;
           } else if (event.type === 'searched') {
             setSearched(true);
@@ -178,6 +180,7 @@ export function useGrace() {
           } else if (event.type === 'asked') {
             setAsked({question: event.question, choices: event.choices});
           } else if (event.type === 'acted') {
+            chimeAct();
             setActions((current) => [...current, event.summary]);
           } else if (event.type === 'search-failed') {
             setError(`I couldn’t reach the web for that: ${event.reason}`);
@@ -257,6 +260,13 @@ export function useGrace() {
     paused: busy || speech.speaking || recorder.state !== 'idle' || transcribing,
     onRequest: handleRequest,
   });
+
+  // One note when she wakes to her name, and not once per frame of hearing it.
+  const wasAwakeRef = useRef(false);
+  useEffect(() => {
+    if (ambient.awake && !wasAwakeRef.current) chimeWake();
+    wasAwakeRef.current = ambient.awake;
+  }, [ambient.awake]);
 
   ambientAwakeRef.current = ambient.awake || ambient.state === 'hearing';
 

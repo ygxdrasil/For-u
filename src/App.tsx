@@ -1,7 +1,15 @@
-import {ExternalLink, Headphones, LayoutDashboard, MessagesSquare, PanelRight} from 'lucide-react';
+import {
+  ExternalLink,
+  Headphones,
+  LayoutDashboard,
+  Maximize2,
+  MessagesSquare,
+  PanelRight,
+} from 'lucide-react';
 import {useEffect, useState} from 'react';
 import {Composer} from './components/Composer';
 import {ACCENT, Rail} from './components/Rail';
+import {Stage} from './components/Stage';
 import {Dashboard} from './components/Dashboard';
 import {Lock} from './components/Lock';
 import {ProfilePanel} from './components/ProfilePanel';
@@ -9,6 +17,8 @@ import {Transcript} from './components/Transcript';
 import {VoiceCheck} from './components/VoiceCheck';
 import type {Mode} from './hooks/useGrace';
 import {useGrace} from './hooks/useGrace';
+import type {DayView} from '../shared/types';
+import * as api from './lib/api';
 import {useFreshness} from './hooks/useFreshness';
 import {useRooms} from './hooks/useRooms';
 
@@ -38,6 +48,22 @@ export default function App() {
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
   /** Which half of the app a narrow screen is showing. */
   const [tab, setTab] = useState<'grace' | 'talk'>('grace');
+  /** Her, taking over the screen. */
+  const [stage, setStage] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+  const [day, setDay] = useState<DayView | null>(null);
+
+  useEffect(() => {
+    if (!stage) return;
+    const tick = window.setInterval(() => setNow(new Date()), 1000);
+    const load = () => void api.fetchDay().then((next) => next && setDay(next));
+    load();
+    const refresh = window.setInterval(load, 120_000);
+    return () => {
+      window.clearInterval(tick);
+      window.clearInterval(refresh);
+    };
+  }, [stage]);
 
   const {session, state, mode} = grace;
   const {opening} = grace;
@@ -45,6 +71,12 @@ export default function App() {
 
   // She asked the browser for something. Moving room is instant; the pages are
   // attempted and whatever the browser refused comes back as links to tap.
+  // The room's colour is a variable on the root, so every panel picks it up
+  // without any of them knowing which room they are in.
+  useEffect(() => {
+    document.documentElement.dataset.room = rooms.current;
+  }, [rooms.current]);
+
   useEffect(() => {
     if (!opening) return;
     if (opening.workspace) enter(opening.workspace);
@@ -129,8 +161,8 @@ export default function App() {
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden">
-      <div className="ambient pointer-events-none absolute inset-0 -z-10" />
-      <div className="ambient-deep pointer-events-none absolute inset-0 -z-10" />
+      <div className="field pointer-events-none" />
+      <div className="grid-veil" />
 
       <header className="flex items-center justify-between border-b border-edge/70 px-4 py-3 sm:px-5">
         <h1 className="flex items-baseline gap-2 font-serif text-xl tracking-wide text-slate-100">
@@ -158,6 +190,13 @@ export default function App() {
             }`}>
             <Headphones size={14} />
             <span className="hidden sm:inline">Sound check</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStage(true)}
+            aria-label="Full screen"
+            className="text-mist transition hover:text-slate-200">
+            <Maximize2 size={17} />
           </button>
           <button
             type="button"
@@ -323,6 +362,18 @@ export default function App() {
         <p className="border-t border-edge/70 bg-surface/50 px-5 py-2 text-xs text-mist/70">
           Working out what you said…
         </p>
+      )}
+
+      {stage && state && (
+        <Stage
+          state={state}
+          day={day}
+          mode={mode}
+          level={grace.recorder.level}
+          now={now}
+          onTalk={talk}
+          onClose={() => setStage(false)}
+        />
       )}
 
       {soundCheckOpen && (

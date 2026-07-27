@@ -21,7 +21,7 @@ import type {
 import type {Mode} from '../hooks/useGrace';
 import {Day} from './Day';
 import {Faculties, type Faculty} from './Faculties';
-import {Orb} from './Orb';
+import {Waveform} from './Waveform';
 
 /** Kept in step with server/modes.ts, which is where the behaviour lives. */
 const MODES: {id: AttentionMode; label: string; blurb: string}[] = [
@@ -75,7 +75,7 @@ function Readout({
   const colour =
     tone === 'good' ? 'text-ice' : tone === 'bad' ? 'text-rose-300' : 'text-slate-200';
   return (
-    <div className="rounded-lg border border-edge/70 bg-surface/40 px-3 py-2">
+    <div className="glass px-3 py-2">
       <div className="flex items-center gap-1.5 text-[0.62rem] uppercase tracking-[0.12em] text-mist/50">
         {icon}
         {label}
@@ -220,8 +220,10 @@ export function Dashboard({
       <div className="flex flex-col items-center">
         {/* The orb is the control now, not an ornament. Pressing it is the one
             way in that cannot be got wrong. */}
-        <Orb mode={mode} level={micLevel} onPress={onTalk} busy={micBusy} />
-        <p className="mt-2 text-sm text-slate-200">{MODE_LABEL[mode]}</p>
+        <Waveform mode={mode} level={micLevel} onPress={onTalk} />
+        <p className="mt-1 text-[0.65rem] uppercase tracking-[0.2em] text-mist/60">
+          {micBusy ? 'Working' : MODE_LABEL[mode]}
+        </p>
       </div>
 
       <div className="text-center">
