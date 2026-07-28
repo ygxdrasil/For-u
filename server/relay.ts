@@ -83,6 +83,40 @@ export async function noteRelayUse(): Promise<void> {
 }
 
 /**
+ * The address to put in a phone, built to survive the header it comes from.
+ *
+ * `x-forwarded-host` is not one value. A request through two proxies carries
+ * both hostnames, comma-separated, and node hands the header back as an array
+ * when it appears twice. Stringifying either of those produces
+ * "one.example.com,two.example.com", and an address with a comma in it is not
+ * an address — it is a string a phone rejects outright as an unsupported URL,
+ * which is a strange and unhelpful thing to be told when the only thing you
+ * did was tap Copy.
+ *
+ * So: first value only, and it has to look like a hostname before it is
+ * trusted. A relative path is the fallback, because a wrong absolute address
+ * that looks plausible is worse than an obviously incomplete one — the second
+ * can be spotted and asked about, the first is debugged for an hour.
+ */
+export function relayUrl(
+  forwarded: string | string[] | undefined,
+  direct: string | undefined,
+  secure = true,
+): string {
+  const first = (value: string | string[] | undefined): string =>
+    (Array.isArray(value) ? value[0] : (value ?? '')).split(',')[0]!.trim();
+
+  const host = first(forwarded) || first(direct);
+  // Hostname, optionally with a port. Anything else is a header worth ignoring.
+  if (!/^[a-z0-9.-]+(:\d+)?$/i.test(host)) return '/api/relay';
+
+  // Plain http for a machine on your desk, which has no certificate and never
+  // will; https for anything that reached here through the internet.
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/i.test(host);
+  return `${secure && !local ? 'https' : 'http'}://${host}/api/relay`;
+}
+
+/**
  * Her reply, cut down to something worth hearing read aloud.
  *
  * Whatever calls this is going to speak the answer through a phone speaker,

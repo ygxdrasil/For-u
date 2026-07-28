@@ -57,6 +57,7 @@ import {
   relayAllows,
   relayStatus,
   relayToken,
+  relayUrl,
   rollRelayToken,
 } from './relay';
 import {
@@ -685,11 +686,9 @@ export function createApi(): Express {
       // The full URL is assembled here rather than in the browser, because the
       // thing that has to be typed into a phone must be the address that
       // actually works — not one guessed from whatever the page thinks it is.
-      const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '');
-      const scheme = config.deployed ? 'https' : 'http';
       res.json({
         token: await relayToken(),
-        url: host ? `${scheme}://${host}/api/relay` : '/api/relay',
+        url: relayUrl(req.headers['x-forwarded-host'], req.headers.host, config.deployed),
         ...(await relayStatus()),
       });
     }),

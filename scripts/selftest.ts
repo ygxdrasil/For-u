@@ -45,7 +45,7 @@ import {trimTrailingSilence} from '../shared/trim';
 import {heardName, isPhantom, toldToSleep} from '../shared/wake';
 import {parseCommand, suggest} from '../shared/commands';
 import {logKey, metaKey} from '../server/chats';
-import {forSpeaking} from '../server/relay';
+import {forSpeaking, relayUrl} from '../server/relay';
 import {Document} from '../server/store/index';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
@@ -1998,6 +1998,40 @@ try {
   assert.ok(relayKey.token.length >= 30, 'the token must be long enough to be a token');
   assert.match(relayKey.url, /\/api\/relay$/, 'the panel shows the address that works');
   ok('the relay token is issued to a signed-in browser, with its address');
+
+  // A request through two proxies carries both hostnames in one header, and
+  // node hands a repeated header back as an array. Stringifying either put a
+  // comma in the middle of the address, which a phone rejects as an
+  // unsupported URL — a baffling thing to be told when all you did was tap
+  // Copy. The address must be an address whatever arrives here.
+  assert.equal(
+    relayUrl('front.example.com, inner.internal', undefined, true),
+    'https://front.example.com/api/relay',
+    'a comma-joined header must yield the outermost host, not both',
+  );
+  assert.equal(
+    relayUrl(['front.example.com', 'inner.internal'], undefined, true),
+    'https://front.example.com/api/relay',
+    'a repeated header arrives as an array and must be handled the same way',
+  );
+  assert.equal(
+    relayUrl(undefined, 'grace.example.com', true),
+    'https://grace.example.com/api/relay',
+    'with no proxy, the plain Host header is the answer',
+  );
+  assert.equal(
+    relayUrl(undefined, 'localhost:3000', true),
+    'http://localhost:3000/api/relay',
+    'a machine on your desk has no certificate and never will',
+  );
+  for (const junk of ['', ' ', 'not a host', 'evil.com/path', '<script>']) {
+    assert.equal(
+      relayUrl(junk, undefined, true),
+      '/api/relay',
+      `"${junk}" is not a hostname and must not become half an address`,
+    );
+  }
+  ok('the address survives proxies, arrays and nonsense, or admits it cannot');
 
   const relayed = await call('/relay', {
     method: 'POST',

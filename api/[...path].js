@@ -4913,6 +4913,13 @@ async function noteRelayUse() {
     turns: current.turns + 1
   }));
 }
+function relayUrl(forwarded, direct, secure = true) {
+  const first = (value) => (Array.isArray(value) ? value[0] : value ?? "").split(",")[0].trim();
+  const host = first(forwarded) || first(direct);
+  if (!/^[a-z0-9.-]+(:\d+)?$/i.test(host)) return "/api/relay";
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/i.test(host);
+  return `${secure && !local ? "https" : "http"}://${host}/api/relay`;
+}
 function forSpeaking(reply) {
   return reply.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/https?:\/\/\S+/g, "the link on screen").replace(/[*_`#]+/g, "").replace(/^\s*[-•]\s+/gm, "").replace(/\n{2,}/g, "\n").trim();
 }
@@ -5397,11 +5404,9 @@ function createApi() {
   api.get(
     "/relay-key",
     guard(async (req, res) => {
-      const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
-      const scheme = config.deployed ? "https" : "http";
       res.json({
         token: await relayToken(),
-        url: host ? `${scheme}://${host}/api/relay` : "/api/relay",
+        url: relayUrl(req.headers["x-forwarded-host"], req.headers.host, config.deployed),
         ...await relayStatus()
       });
     })
