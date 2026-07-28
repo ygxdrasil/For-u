@@ -28,6 +28,7 @@ import * as api from './lib/api';
 import {useFreshness} from './hooks/useFreshness';
 import {useRooms} from './hooks/useRooms';
 import {useChats} from './hooks/useChats';
+import {MANY_CONVERSATIONS} from './lib/features';
 import {Sidebar} from './components/Sidebar';
 import {useTheme} from './hooks/useTheme';
 
@@ -175,18 +176,22 @@ export default function App() {
       hint: 'room',
       run: () => rooms.enter(room.id, true),
     })),
-    {
-      id: 'newchat',
-      label: 'New conversation',
-      hint: 'chat',
-      run: () => void chats.start(),
-    },
-    ...chats.chats.slice(0, 8).map((chat) => ({
-      id: `chat:${chat.id}`,
-      label: chat.title,
-      hint: 'chat',
-      run: () => void chats.open(chat.id),
-    })),
+    ...(MANY_CONVERSATIONS
+      ? [
+          {
+            id: 'newchat',
+            label: 'New conversation',
+            hint: 'chat',
+            run: () => void chats.start(),
+          },
+          ...chats.chats.slice(0, 8).map((chat) => ({
+            id: `chat:${chat.id}`,
+            label: chat.title,
+            hint: 'chat',
+            run: () => void chats.open(chat.id),
+          })),
+        ]
+      : []),
     {id: 'talk', label: 'Talk to Grace', hint: 'mic', run: talk},
     {
       id: 'mic',

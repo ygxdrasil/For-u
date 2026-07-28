@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
 import * as api from '../lib/api';
+import {MANY_CONVERSATIONS} from '../lib/features';
 
 /**
  * Which conversations exist, and which one you are in.
@@ -15,6 +16,9 @@ export function useChats(onSwitched: () => void) {
   const [current, setCurrent] = useState('main');
 
   const load = useCallback(async () => {
+    // Switched off: nothing can create a second conversation, so the list is
+    // always one item and fetching it is a request per load for nothing.
+    if (!MANY_CONVERSATIONS) return;
     const got = await api.fetchChats().catch(() => null);
     if (!got) return;
     setChats(got.chats);

@@ -15,6 +15,7 @@ import {
 import {useState} from 'react';
 import type {Workspace} from '../../shared/types';
 import type {Chat} from '../lib/api';
+import {MANY_CONVERSATIONS} from '../lib/features';
 
 /**
  * The left edge: conversations, rooms, and the way in to everything else.
@@ -98,13 +99,15 @@ export function Sidebar({
           className="grid h-9 w-9 place-items-center rounded-lg text-mist transition hover:bg-surface/60 hover:text-slate-200">
           <PanelLeftOpen size={17} />
         </button>
-        <button
-          type="button"
-          onClick={onNewChat}
-          aria-label="New conversation"
-          className="grid h-9 w-9 place-items-center rounded-lg border border-ice/30 bg-ice/10 text-ice transition hover:bg-ice/20">
-          <MessageSquarePlus size={17} />
-        </button>
+        {MANY_CONVERSATIONS && (
+          <button
+            type="button"
+            onClick={onNewChat}
+            aria-label="New conversation"
+            className="grid h-9 w-9 place-items-center rounded-lg border border-ice/30 bg-ice/10 text-ice transition hover:bg-ice/20">
+            <MessageSquarePlus size={17} />
+          </button>
+        )}
       </div>
     );
   }
@@ -122,18 +125,20 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="px-3">
-        <button
-          type="button"
-          onClick={onNewChat}
-          className="flex w-full items-center gap-2 rounded-lg border border-ice/30 bg-ice/10 px-3 py-2 text-xs text-ice transition hover:bg-ice/20">
-          <MessageSquarePlus size={14} />
-          New conversation
-        </button>
-      </div>
+      {MANY_CONVERSATIONS && (
+        <div className="px-3">
+          <button
+            type="button"
+            onClick={onNewChat}
+            className="flex w-full items-center gap-2 rounded-lg border border-ice/30 bg-ice/10 px-3 py-2 text-xs text-ice transition hover:bg-ice/20">
+            <MessageSquarePlus size={14} />
+            New conversation
+          </button>
+        </div>
+      )}
 
       {/* Only worth the space once there are enough to lose one in. */}
-      {chats.length > 6 && (
+      {MANY_CONVERSATIONS && chats.length > 6 && (
         <div className="mt-3 px-3">
           <div className="flex items-center gap-2 rounded-lg border border-edge bg-surface/40 px-2.5 py-1.5">
             <Search size={12} className="shrink-0 text-mist/50" />
@@ -148,7 +153,9 @@ export function Sidebar({
       )}
 
       <nav className="scroll-thin mt-4 min-h-0 flex-1 overflow-y-auto px-2">
-        <p className="label px-1 pb-1.5">Conversations</p>
+        {MANY_CONVERSATIONS && (
+          <>
+            <p className="label px-1 pb-1.5">Conversations</p>
         <ul className="space-y-0.5">
           {shown.map((chat) => (
             <li key={chat.id} className="group relative">
@@ -180,9 +187,11 @@ export function Sidebar({
               )}
             </li>
           ))}
-        </ul>
+            </ul>
+          </>
+        )}
 
-        <p className="label px-1 pb-1.5 pt-5">Rooms</p>
+        <p className={`label px-1 pb-1.5 ${MANY_CONVERSATIONS ? 'pt-5' : ''}`}>Rooms</p>
         <ul className="space-y-0.5">
           {rooms.map((room) => {
             const Icon = ICONS[room.icon] ?? Sparkles;
