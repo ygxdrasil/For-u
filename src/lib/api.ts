@@ -275,6 +275,47 @@ export async function supersede(text: string): Promise<Profile> {
   return response.json();
 }
 
+export interface Chat {
+  id: string;
+  title: string;
+  at: string;
+  lastAt: string;
+}
+
+export async function fetchChats(): Promise<{chats: Chat[]; current: string}> {
+  const response = await expectOk(await fetch('/api/chats'));
+  return response.json();
+}
+
+export async function newChat(): Promise<{chats: Chat[]; current: string}> {
+  const response = await expectOk(await fetch('/api/chat-new', {method: 'POST'}));
+  return response.json();
+}
+
+export async function openChat(id: string): Promise<{chats: Chat[]; current: string}> {
+  const response = await expectOk(
+    await fetch('/api/chat-open', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id}),
+    }),
+  );
+  return response.json();
+}
+
+export async function archiveChat(
+  id: string,
+): Promise<{chats: Chat[]; current: string}> {
+  const response = await expectOk(
+    await fetch('/api/chat-archive', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id}),
+    }),
+  );
+  return response.json();
+}
+
 export async function deepResearch(
   topic: string,
 ): Promise<{title: string; report: string; strands: string[]}> {

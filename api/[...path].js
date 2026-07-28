@@ -867,40 +867,137 @@ function getProvider() {
 }
 
 // server/memory.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+
+// server/chats.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-var messages = new Document("conversation", () => []);
+var FIRST = "main";
+function logKey(id) {
+  return id === FIRST ? "conversation" : `conversation-${id}`;
+}
+function metaKey(id) {
+  return id === FIRST ? "meta" : `meta-${id}`;
+}
+var store5 = new Document("chats", () => ({
+  list: [
+    {
+      id: FIRST,
+      title: "First conversation",
+      at: (/* @__PURE__ */ new Date(0)).toISOString(),
+      lastAt: (/* @__PURE__ */ new Date(0)).toISOString()
+    }
+  ],
+  current: FIRST
+}));
+async function allChats() {
+  const { list } = await store5.read();
+  return list.filter((chat) => !chat.archivedAt).sort((left, right) => right.lastAt.localeCompare(left.lastAt));
+}
+async function currentChat() {
+  const { list, current } = await store5.read();
+  const live = list.find((chat) => chat.id === current && !chat.archivedAt);
+  return live ? live.id : FIRST;
+}
+async function openChat(id) {
+  const now = await store5.read();
+  if (!now.list.some((chat) => chat.id === id && !chat.archivedAt)) return now.current;
+  await store5.write({ ...now, current: id });
+  return id;
+}
+async function newChat() {
+  const now = await store5.read();
+  const chat = {
+    id: randomUUID2().slice(0, 8),
+    title: "New conversation",
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    lastAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await store5.write({ list: [...now.list, chat], current: chat.id });
+  return chat;
+}
+async function titleFrom(id, firstWords) {
+  const now = await store5.read();
+  const chat = now.list.find((one) => one.id === id);
+  if (!chat || chat.title !== "New conversation") return;
+  const title = firstWords.replace(/\s+/g, " ").trim().replace(/^(grace[,\s]+)/i, "").slice(0, 48);
+  await store5.write({
+    ...now,
+    list: now.list.map(
+      (one) => one.id === id ? { ...one, title: title || one.title } : one
+    )
+  });
+}
+async function rename2(id, title) {
+  const now = await store5.read();
+  const clean = title.trim().slice(0, 60);
+  if (clean) {
+    await store5.write({
+      ...now,
+      list: now.list.map((one) => one.id === id ? { ...one, title: clean } : one)
+    });
+  }
+  return allChats();
+}
+async function touch(id) {
+  const now = await store5.read();
+  const chat = now.list.find((one) => one.id === id);
+  if (!chat) return;
+  await store5.write({
+    ...now,
+    list: now.list.map(
+      (one) => one.id === id ? { ...one, lastAt: (/* @__PURE__ */ new Date()).toISOString() } : one
+    )
+  });
+}
+async function archiveChat(id) {
+  const now = await store5.read();
+  if (id === FIRST) return allChats();
+  const list = now.list.map(
+    (one) => one.id === id ? { ...one, archivedAt: (/* @__PURE__ */ new Date()).toISOString() } : one
+  );
+  const current = now.current === id ? FIRST : now.current;
+  await store5.write({ list, current });
+  return allChats();
+}
+
+// server/memory.ts
+async function logOf() {
+  return new Document(logKey(await currentChat()), () => []);
+}
+async function metaOf() {
+  return new Document(metaKey(await currentChat()), () => ({
+    summary: null,
+    summarizedThrough: 0
+  }));
+}
 var profile = new Document("profile", () => ({
   addressAs: null,
   entries: [],
   updatedAt: (/* @__PURE__ */ new Date()).toISOString()
 }));
-var meta = new Document("meta", () => ({
-  summary: null,
-  summarizedThrough: 0
-}));
-function getMessages() {
-  return messages.read();
+async function getMessages() {
+  return (await logOf()).read();
 }
 function getProfile() {
   return profile.read();
 }
 async function getSummary() {
-  return (await meta.read()).summary;
+  return (await (await metaOf()).read()).summary;
 }
 async function record2(speaker, text, via) {
   const message = {
-    id: randomUUID2(),
+    id: randomUUID3(),
     speaker,
     text,
     at: (/* @__PURE__ */ new Date()).toISOString(),
     via
   };
-  await messages.update((log) => [...log, message]);
+  await (await logOf()).update((log) => [...log, message]);
   return message;
 }
 async function recentTurns() {
-  const log = await messages.read();
-  const { summarizedThrough } = await meta.read();
+  const log = await (await logOf()).read();
+  const { summarizedThrough } = await (await metaOf()).read();
   const from = Math.min(
     summarizedThrough,
     Math.max(0, log.length - config.verbatimTurns)
@@ -947,7 +1044,7 @@ async function remember(entries) {
     }
     const fresh2 = {
       ...entry,
-      id: randomUUID2(),
+      id: randomUUID3(),
       learnedAt: now,
       lastSeenAt: now,
       timesSeen: 1
@@ -994,7 +1091,7 @@ async function noteStyle(notes) {
         (note) => normalise(note.text) === normalise(clean)
       );
       if (at >= 0) style[at] = { ...style[at], timesSeen: style[at].timesSeen + 1 };
-      else style.push({ id: randomUUID2(), text: clean, learnedAt: now, timesSeen: 1 });
+      else style.push({ id: randomUUID3(), text: clean, learnedAt: now, timesSeen: 1 });
     }
     style.sort((left, right) => right.timesSeen - left.timesSeen);
     return { ...current, style: style.slice(0, 12), updatedAt: now };
@@ -1008,12 +1105,13 @@ function forget(id) {
   }));
 }
 async function clearConversation() {
-  await messages.write([]);
-  await meta.write({ summary: null, summarizedThrough: 0 });
+  await (await logOf()).write([]);
+  await (await metaOf()).write({ summary: null, summarizedThrough: 0 });
 }
 async function compactIfNeeded(force = false) {
-  const log = await messages.read();
-  const current = await meta.read();
+  const log = await (await logOf()).read();
+  const store19 = await metaOf();
+  const current = await store19.read();
   const unsummarised = log.length - current.summarizedThrough;
   if (!force && unsummarised <= config.summarizeAfter) return false;
   const keep = force ? 6 : config.verbatimTurns;
@@ -1045,7 +1143,7 @@ ${transcript}`;
       fast: true
     });
     if (!summary.trim()) return false;
-    await meta.write({ summary: summary.trim(), summarizedThrough: foldUpTo });
+    await store19.write({ summary: summary.trim(), summarizedThrough: foldUpTo });
     return true;
   } catch (error) {
     console.error("[grace] could not compact memory:", error.message);
@@ -1172,7 +1270,7 @@ var SCOPES = [
   "openid",
   "email"
 ];
-var store5 = new Document("google", () => null);
+var store6 = new Document("google", () => null);
 var accessTokens = /* @__PURE__ */ new Map();
 function googleConfigured() {
   const client = googleClient();
@@ -1249,7 +1347,7 @@ async function completeSignIn(code, state) {
       `This is Grace's owner's account only. Signed in as ${email}, expected ${owner}.`
     );
   }
-  await store5.write({
+  await store6.write({
     refreshToken: token2.refresh_token,
     email,
     scopes: (token2.scope ?? "").split(" ").filter(Boolean),
@@ -1258,10 +1356,10 @@ async function completeSignIn(code, state) {
   return { email };
 }
 async function connection() {
-  return store5.read();
+  return store6.read();
 }
 async function missingScopes() {
-  const saved = await store5.read();
+  const saved = await store6.read();
   if (!saved) return [];
   return SCOPES.filter(
     (scope) => scope.includes("/auth/") && !saved.scopes.includes(scope)
@@ -1269,10 +1367,10 @@ async function missingScopes() {
 }
 async function disconnect() {
   accessTokens.clear();
-  await store5.write(null);
+  await store6.write(null);
 }
 async function accessToken() {
-  const saved = await store5.read();
+  const saved = await store6.read();
   if (!saved) throw new GoogleError("Google is not connected yet.", true);
   if (saved.brokenReason) throw new GoogleError(saved.brokenReason, true);
   const cached6 = accessTokens.get(saved.refreshToken);
@@ -1285,7 +1383,7 @@ async function accessToken() {
   });
   if (token2.error === "invalid_grant") {
     const reason = "Google has disconnected Grace \u2014 usually a changed password or a revoked permission. Reconnect to put it back.";
-    await store5.write({ ...saved, brokenReason: reason });
+    await store6.write({ ...saved, brokenReason: reason });
     throw new GoogleError(reason, true);
   }
   if (token2.error || !token2.access_token) {
@@ -1404,14 +1502,14 @@ async function recentMail(query = "in:inbox", limit = 10) {
   );
   const ids = (list.messages ?? []).slice(0, limit);
   if (ids.length === 0) return [];
-  const messages2 = await Promise.all(
+  const messages = await Promise.all(
     ids.map(
       (message) => googleFetch(
         `${BASE2}/messages/${message.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence`
       ).catch(() => null)
     )
   );
-  return messages2.filter(Boolean).map((raw) => {
+  return messages.filter(Boolean).map((raw) => {
     const message = raw;
     const headers = headerMap(message.payload?.headers);
     return {
@@ -1576,24 +1674,24 @@ async function buildBriefing() {
 }
 
 // server/journal.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 var LIMIT = 120;
-var store6 = new Document("journal", () => []);
+var store7 = new Document("journal", () => []);
 async function recentDeeds(limit = 25) {
-  const all = await store6.read();
+  const all = await store7.read();
   return all.slice(-limit).reverse();
 }
 async function noteDeed(kind, text, unprompted = false) {
   const clean = text.trim().slice(0, 300);
   if (!clean) return;
   const entry = {
-    id: randomUUID3(),
+    id: randomUUID4(),
     at: (/* @__PURE__ */ new Date()).toISOString(),
     kind,
     text: clean,
     ...unprompted ? { unprompted: true } : {}
   };
-  await store6.update((current) => [...current, entry].slice(-LIMIT));
+  await store7.update((current) => [...current, entry].slice(-LIMIT));
 }
 
 // server/modes.ts
@@ -1620,26 +1718,26 @@ var MODES = {
   }
 };
 var DEFAULT = { mode: "open", since: (/* @__PURE__ */ new Date(0)).toISOString() };
-var store7 = new Document("mode", () => DEFAULT);
+var store8 = new Document("mode", () => DEFAULT);
 function getMode() {
-  return store7.read();
+  return store8.read();
 }
 function isMode(value) {
   return typeof value === "string" && Object.hasOwn(MODES, value);
 }
 async function setMode(mode) {
-  const current = await store7.read();
+  const current = await store8.read();
   if (current.mode === mode) return current;
   const next = { mode, since: (/* @__PURE__ */ new Date()).toISOString() };
-  await store7.write(next);
+  await store8.write(next);
   return next;
 }
 
 // server/tools/reminders.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
-var store8 = new Document("reminders", () => []);
+import { randomUUID as randomUUID5 } from "node:crypto";
+var store9 = new Document("reminders", () => []);
 async function outstanding() {
-  const all = await store8.read();
+  const all = await store9.read();
   return all.filter((reminder) => !reminder.doneAt).sort((left, right) => {
     if (!left.due) return 1;
     if (!right.due) return -1;
@@ -1679,13 +1777,13 @@ var reminderTools = [
       const parsed = raw ? new Date(raw) : null;
       const valid2 = parsed && Number.isFinite(parsed.getTime()) ? parsed : null;
       const reminder = {
-        id: randomUUID4(),
+        id: randomUUID5(),
         text,
         due: valid2 ? valid2.toISOString() : null,
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         doneAt: null
       };
-      await store8.update((current) => [...current, reminder]);
+      await store9.update((current) => [...current, reminder]);
       return `Noted: ${describe(reminder)}`;
     }
   },
@@ -1722,7 +1820,7 @@ ${open.map((item) => `- ${describe(item)}`).join("\n")}`;
       if (matches2.length > 1) {
         return `More than one matches: ${matches2.map((item) => item.text).join("; ")}. Ask which one they mean.`;
       }
-      await store8.update(
+      await store9.update(
         (current) => current.map(
           (item) => item.id === matches2[0].id ? { ...item, doneAt: (/* @__PURE__ */ new Date()).toISOString() } : item
         )
@@ -1733,10 +1831,10 @@ ${open.map((item) => `- ${describe(item)}`).join("\n")}`;
 ];
 
 // server/greeting.ts
-var store9 = new Document("greeting", () => ({ at: null }));
+var store10 = new Document("greeting", () => ({ at: null }));
 var EVERY_MS = 4 * 60 * 60 * 1e3;
 async function greet(compose2) {
-  const { at } = await store9.read();
+  const { at } = await store10.read();
   if (at && Date.now() - new Date(at).getTime() < EVERY_MS) return { say: null };
   const { mode } = await getMode();
   if (mode === "focus" || mode === "away") return { say: null };
@@ -1756,18 +1854,18 @@ ${soon}`,
   ].filter(Boolean).join("\n\n");
   const said2 = (await compose2(context)).trim();
   if (!said2) return { say: null };
-  await store9.write({ at: (/* @__PURE__ */ new Date()).toISOString() });
+  await store10.write({ at: (/* @__PURE__ */ new Date()).toISOString() });
   await noteDeed("spoke", said2, true);
   return { say: said2, message: await record2("grace", said2, "text") };
 }
 
 // server/files.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID6 } from "node:crypto";
 var MAX_CHARS = 4e4;
 var MAX_FILES = 40;
-var store10 = new Document("files", () => []);
+var store11 = new Document("files", () => []);
 async function liveFiles() {
-  return (await store10.read()).filter((file) => !file.archivedAt).sort((left, right) => right.addedAt.localeCompare(left.addedAt));
+  return (await store11.read()).filter((file) => !file.archivedAt).sort((left, right) => right.addedAt.localeCompare(left.addedAt));
 }
 async function findFile(said2) {
   const needle = said2.toLowerCase().trim();
@@ -1780,13 +1878,13 @@ async function addFile(name, text) {
   const body = text.trim().slice(0, MAX_CHARS);
   if (!body) throw new Error("there was no readable text in that file");
   const file = {
-    id: randomUUID5(),
+    id: randomUUID6(),
     name: clean,
     text: body,
     chars: body.length,
     addedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  await store10.update((files) => {
+  await store11.update((files) => {
     const others = files.filter((one) => one.name !== clean || one.archivedAt);
     const kept = [file, ...others];
     const live = kept.filter((one) => !one.archivedAt);
@@ -1801,7 +1899,7 @@ async function addFile(name, text) {
   return file;
 }
 async function archiveFile(id) {
-  await store10.update(
+  await store11.update(
     (files) => files.map(
       (file) => file.id === id ? { ...file, archivedAt: (/* @__PURE__ */ new Date()).toISOString() } : file
     )
@@ -1847,10 +1945,10 @@ async function searchFiles(query) {
 }
 
 // server/notes.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
-var store11 = new Document("notes", () => []);
+import { randomUUID as randomUUID7 } from "node:crypto";
+var store12 = new Document("notes", () => []);
 async function liveNotes() {
-  const all = await store11.read();
+  const all = await store12.read();
   return all.filter((note) => !note.archivedAt).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 function match(notes, title) {
@@ -1883,7 +1981,7 @@ async function writeNote(title, text, mode = "append") {
   if (!clean || !body) throw new Error("a note needs a title and something to say");
   const now = (/* @__PURE__ */ new Date()).toISOString();
   let saved = null;
-  await store11.update((notes) => {
+  await store12.update((notes) => {
     const existing = match(
       notes.filter((note) => !note.archivedAt),
       clean
@@ -1899,7 +1997,7 @@ ${dateLine(now)} ${body}`,
       return notes.map((note) => note.id === existing.id ? saved : note);
     }
     saved = {
-      id: randomUUID6(),
+      id: randomUUID7(),
       title: clean,
       body: `${dateLine(now)} ${body}`,
       createdAt: now,
@@ -1917,7 +2015,7 @@ async function readNote(title) {
 }
 async function saveNoteBody(id, title, body) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  await store11.update(
+  await store12.update(
     (notes) => notes.map(
       (note) => note.id === id ? { ...note, title: title.trim().slice(0, 80), body: body.trim(), updatedAt: now } : note
     )
@@ -1926,20 +2024,20 @@ async function saveNoteBody(id, title, body) {
 }
 async function archiveNote(id) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  await store11.update(
+  await store12.update(
     (notes) => notes.map((note) => note.id === id ? { ...note, archivedAt: now } : note)
   );
   return liveNotes();
 }
 
 // server/situations.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
-var store12 = new Document("situations", () => []);
+import { randomUUID as randomUUID8 } from "node:crypto";
+var store13 = new Document("situations", () => []);
 function allSituations() {
-  return store12.read();
+  return store13.read();
 }
 async function openSituations() {
-  const all = await store12.read();
+  const all = await store13.read();
   return all.filter((one) => one.status === "open").sort((left, right) => lastMove(right).localeCompare(lastMove(left)));
 }
 function lastMove(one) {
@@ -1975,7 +2073,7 @@ async function trackSituation(title, update) {
   if (!clean || !text) throw new Error("a situation needs a title and an update");
   const now = (/* @__PURE__ */ new Date()).toISOString();
   let saved = null;
-  await store12.update((list) => {
+  await store13.update((list) => {
     const existing = find(
       list.filter((one) => one.status === "open"),
       clean
@@ -1985,7 +2083,7 @@ async function trackSituation(title, update) {
       return list.map((one) => one.id === existing.id ? saved : one);
     }
     saved = {
-      id: randomUUID7(),
+      id: randomUUID8(),
       title: clean,
       status: "open",
       updates: [{ at: now, text }],
@@ -1998,7 +2096,7 @@ async function trackSituation(title, update) {
 async function resolveSituation(title) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   let resolved = null;
-  await store12.update((list) => {
+  await store13.update((list) => {
     const one = findForResolving(
       list.filter((s) => s.status === "open"),
       title.trim()
@@ -2441,10 +2539,10 @@ async function notify(title, body) {
 }
 
 // server/watch.ts
-import { createHash as createHash2, randomUUID as randomUUID8 } from "node:crypto";
-var store13 = new Document("watches", () => []);
+import { createHash as createHash2, randomUUID as randomUUID9 } from "node:crypto";
+var store14 = new Document("watches", () => []);
 async function liveWatches() {
-  return (await store13.read()).filter((watch) => !watch.archivedAt);
+  return (await store14.read()).filter((watch) => !watch.archivedAt);
 }
 async function startWatch(what, url, keyword) {
   const clean = what.trim().slice(0, 100);
@@ -2453,19 +2551,19 @@ async function startWatch(what, url, keyword) {
     throw new Error("a watch needs something to watch and a full https address");
   }
   const watch = {
-    id: randomUUID8(),
+    id: randomUUID9(),
     what: clean,
     url: address,
     keyword: keyword?.trim() || void 0,
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  await store13.update((list) => [...list, watch]);
+  await store14.update((list) => [...list, watch]);
   return watch;
 }
 async function stopWatch(what) {
   const needle = what.toLowerCase().trim();
   let found = false;
-  await store13.update(
+  await store14.update(
     (list) => list.map((watch) => {
       if (watch.archivedAt || !watch.what.toLowerCase().includes(needle)) return watch;
       found = true;
@@ -2501,7 +2599,7 @@ async function checkWatches() {
   const readings = await Promise.all(
     watches.map(async (watch) => ({ watch, reading: await observe(watch) }))
   );
-  await store13.update(
+  await store14.update(
     (list) => list.map((stored) => {
       const found = readings.find((r) => r.watch.id === stored.id);
       if (!found || found.reading === null) return stored;
@@ -2722,8 +2820,8 @@ var askTools = [
 ];
 
 // server/tools/timers.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
-var store14 = new Document("timers", () => []);
+import { randomUUID as randomUUID10 } from "node:crypto";
+var store15 = new Document("timers", () => []);
 var KEEP_AFTER_MS = 24 * 36e5;
 function prune(list) {
   const cutoff = Date.now() - KEEP_AFTER_MS;
@@ -2731,10 +2829,10 @@ function prune(list) {
 }
 async function runningTimers() {
   const now = Date.now();
-  return (await store14.read()).filter((timer) => !timer.firedAt && new Date(timer.at).getTime() > now - 6e4).sort((left, right) => left.at.localeCompare(right.at));
+  return (await store15.read()).filter((timer) => !timer.firedAt && new Date(timer.at).getTime() > now - 6e4).sort((left, right) => left.at.localeCompare(right.at));
 }
 async function markFired(id) {
-  await store14.update(
+  await store15.update(
     (list) => prune(list).map(
       (timer) => timer.id === id ? { ...timer, firedAt: (/* @__PURE__ */ new Date()).toISOString() } : timer
     )
@@ -2770,12 +2868,12 @@ var timerTools = [
       const ms = parseDuration(String(args.duration ?? ""));
       if (!ms) return "I could not make a length of time out of that.";
       const timer = {
-        id: randomUUID9(),
+        id: randomUUID10(),
         label: String(args.label ?? "").trim() || "timer",
         at: new Date(Date.now() + ms).toISOString(),
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
-      await store14.update((list) => [...prune(list), timer]);
+      await store15.update((list) => [...prune(list), timer]);
       const minutes = Math.round(ms / 6e4);
       return `Timer set: ${timer.label}, ${minutes >= 1 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${Math.round(ms / 1e3)} seconds`}.`;
     }
@@ -2848,7 +2946,7 @@ var timerTools = [
 ];
 
 // server/workspaces.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 var DEFAULTS = [
   {
     id: "grace",
@@ -2889,9 +2987,9 @@ var DEFAULTS = [
     blurb: "The console, and what you have been playing."
   }
 ];
-var store15 = new Document("workspaces", () => DEFAULTS);
+var store16 = new Document("workspaces", () => DEFAULTS);
 async function workspaces() {
-  const saved = await store15.read();
+  const saved = await store16.read();
   const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
   return [...saved, ...missing].filter((one) => !one.hidden);
 }
@@ -2903,7 +3001,7 @@ async function findWorkspace(said2) {
 }
 async function saveWorkspace(patch) {
   const clean = {
-    id: patch.id?.trim() || randomUUID10().slice(0, 8),
+    id: patch.id?.trim() || randomUUID11().slice(0, 8),
     name: (patch.name ?? "Untitled").trim().slice(0, 24),
     icon: patch.icon ?? "sparkles",
     accent: patch.accent ?? "ice",
@@ -2912,7 +3010,7 @@ async function saveWorkspace(patch) {
     blurb: patch.blurb?.slice(0, 80),
     brief: patch.brief?.slice(0, 200)
   };
-  await store15.update((current) => {
+  await store16.update((current) => {
     const rest = current.filter((one) => one.id !== clean.id);
     const at = current.findIndex((one) => one.id === clean.id);
     if (at < 0) return [...current, clean];
@@ -2923,7 +3021,7 @@ async function saveWorkspace(patch) {
   return workspaces();
 }
 async function hideWorkspace(id) {
-  await store15.update((current) => {
+  await store16.update((current) => {
     const known = current.some((one) => one.id === id);
     const base = known ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
     return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
@@ -3080,12 +3178,12 @@ var googleTools = [
       const query = String(args.query ?? "").trim() || "in:inbox";
       const all = await recentMail(query, 20);
       if (all.length === 0) return `Nothing matching "${query}".`;
-      const messages2 = all.filter((message) => !message.bulk).slice(0, 8);
-      const junked = all.length - messages2.length;
-      if (messages2.length === 0) {
+      const messages = all.filter((message) => !message.bulk).slice(0, 8);
+      const junked = all.length - messages.length;
+      if (messages.length === 0) {
         return `Nothing but ${junked} newsletters and automatic notices. Tell them there is nothing that wants them, in a few words. Do not describe the junk, do not count it out loud, and do not offer to read any of it.`;
       }
-      const list = messages2.map(
+      const list = messages.map(
         (message) => `- ${message.unread ? "[unread] " : ""}${sender(message.from)}: ${message.subject} (id ${message.id})`
       ).join("\n");
       return `${list}
@@ -3411,7 +3509,7 @@ ${found.text}`;
 ];
 
 // server/lights.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
+import { randomUUID as randomUUID12 } from "node:crypto";
 var LightError = class extends Error {
   constructor(message, needsKey = false) {
     super(message);
@@ -3473,7 +3571,7 @@ async function pick(said2) {
 }
 async function control(light, capability) {
   await call3("/device/control", {
-    requestId: randomUUID11(),
+    requestId: randomUUID12(),
     payload: { sku: light.sku, device: light.device, capability }
   });
 }
@@ -4428,9 +4526,9 @@ var BANDS = 24;
 
 // server/voiceguard.ts
 var EMPTY = { enrolment: null, on: false, strictness: "normal" };
-var store16 = new Document("voiceguard", () => EMPTY);
+var store17 = new Document("voiceguard", () => EMPTY);
 function voiceGuard() {
-  return store16.read();
+  return store17.read();
 }
 function isEnrolment(value) {
   if (!value || typeof value !== "object") return false;
@@ -4444,16 +4542,16 @@ function isEnrolment(value) {
   ));
 }
 async function enrol(enrolment) {
-  const current = await store16.read();
+  const current = await store17.read();
   const next = {
     ...current,
     enrolment: { ...enrolment, at: (/* @__PURE__ */ new Date()).toISOString() }
   };
-  await store16.write(next);
+  await store17.write(next);
   return next;
 }
 async function setGuard(patch) {
-  const current = await store16.read();
+  const current = await store17.read();
   const next = {
     ...current,
     ...patch.strictness ? { strictness: patch.strictness } : {},
@@ -4461,11 +4559,11 @@ async function setGuard(patch) {
     // turning it on without a print is quietly a no.
     ...patch.on !== void 0 ? { on: patch.on && Boolean(current.enrolment) } : {}
   };
-  await store16.write(next);
+  await store17.write(next);
   return next;
 }
 async function forgetVoice() {
-  await store16.write(EMPTY);
+  await store17.write(EMPTY);
   return EMPTY;
 }
 
@@ -4654,7 +4752,7 @@ ${summary}` : null;
 }
 
 // server/style.ts
-var store17 = new Document("style", () => ({
+var store18 = new Document("style", () => ({
   description: null,
   samples: 0,
   builtAt: null
@@ -4662,14 +4760,14 @@ var store17 = new Document("style", () => ({
 var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
 var SAMPLES = 8;
 async function writingStyle() {
-  return (await store17.read()).description;
+  return (await store18.read()).description;
 }
 function fresh(style) {
   if (!style.description || !style.builtAt) return false;
   return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
 }
 async function learnWritingStyle(force = false) {
-  const current = await store17.read();
+  const current = await store18.read();
   if (!force && fresh(current)) return false;
   const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
   if (sent.length < 3) return false;
@@ -4693,7 +4791,7 @@ ${body}`).join("\n\n")
     fast: true
   }).catch(() => "");
   if (!description.trim()) return false;
-  await store17.write({
+  await store18.write({
     description: description.trim(),
     samples: bodies.length,
     builtAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -4848,7 +4946,7 @@ function createApi() {
   api.get(
     "/state",
     guard(async (_req, res) => {
-      const [messages2, profile2, policies, mode, summary] = await Promise.all([
+      const [messages, profile2, policies, mode, summary] = await Promise.all([
         getMessages(),
         getProfile(),
         getPolicies(),
@@ -4857,7 +4955,7 @@ function createApi() {
       ]);
       const money = await spend();
       const state = {
-        messages: messages2,
+        messages,
         profile: profile2,
         policies,
         ready: isConfigured(),
@@ -4950,8 +5048,14 @@ function createApi() {
       }
       const controller = new AbortController();
       res.on("close", () => controller.abort());
-      const [, profile2, summary, policies, turns, have, attention, briefing, style] = await Promise.all([
+      const [, , profile2, summary, policies, turns, have, attention, briefing, style] = await Promise.all([
         record2("user", text, via),
+        // The conversation is named after the first thing said in it, and
+        // moves to the top of the list every time it is used.
+        currentChat().then(async (id) => {
+          await titleFrom(id, text);
+          await touch(id);
+        }),
         getProfile(),
         getSummary(),
         getPolicies(),
@@ -5263,6 +5367,40 @@ function createApi() {
       } catch (error) {
         res.status(400).json({ error: error.message });
       }
+    })
+  );
+  api.get(
+    "/chats",
+    guard(async (_req, res) => {
+      res.json({ chats: await allChats(), current: await currentChat() });
+    })
+  );
+  api.post(
+    "/chat-new",
+    guard(async (_req, res) => {
+      const chat = await newChat();
+      res.json({ chat, chats: await allChats(), current: chat.id });
+    })
+  );
+  api.post(
+    "/chat-open",
+    guard(async (req, res) => {
+      const current = await openChat(String(req.body?.id ?? ""));
+      res.json({ current, chats: await allChats() });
+    })
+  );
+  api.post(
+    "/chat-rename",
+    guard(async (req, res) => {
+      const chats = await rename2(String(req.body?.id ?? ""), String(req.body?.title ?? ""));
+      res.json({ chats });
+    })
+  );
+  api.post(
+    "/chat-archive",
+    guard(async (req, res) => {
+      const chats = await archiveChat(String(req.body?.id ?? ""));
+      res.json({ chats, current: await currentChat() });
     })
   );
   api.post(

@@ -44,6 +44,8 @@ import {BANDS} from '../shared/voiceprint';
 import {trimTrailingSilence} from '../shared/trim';
 import {heardName, isPhantom, toldToSleep} from '../shared/wake';
 import {parseCommand, suggest} from '../shared/commands';
+import {logKey, metaKey} from '../server/chats';
+import {Document} from '../server/store/index';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
@@ -1301,6 +1303,67 @@ try {
   );
   assert.deepEqual(suggest('/research something'), []);
   ok('typed commands are recognised, and only when they were typed');
+
+  // ---- more than one conversation ----------------------------------------
+  // The riskiest change in a while: the message log went from one document to
+  // one per conversation. The first conversation deliberately keeps the keys
+  // the single one always used, so there is no migration step and no moment
+  // where a running install has to be upgraded — an existing log simply *is*
+  // the first chat. If that ever stops being true, a week of conversation
+  // becomes unreachable, which is why it is asserted rather than assumed.
+  assert.equal(logKey('main'), 'conversation');
+  assert.equal(metaKey('main'), 'meta');
+  assert.notEqual(logKey('abc123'), 'conversation');
+
+  const wasHolding = (await getMessages()).length;
+  assert.ok(wasHolding > 0, 'there should be a conversation to carry over');
+
+  const started = await call('/chat-new', {method: 'POST'});
+  const madeChat = (await started.json()) as {current: string; chats: {id: string}[]};
+  assert.notEqual(madeChat.current, 'main', 'a new conversation is a new one');
+  assert.equal((await getMessages()).length, 0, 'and it starts empty');
+
+  // Everything she knows about the user is deliberately *not* split. An
+  // assistant who forgot your name because you opened a new conversation
+  // would be worse than the one that could only hold a single thread.
+  assert.ok(
+    (await getProfile()).entries.length > 0,
+    'what she knows about you follows you between conversations',
+  );
+
+  await call('/chat-open', {method: 'POST', body: JSON.stringify({id: 'main'})});
+  assert.equal(
+    (await getMessages()).length,
+    wasHolding,
+    'and going back finds the first one exactly as it was',
+  );
+
+  // Put away, never removed — this is the record of everything either of you
+  // said, and the standing instruction applies here more than anywhere.
+  await call('/chat-archive', {
+    method: 'POST',
+    body: JSON.stringify({id: madeChat.current}),
+  });
+  const chatList = (await (await call('/chats')).json()) as {chats: {id: string}[]};
+  assert.ok(
+    !chatList.chats.some((chat) => chat.id === madeChat.current),
+    'an archived conversation leaves the list',
+  );
+  assert.equal(
+    (await new Document<unknown[]>(logKey(madeChat.current), () => []).read()).length,
+    0,
+    'and its messages are left exactly where they were',
+  );
+
+  // The first one cannot be put away, because something has to be current.
+  await call('/chat-archive', {method: 'POST', body: JSON.stringify({id: 'main'})});
+  assert.ok(
+    ((await (await call('/chats')).json()) as {chats: {id: string}[]}).chats.some(
+      (chat) => chat.id === 'main',
+    ),
+    'the first conversation stays, or there is nothing to be in',
+  );
+  ok('conversations are separate, the first is preserved, and none are removed');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach

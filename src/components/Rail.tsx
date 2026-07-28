@@ -69,7 +69,9 @@ export function Rail({
 }) {
   return (
     <nav
-      className="flex shrink-0 gap-1 border-edge/70 bg-surface/30 p-1.5 max-lg:order-last max-lg:border-t lg:w-16 lg:flex-col lg:border-r lg:p-2"
+      // Phones only now. On a wide screen the sidebar carries the rooms, and two
+      // lists of the same four things is one list too many.
+      className="flex shrink-0 gap-1 border-edge/70 bg-surface/30 p-1.5 max-lg:order-last max-lg:border-t lg:hidden"
       aria-label="Workspaces">
       {rooms.map((room) => {
         const Icon = ICONS[room.icon] ?? Circle;

@@ -53,6 +53,16 @@ import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {available, forgetAvailable} from './available';
 import {trimTrailingSilence} from '../shared/trim';
 import {research} from './research';
+import {
+  allChats,
+  archiveChat,
+  currentChat,
+  newChat,
+  openChat,
+  rename,
+  titleFrom,
+  touch,
+} from './chats';
 import {enrol, forgetVoice, isEnrolment, setGuard, voiceGuard} from './voiceguard';
 import {getMode, isMode, setMode} from './modes';
 import {
@@ -384,9 +394,15 @@ export function createApi(): Express {
        * them in sequence bought nothing at all; the cost was simply the sum
        * rather than the slowest.
        */
-      const [, profile, summary, policies, turns, have, attention, briefing, style] =
+      const [, , profile, summary, policies, turns, have, attention, briefing, style] =
         await Promise.all([
           record('user', text, via),
+          // The conversation is named after the first thing said in it, and
+          // moves to the top of the list every time it is used.
+          currentChat().then(async (id) => {
+            await titleFrom(id, text);
+            await touch(id);
+          }),
           getProfile(),
           getSummary(),
           getPolicies(),
@@ -825,6 +841,45 @@ export function createApi(): Express {
       } catch (error) {
         res.status(400).json({error: (error as Error).message});
       }
+    }),
+  );
+
+  api.get(
+    '/chats',
+    guard(async (_req, res) => {
+      res.json({chats: await allChats(), current: await currentChat()});
+    }),
+  );
+
+  api.post(
+    '/chat-new',
+    guard(async (_req, res) => {
+      const chat = await newChat();
+      res.json({chat, chats: await allChats(), current: chat.id});
+    }),
+  );
+
+  api.post(
+    '/chat-open',
+    guard(async (req, res) => {
+      const current = await openChat(String(req.body?.id ?? ''));
+      res.json({current, chats: await allChats()});
+    }),
+  );
+
+  api.post(
+    '/chat-rename',
+    guard(async (req, res) => {
+      const chats = await rename(String(req.body?.id ?? ''), String(req.body?.title ?? ''));
+      res.json({chats});
+    }),
+  );
+
+  api.post(
+    '/chat-archive',
+    guard(async (req, res) => {
+      const chats = await archiveChat(String(req.body?.id ?? ''));
+      res.json({chats, current: await currentChat()});
     }),
   );
 

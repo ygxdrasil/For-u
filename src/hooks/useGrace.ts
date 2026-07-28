@@ -584,6 +584,8 @@ export function useGrace() {
     setDeviceId,
     speech,
     setMicOn,
+    // Re-reads the transcript from the server, for a conversation switch.
+    reload: load,
     setVoiceOn,
     signIn,
     signOut,

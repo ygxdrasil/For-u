@@ -10,6 +10,7 @@ import {config} from './config';
 import {getProvider} from './llm/index';
 import type {Turn} from './llm/types';
 import {Document} from './store/index';
+import {currentChat, logKey, metaKey} from './chats';
 
 interface Meta {
   /** Prose recap of everything folded out of the verbatim window. */
@@ -18,7 +19,24 @@ interface Meta {
   summarizedThrough: number;
 }
 
-const messages = new Document<Message[]>('conversation', () => []);
+/**
+ * The log and the summary, for whichever conversation is open.
+ *
+ * Built per call rather than held as module state, because which conversation
+ * is current is answered by the store and a serverless instance may handle two
+ * requests from two different threads. A Document is a key and two functions;
+ * making one costs nothing, and caching it would be caching the wrong answer.
+ */
+async function logOf(): Promise<Document<Message[]>> {
+  return new Document<Message[]>(logKey(await currentChat()), () => []);
+}
+
+async function metaOf(): Promise<Document<Meta>> {
+  return new Document<Meta>(metaKey(await currentChat()), () => ({
+    summary: null,
+    summarizedThrough: 0,
+  }));
+}
 
 const profile = new Document<Profile>('profile', () => ({
   addressAs: null,
@@ -26,13 +44,10 @@ const profile = new Document<Profile>('profile', () => ({
   updatedAt: new Date().toISOString(),
 }));
 
-const meta = new Document<Meta>('meta', () => ({
-  summary: null,
-  summarizedThrough: 0,
-}));
 
-export function getMessages(): Promise<Message[]> {
-  return messages.read();
+
+export async function getMessages(): Promise<Message[]> {
+  return (await logOf()).read();
 }
 
 export function getProfile(): Promise<Profile> {
@@ -40,12 +55,12 @@ export function getProfile(): Promise<Profile> {
 }
 
 export async function getSummary(): Promise<string | null> {
-  return (await meta.read()).summary;
+  return (await (await metaOf()).read()).summary;
 }
 
 /** How much of the log the summary already covers. Exposed for verification. */
 export async function getSummarizedThrough(): Promise<number> {
-  return (await meta.read()).summarizedThrough;
+  return (await (await metaOf()).read()).summarizedThrough;
 }
 
 export async function record(
@@ -60,7 +75,7 @@ export async function record(
     at: new Date().toISOString(),
     via,
   };
-  await messages.update((log) => [...log, message]);
+  await (await logOf()).update((log) => [...log, message]);
   return message;
 }
 
@@ -74,8 +89,8 @@ export async function record(
  * from the summary, old enough to have fallen off the window.
  */
 export async function recentTurns(): Promise<Turn[]> {
-  const log = await messages.read();
-  const {summarizedThrough} = await meta.read();
+  const log = await (await logOf()).read();
+  const {summarizedThrough} = await (await metaOf()).read();
   const from = Math.min(
     summarizedThrough,
     Math.max(0, log.length - config.verbatimTurns),
@@ -231,8 +246,8 @@ export function forget(id: string): Promise<Profile> {
 }
 
 export async function clearConversation(): Promise<void> {
-  await messages.write([]);
-  await meta.write({summary: null, summarizedThrough: 0});
+  await (await logOf()).write([]);
+  await (await metaOf()).write({summary: null, summarizedThrough: 0});
 }
 
 /**
@@ -240,8 +255,9 @@ export async function clearConversation(): Promise<void> {
  * window. Runs as its own request so it never sits inside a reply's latency.
  */
 export async function compactIfNeeded(force = false): Promise<boolean> {
-  const log = await messages.read();
-  const current = await meta.read();
+  const log = await (await logOf()).read();
+  const store = await metaOf();
+  const current = await store.read();
   const unsummarised = log.length - current.summarizedThrough;
 
   if (!force && unsummarised <= config.summarizeAfter) return false;
@@ -288,7 +304,7 @@ Write plain prose, past tense, no more than 300 words. Return only the summary.`
     });
 
     if (!summary.trim()) return false;
-    await meta.write({summary: summary.trim(), summarizedThrough: foldUpTo});
+    await store.write({summary: summary.trim(), summarizedThrough: foldUpTo});
     return true;
   } catch (error) {
     // Summarising is a background nicety; failing it must not break the chat.

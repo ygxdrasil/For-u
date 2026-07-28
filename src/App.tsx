@@ -27,6 +27,8 @@ import type {DayView} from '../shared/types';
 import * as api from './lib/api';
 import {useFreshness} from './hooks/useFreshness';
 import {useRooms} from './hooks/useRooms';
+import {useChats} from './hooks/useChats';
+import {Sidebar} from './components/Sidebar';
 import {useTheme} from './hooks/useTheme';
 
 const MODE_LABEL: Record<Mode, string> = {
@@ -67,6 +69,9 @@ export default function App() {
   const wide = useWide();
   const freshness = useFreshness();
   const {theme, toggle: toggleTheme} = useTheme();
+  // Reloading rather than clearing: the conversation just switched to is
+  // whatever the server has, and an emptied screen would be a guess at it.
+  const chats = useChats(() => void grace.reload());
   const [panelOpen, setPanelOpen] = useState(false);
   const [soundCheckOpen, setSoundCheckOpen] = useState(false);
   const [voiceLockOpen, setVoiceLockOpen] = useState(false);
@@ -169,6 +174,18 @@ export default function App() {
       label: `Go to ${room.name}`,
       hint: 'room',
       run: () => rooms.enter(room.id, true),
+    })),
+    {
+      id: 'newchat',
+      label: 'New conversation',
+      hint: 'chat',
+      run: () => void chats.start(),
+    },
+    ...chats.chats.slice(0, 8).map((chat) => ({
+      id: `chat:${chat.id}`,
+      label: chat.title,
+      hint: 'chat',
+      run: () => void chats.open(chat.id),
     })),
     {id: 'talk', label: 'Talk to Grace', hint: 'mic', run: talk},
     {
@@ -307,6 +324,20 @@ export default function App() {
       </div>
 
       <main className="relative flex min-h-0 flex-1 max-lg:flex-col">
+        <Sidebar
+          chats={chats.chats}
+          currentChat={chats.current}
+          rooms={rooms.rooms}
+          currentRoom={rooms.current}
+          onNewChat={() => void chats.start()}
+          onOpenChat={(id) => void chats.open(id)}
+          onArchiveChat={(id) => void chats.archive(id)}
+          onRoom={(id) => rooms.enter(id, true)}
+          onFiles={() => rooms.enter('day', false)}
+          onSettings={() => setPanelOpen(true)}
+        />
+
+        {/* The rail stays for phones, where a 15rem sidebar is the screen. */}
         <Rail
           rooms={rooms.rooms}
           current={rooms.current}
