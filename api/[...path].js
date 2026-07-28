@@ -1110,8 +1110,8 @@ async function clearConversation() {
 }
 async function compactIfNeeded(force = false) {
   const log = await (await logOf()).read();
-  const store19 = await metaOf();
-  const current = await store19.read();
+  const store20 = await metaOf();
+  const current = await store20.read();
   const unsummarised = log.length - current.summarizedThrough;
   if (!force && unsummarised <= config.summarizeAfter) return false;
   const keep = force ? 6 : config.verbatimTurns;
@@ -1143,7 +1143,7 @@ ${transcript}`;
       fast: true
     });
     if (!summary.trim()) return false;
-    await store19.write({ summary: summary.trim(), summarizedThrough: foldUpTo });
+    await store20.write({ summary: summary.trim(), summarizedThrough: foldUpTo });
     return true;
   } catch (error) {
     console.error("[grace] could not compact memory:", error.message);
@@ -2698,15 +2698,15 @@ async function gather(now = /* @__PURE__ */ new Date()) {
   return concerns;
 }
 async function unraised(concerns) {
-  const record3 = await seen.read();
+  const record4 = await seen.read();
   const cutoff = Date.now() - FORGET_AFTER_MS;
   const kept = {};
-  for (const [id, at] of Object.entries(record3.raised)) {
+  for (const [id, at] of Object.entries(record4.raised)) {
     if (new Date(at).getTime() > cutoff) kept[id] = at;
   }
   const fresh2 = concerns.filter((concern) => !kept[concern.id]);
   if (fresh2.length === 0) {
-    if (Object.keys(kept).length !== Object.keys(record3.raised).length) {
+    if (Object.keys(kept).length !== Object.keys(record4.raised).length) {
       await seen.write({ raised: kept });
     }
     return [];
@@ -2776,48 +2776,6 @@ async function compose(concerns) {
   });
   return said2.trim() || fallback(concerns);
 }
-
-// server/tools/ask.ts
-function parseChoices(raw) {
-  return raw.split(/\s*\|\s*|\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
-    const [label2, ...rest] = line.split(/\s+[—-]{1,2}\s+/);
-    return {
-      label: label2.trim().slice(0, 48),
-      detail: rest.join(" \u2014 ").trim().slice(0, 120) || void 0
-    };
-  }).slice(0, 4);
-}
-var deliver = null;
-function onAsk(handler) {
-  deliver = handler;
-}
-var askTools = [
-  {
-    name: "ask_choice",
-    description: "Ask the user a question and give them buttons to answer with, instead of making them type. Use it whenever you need a decision from them and the sensible answers are a short list: which of two times, whether to go ahead, which of three options they prefer. Ask the question in your reply as well, in your own words \u2014 the buttons are how they answer, not a substitute for asking. Do not use it for open questions, and do not use it more than once in a reply.",
-    category: "research",
-    parameters: {
-      question: {
-        type: "string",
-        description: "The question itself, short and plain."
-      },
-      choices: {
-        type: "string",
-        description: 'Two to four answers, separated by | \u2014 each optionally "Label \u2014 what it means". For example: "Tuesday \u2014 before the weekend | Thursday \u2014 gives you more time".'
-      }
-    },
-    required: ["question", "choices"],
-    run: async (args) => {
-      const question = String(args.question ?? "").trim();
-      const choices = parseChoices(String(args.choices ?? ""));
-      if (choices.length < 2) {
-        return "That needs at least two answers to choose between. Just ask them in words instead.";
-      }
-      deliver?.(question, choices);
-      return `The buttons are on their screen. Ask the question in your reply too, in one short sentence, then stop \u2014 do not guess which they will pick, and do not carry on as though they had already answered.`;
-    }
-  }
-];
 
 // server/tools/timers.ts
 import { randomUUID as randomUUID10 } from "node:crypto";
@@ -2945,137 +2903,44 @@ var timerTools = [
   }
 ];
 
-// server/workspaces.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
-var DEFAULTS = [
+// server/tools/ask.ts
+function parseChoices(raw) {
+  return raw.split(/\s*\|\s*|\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [label2, ...rest] = line.split(/\s+[—-]{1,2}\s+/);
+    return {
+      label: label2.trim().slice(0, 48),
+      detail: rest.join(" \u2014 ").trim().slice(0, 120) || void 0
+    };
+  }).slice(0, 4);
+}
+var deliver = null;
+function onAsk(handler) {
+  deliver = handler;
+}
+var askTools = [
   {
-    id: "grace",
-    name: "Grace",
-    icon: "sparkles",
-    accent: "ice",
-    opens: [],
-    panels: ["orb", "faculties", "attention", "connections", "spend"],
-    blurb: "Her, and what she knows."
-  },
-  {
-    id: "day",
-    name: "Home",
-    icon: "house",
-    accent: "ice",
-    opens: [],
-    panels: ["day", "needs", "weather", "notes", "situations", "files", "deeds"],
-    blurb: "Your day, and what wants you."
-  },
-  {
-    id: "work",
-    name: "Work",
-    icon: "briefcase",
-    accent: "amber",
-    // Opened in order; the first is the one brought forward.
-    opens: ["https://app.n8n.cloud", "https://mail.google.com"],
-    panels: ["needs", "github", "workflows", "notes", "activity"],
-    blurb: "Mail, workflows, and what is failing.",
-    brief: "Brief me on my workflows and anything in my mail that needs me."
-  },
-  {
-    id: "play",
-    name: "Play",
-    icon: "gamepad",
-    accent: "violet",
-    opens: [],
-    panels: ["day", "playstation", "games", "activity"],
-    blurb: "The console, and what you have been playing."
-  }
-];
-var store16 = new Document("workspaces", () => DEFAULTS);
-async function workspaces() {
-  const saved = await store16.read();
-  const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
-  return [...saved, ...missing].filter((one) => !one.hidden);
-}
-async function findWorkspace(said2) {
-  const needle = said2.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
-  if (!needle) return null;
-  const all = await workspaces();
-  return all.find((one) => one.id === needle || one.name.toLowerCase() === needle) ?? all.find((one) => needle.includes(one.name.toLowerCase())) ?? all.find((one) => one.name.toLowerCase().includes(needle)) ?? null;
-}
-async function saveWorkspace(patch) {
-  const clean = {
-    id: patch.id?.trim() || randomUUID11().slice(0, 8),
-    name: (patch.name ?? "Untitled").trim().slice(0, 24),
-    icon: patch.icon ?? "sparkles",
-    accent: patch.accent ?? "ice",
-    opens: (patch.opens ?? []).map((url) => url.trim()).filter((url) => /^https?:\/\//i.test(url)).slice(0, 8),
-    panels: patch.panels ?? [],
-    blurb: patch.blurb?.slice(0, 80),
-    brief: patch.brief?.slice(0, 200)
-  };
-  await store16.update((current) => {
-    const rest = current.filter((one) => one.id !== clean.id);
-    const at = current.findIndex((one) => one.id === clean.id);
-    if (at < 0) return [...current, clean];
-    const next = [...rest];
-    next.splice(at, 0, clean);
-    return next;
-  });
-  return workspaces();
-}
-async function hideWorkspace(id) {
-  await store16.update((current) => {
-    const known = current.some((one) => one.id === id);
-    const base = known ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
-    return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
-  });
-  return workspaces();
-}
-
-// server/tools/open.ts
-var deliver2 = null;
-function onOpen(handler) {
-  deliver2 = handler;
-}
-function toUrl(raw) {
-  const said2 = raw.trim().replace(/\s+/g, "");
-  if (!said2) return null;
-  if (/^https?:\/\//i.test(said2)) return said2;
-  const host = said2.includes(".") ? said2 : `${said2}.com`;
-  return /^[a-z0-9.-]+(\/.*)?$/i.test(host) ? `https://${host}` : null;
-}
-var openTools = [
-  {
-    name: "open_pages",
-    description: 'Open one or more web pages in the user\u2019s browser. Use it whenever they ask you to open, pull up, or bring up a site \u2014 "open YouTube", "open my GitHub". It only works while they are looking at you, since the browser showing you is the thing that opens them.',
+    name: "ask_choice",
+    description: "Ask the user a question and give them buttons to answer with, instead of making them type. Use it whenever you need a decision from them and the sensible answers are a short list: which of two times, whether to go ahead, which of three options they prefer. Ask the question in your reply as well, in your own words \u2014 the buttons are how they answer, not a substitute for asking. Do not use it for open questions, and do not use it more than once in a reply.",
     category: "research",
     parameters: {
-      urls: {
+      question: {
         type: "string",
-        description: 'One or more addresses, separated by spaces or commas. A bare name like "youtube" is fine; a full https address is better when you know it.'
+        description: "The question itself, short and plain."
+      },
+      choices: {
+        type: "string",
+        description: 'Two to four answers, separated by | \u2014 each optionally "Label \u2014 what it means". For example: "Tuesday \u2014 before the weekend | Thursday \u2014 gives you more time".'
       }
     },
-    required: ["urls"],
+    required: ["question", "choices"],
     run: async (args) => {
-      const urls = String(args.urls ?? "").split(/[\s,]+/).map(toUrl).filter((url) => Boolean(url)).slice(0, 8);
-      if (urls.length === 0) return "That did not look like an address I could open.";
-      deliver2?.(urls);
-      return `Opening ${urls.length === 1 ? urls[0] : `${urls.length} pages`}. Say so in a few words. If their browser blocks it they will see the links to tap, so do not promise it definitely opened.`;
-    }
-  },
-  {
-    name: "open_workspace",
-    description: 'Switch the user to one of their workspaces \u2014 Work, Home, Play, Grace, or any they have made. Use it for "open work", "go to play", "switch to home". It changes what is on their screen and opens whichever pages that workspace is set to open.',
-    category: "research",
-    parameters: {
-      name: { type: "string", description: "Which workspace, as they said it." }
-    },
-    required: ["name"],
-    run: async (args) => {
-      const workspace = await findWorkspace(String(args.name ?? ""));
-      if (!workspace) {
-        const names = (await workspaces()).map((one) => one.name).join(", ");
-        return `There is no workspace by that name. They have: ${names}.`;
+      const question = String(args.question ?? "").trim();
+      const choices = parseChoices(String(args.choices ?? ""));
+      if (choices.length < 2) {
+        return "That needs at least two answers to choose between. Just ask them in words instead.";
       }
-      deliver2?.(workspace.opens, workspace.id);
-      return `Switched them to ${workspace.name}` + (workspace.opens.length > 0 ? `, opening ${workspace.opens.length} page${workspace.opens.length === 1 ? "" : "s"}` : "") + `. Say which one you have moved them to, briefly.` + (workspace.brief ? ` Then do this without being asked, and report it in a sentence or two: ${workspace.brief}` : "");
+      deliver?.(question, choices);
+      return `The buttons are on their screen. Ask the question in your reply too, in one short sentence, then stop \u2014 do not guess which they will pick, and do not carry on as though they had already answered.`;
     }
   }
 ];
@@ -3509,7 +3374,7 @@ ${found.text}`;
 ];
 
 // server/lights.ts
-import { randomUUID as randomUUID12 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 var LightError = class extends Error {
   constructor(message, needsKey = false) {
     super(message);
@@ -3571,7 +3436,7 @@ async function pick(said2) {
 }
 async function control(light, capability) {
   await call3("/device/control", {
-    requestId: randomUUID12(),
+    requestId: randomUUID11(),
     payload: { sku: light.sku, device: light.device, capability }
   });
 }
@@ -3729,6 +3594,141 @@ var lightTools = [
       const found = await lights();
       return found.length === 0 ? "No lights on the account." : `Lights: ${found.map((one) => one.name).join(", ")}.`;
     })
+  }
+];
+
+// server/workspaces.ts
+import { randomUUID as randomUUID12 } from "node:crypto";
+var DEFAULTS = [
+  {
+    id: "grace",
+    name: "Grace",
+    icon: "sparkles",
+    accent: "ice",
+    opens: [],
+    panels: ["orb", "faculties", "attention", "connections", "spend"],
+    blurb: "Her, and what she knows."
+  },
+  {
+    id: "day",
+    name: "Home",
+    icon: "house",
+    accent: "ice",
+    opens: [],
+    panels: ["day", "needs", "weather", "notes", "situations", "files", "deeds"],
+    blurb: "Your day, and what wants you."
+  },
+  {
+    id: "work",
+    name: "Work",
+    icon: "briefcase",
+    accent: "amber",
+    // Opened in order; the first is the one brought forward.
+    opens: ["https://app.n8n.cloud", "https://mail.google.com"],
+    panels: ["needs", "github", "workflows", "notes", "activity"],
+    blurb: "Mail, workflows, and what is failing.",
+    brief: "Brief me on my workflows and anything in my mail that needs me."
+  },
+  {
+    id: "play",
+    name: "Play",
+    icon: "gamepad",
+    accent: "violet",
+    opens: [],
+    panels: ["day", "playstation", "games", "activity"],
+    blurb: "The console, and what you have been playing."
+  }
+];
+var store16 = new Document("workspaces", () => DEFAULTS);
+async function workspaces() {
+  const saved = await store16.read();
+  const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
+  return [...saved, ...missing].filter((one) => !one.hidden);
+}
+async function findWorkspace(said2) {
+  const needle = said2.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+  if (!needle) return null;
+  const all = await workspaces();
+  return all.find((one) => one.id === needle || one.name.toLowerCase() === needle) ?? all.find((one) => needle.includes(one.name.toLowerCase())) ?? all.find((one) => one.name.toLowerCase().includes(needle)) ?? null;
+}
+async function saveWorkspace(patch) {
+  const clean = {
+    id: patch.id?.trim() || randomUUID12().slice(0, 8),
+    name: (patch.name ?? "Untitled").trim().slice(0, 24),
+    icon: patch.icon ?? "sparkles",
+    accent: patch.accent ?? "ice",
+    opens: (patch.opens ?? []).map((url) => url.trim()).filter((url) => /^https?:\/\//i.test(url)).slice(0, 8),
+    panels: patch.panels ?? [],
+    blurb: patch.blurb?.slice(0, 80),
+    brief: patch.brief?.slice(0, 200)
+  };
+  await store16.update((current) => {
+    const rest = current.filter((one) => one.id !== clean.id);
+    const at = current.findIndex((one) => one.id === clean.id);
+    if (at < 0) return [...current, clean];
+    const next = [...rest];
+    next.splice(at, 0, clean);
+    return next;
+  });
+  return workspaces();
+}
+async function hideWorkspace(id) {
+  await store16.update((current) => {
+    const known = current.some((one) => one.id === id);
+    const base = known ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
+    return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
+  });
+  return workspaces();
+}
+
+// server/tools/open.ts
+var deliver2 = null;
+function onOpen(handler) {
+  deliver2 = handler;
+}
+function toUrl(raw) {
+  const said2 = raw.trim().replace(/\s+/g, "");
+  if (!said2) return null;
+  if (/^https?:\/\//i.test(said2)) return said2;
+  const host = said2.includes(".") ? said2 : `${said2}.com`;
+  return /^[a-z0-9.-]+(\/.*)?$/i.test(host) ? `https://${host}` : null;
+}
+var openTools = [
+  {
+    name: "open_pages",
+    description: 'Open one or more web pages in the user\u2019s browser. Use it whenever they ask you to open, pull up, or bring up a site \u2014 "open YouTube", "open my GitHub". It only works while they are looking at you, since the browser showing you is the thing that opens them.',
+    category: "research",
+    parameters: {
+      urls: {
+        type: "string",
+        description: 'One or more addresses, separated by spaces or commas. A bare name like "youtube" is fine; a full https address is better when you know it.'
+      }
+    },
+    required: ["urls"],
+    run: async (args) => {
+      const urls = String(args.urls ?? "").split(/[\s,]+/).map(toUrl).filter((url) => Boolean(url)).slice(0, 8);
+      if (urls.length === 0) return "That did not look like an address I could open.";
+      deliver2?.(urls);
+      return `Opening ${urls.length === 1 ? urls[0] : `${urls.length} pages`}. Say so in a few words. If their browser blocks it they will see the links to tap, so do not promise it definitely opened.`;
+    }
+  },
+  {
+    name: "open_workspace",
+    description: 'Switch the user to one of their workspaces \u2014 Work, Home, Play, Grace, or any they have made. Use it for "open work", "go to play", "switch to home". It changes what is on their screen and opens whichever pages that workspace is set to open.',
+    category: "research",
+    parameters: {
+      name: { type: "string", description: "Which workspace, as they said it." }
+    },
+    required: ["name"],
+    run: async (args) => {
+      const workspace = await findWorkspace(String(args.name ?? ""));
+      if (!workspace) {
+        const names = (await workspaces()).map((one) => one.name).join(", ");
+        return `There is no workspace by that name. They have: ${names}.`;
+      }
+      deliver2?.(workspace.opens, workspace.id);
+      return `Switched them to ${workspace.name}` + (workspace.opens.length > 0 ? `, opening ${workspace.opens.length} page${workspace.opens.length === 1 ? "" : "s"}` : "") + `. Say which one you have moved them to, briefly.` + (workspace.brief ? ` Then do this without being asked, and report it in a sentence or two: ${workspace.brief}` : "");
+    }
   }
 ];
 
@@ -4521,52 +4521,6 @@ ${one.found}`).join("\n\n")
   return { title, report: report2, strands: usable.map((one) => one.strand) };
 }
 
-// shared/voiceprint.ts
-var BANDS = 24;
-
-// server/voiceguard.ts
-var EMPTY = { enrolment: null, on: false, strictness: "normal" };
-var store17 = new Document("voiceguard", () => EMPTY);
-function voiceGuard() {
-  return store17.read();
-}
-function isEnrolment(value) {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value;
-  const print = candidate.print;
-  return Boolean(print) && Array.isArray(print?.bands) && print.bands.length === BANDS && print.bands.every((band) => typeof band === "number" && Number.isFinite(band)) && typeof print.pitch === "number" && Number.isFinite(print.pitch) && typeof print.voiced === "number" && print.voiced > 0 && typeof candidate.tightness === "number" && candidate.tightness > 0 && candidate.tightness <= 1 && typeof candidate.samples === "number" && candidate.samples > 0 && // Optional, because an enrolment made before spread existed is still a
-  // perfectly good print — the comparison simply weights every band equally,
-  // which is what it did back then. Present but malformed is refused.
-  (candidate.spread === void 0 || Array.isArray(candidate.spread) && candidate.spread.length === BANDS && candidate.spread.every(
-    (value2) => typeof value2 === "number" && Number.isFinite(value2) && value2 >= 0
-  ));
-}
-async function enrol(enrolment) {
-  const current = await store17.read();
-  const next = {
-    ...current,
-    enrolment: { ...enrolment, at: (/* @__PURE__ */ new Date()).toISOString() }
-  };
-  await store17.write(next);
-  return next;
-}
-async function setGuard(patch) {
-  const current = await store17.read();
-  const next = {
-    ...current,
-    ...patch.strictness ? { strictness: patch.strictness } : {},
-    // Refusing everyone because nothing is enrolled would be a lockout, so
-    // turning it on without a print is quietly a no.
-    ...patch.on !== void 0 ? { on: patch.on && Boolean(current.enrolment) } : {}
-  };
-  await store17.write(next);
-  return next;
-}
-async function forgetVoice() {
-  await store17.write(EMPTY);
-  return EMPTY;
-}
-
 // server/persona.ts
 var IDENTITY = `You are Grace, a personal assistant to one person \u2014 the user you are speaking with.
 
@@ -4752,7 +4706,7 @@ ${summary}` : null;
 }
 
 // server/style.ts
-var store18 = new Document("style", () => ({
+var store17 = new Document("style", () => ({
   description: null,
   samples: 0,
   builtAt: null
@@ -4760,14 +4714,14 @@ var store18 = new Document("style", () => ({
 var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
 var SAMPLES = 8;
 async function writingStyle() {
-  return (await store18.read()).description;
+  return (await store17.read()).description;
 }
 function fresh(style) {
   if (!style.description || !style.builtAt) return false;
   return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
 }
 async function learnWritingStyle(force = false) {
-  const current = await store18.read();
+  const current = await store17.read();
   if (!force && fresh(current)) return false;
   const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
   if (sent.length < 3) return false;
@@ -4791,7 +4745,7 @@ ${body}`).join("\n\n")
     fast: true
   }).catch(() => "");
   if (!description.trim()) return false;
-  await store18.write({
+  await store17.write({
     description: description.trim(),
     samples: bodies.length,
     builtAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -4804,6 +4758,209 @@ async function styleNote() {
   return `How the user writes email, taken from their own sent messages. Any draft you write for them must sound like this and not like you \u2014 they should be able to read it once and send it:
 
 ${description}`;
+}
+
+// server/turn.ts
+var NO_KEY_MESSAGE = "No Gemini API key is configured, so I have no voice to think with. Add GEMINI_API_KEY and restart me.";
+async function takeTurn({
+  text,
+  via,
+  signal,
+  hooks = {}
+}) {
+  const acted = [];
+  if (!isConfigured()) {
+    return { reply: "", message: null, error: NO_KEY_MESSAGE, acted };
+  }
+  const [, , profile2, summary, policies, turns, have, attention, briefing, style] = await Promise.all([
+    record2("user", text, via),
+    // The conversation is named after the first thing said in it, and moves
+    // to the top of the list every time it is used.
+    currentChat().then(async (id) => {
+      await titleFrom(id, text);
+      await touch(id);
+    }),
+    getProfile(),
+    getSummary(),
+    getPolicies(),
+    recentTurns(),
+    available(),
+    getMode(),
+    buildBriefing().catch(() => null),
+    styleNote().catch(() => null)
+  ]);
+  const system = buildSystemPrompt({
+    available: have,
+    profile: profile2,
+    summary,
+    policies,
+    via,
+    now: /* @__PURE__ */ new Date(),
+    mode: attention.mode,
+    briefing,
+    style
+  });
+  turns.push({ role: "user", text });
+  let reply = "";
+  let grounded = false;
+  const shown = /* @__PURE__ */ new Map();
+  onAsk((question, choices) => hooks.onAsked?.(question, choices));
+  onOpen((urls, workspace) => hooks.onOpened?.(urls, workspace));
+  try {
+    for await (const delta of getProvider().stream({
+      system,
+      turns,
+      ...signal ? { signal } : {},
+      temperature: 0.7,
+      fast: true,
+      // Output tokens cost eight times input. Room for a genuinely long answer
+      // when asked for one; a stop before a runaway reply can spend a day's
+      // budget in one go.
+      maxOutputTokens: 2048,
+      onGrounded: () => {
+        if (!grounded) {
+          grounded = true;
+          hooks.onSearched?.();
+        }
+      },
+      onSearchFailed: (reason) => hooks.onSearchFailed?.(reason),
+      // Only what is connected. Held for minutes at a time so the list stays
+      // byte-identical between messages and keeps the cache discount.
+      tools: declarations(have),
+      // What the model reads and what the user sees are different strings, and
+      // only this layer holds both. The provider hands onToolUsed whatever
+      // onToolCall returned — the raw result — so checking the mail put the
+      // entire inbox on screen no matter how carefully the tool layer worded
+      // its summary. It is kept here instead.
+      onToolCall: async (name, args) => {
+        const outcome = await runTool({ name, args });
+        shown.set(name, outcome.summary);
+        return outcome.result;
+      },
+      onToolUsed: (name, raw) => {
+        const summary2 = shown.get(name) ?? raw;
+        if (name === "search_web") {
+          if (!grounded) {
+            grounded = true;
+            hooks.onSearched?.();
+          }
+          return;
+        }
+        acted.push({ name, summary: summary2 });
+        hooks.onActed?.(name, summary2);
+      }
+    })) {
+      reply += delta;
+      hooks.onDelta?.(delta);
+    }
+  } catch (error) {
+    const detail = error.message ?? "unknown error";
+    console.error("[grace] generation failed:", detail);
+    const message = reply.trim() ? await record2("grace", reply, via) : null;
+    return {
+      reply,
+      message,
+      error: `I couldn't finish that thought \u2014 ${detail}`,
+      acted
+    };
+  }
+  if (!reply.trim()) {
+    return {
+      reply: "",
+      message: null,
+      error: "I drew a blank there. Try me again.",
+      acted
+    };
+  }
+  return { reply, message: await record2("grace", reply, via), error: null, acted };
+}
+
+// server/relay.ts
+import { randomBytes as randomBytes3, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+var store18 = new Document("relay", () => ({
+  token: null,
+  usedAt: null,
+  turns: 0
+}));
+async function relayToken() {
+  const current = await store18.read();
+  if (current.token) return current.token;
+  const token2 = randomBytes3(24).toString("base64url");
+  await store18.write({ ...current, token: token2 });
+  return token2;
+}
+async function rollRelayToken() {
+  const token2 = randomBytes3(24).toString("base64url");
+  await store18.update((current) => ({ ...current, token: token2 }));
+  return token2;
+}
+async function relayStatus() {
+  const { usedAt, turns } = await store18.read();
+  return { usedAt, turns };
+}
+async function relayAllows(offered) {
+  if (!offered) return false;
+  const real = await relayToken();
+  const left = Buffer.from(offered);
+  const right = Buffer.from(real);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual4(left, right);
+}
+async function noteRelayUse() {
+  await store18.update((current) => ({
+    ...current,
+    usedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    turns: current.turns + 1
+  }));
+}
+function forSpeaking(reply) {
+  return reply.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/https?:\/\/\S+/g, "the link on screen").replace(/[*_`#]+/g, "").replace(/^\s*[-•]\s+/gm, "").replace(/\n{2,}/g, "\n").trim();
+}
+
+// shared/voiceprint.ts
+var BANDS = 24;
+
+// server/voiceguard.ts
+var EMPTY = { enrolment: null, on: false, strictness: "normal" };
+var store19 = new Document("voiceguard", () => EMPTY);
+function voiceGuard() {
+  return store19.read();
+}
+function isEnrolment(value) {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value;
+  const print = candidate.print;
+  return Boolean(print) && Array.isArray(print?.bands) && print.bands.length === BANDS && print.bands.every((band) => typeof band === "number" && Number.isFinite(band)) && typeof print.pitch === "number" && Number.isFinite(print.pitch) && typeof print.voiced === "number" && print.voiced > 0 && typeof candidate.tightness === "number" && candidate.tightness > 0 && candidate.tightness <= 1 && typeof candidate.samples === "number" && candidate.samples > 0 && // Optional, because an enrolment made before spread existed is still a
+  // perfectly good print — the comparison simply weights every band equally,
+  // which is what it did back then. Present but malformed is refused.
+  (candidate.spread === void 0 || Array.isArray(candidate.spread) && candidate.spread.length === BANDS && candidate.spread.every(
+    (value2) => typeof value2 === "number" && Number.isFinite(value2) && value2 >= 0
+  ));
+}
+async function enrol(enrolment) {
+  const current = await store19.read();
+  const next = {
+    ...current,
+    enrolment: { ...enrolment, at: (/* @__PURE__ */ new Date()).toISOString() }
+  };
+  await store19.write(next);
+  return next;
+}
+async function setGuard(patch) {
+  const current = await store19.read();
+  const next = {
+    ...current,
+    ...patch.strictness ? { strictness: patch.strictness } : {},
+    // Refusing everyone because nothing is enrolled would be a lockout, so
+    // turning it on without a print is quietly a no.
+    ...patch.on !== void 0 ? { on: patch.on && Boolean(current.enrolment) } : {}
+  };
+  await store19.write(next);
+  return next;
+}
+async function forgetVoice() {
+  await store19.write(EMPTY);
+  return EMPTY;
 }
 
 // server/weather.ts
@@ -4866,7 +5023,6 @@ ${recent}`
   contextCache = { text, until: Date.now() + 3e4 };
   return text;
 }
-var NO_KEY_MESSAGE = "No Gemini API key is configured, so I have no voice to think with. Add GEMINI_API_KEY and restart me.";
 function createApi() {
   const api = express();
   api.use(express.json({ limit: "25mb" }));
@@ -4934,6 +5090,49 @@ function createApi() {
         return;
       }
       res.json({ commands: claimed.commands });
+    })
+  );
+  api.post(
+    "/relay",
+    guard(async (req, res) => {
+      await loadKeys().catch(() => {
+      });
+      const offered = String(
+        req.body?.token ?? (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "")
+      );
+      if (!await relayAllows(offered)) {
+        await pauseAfterFailure();
+        res.status(401).json({ error: "no" });
+        return;
+      }
+      const text = String(req.body?.text ?? "").trim().slice(0, 2e3);
+      if (!text) {
+        res.json({ reply: "I didn\u2019t catch that.", spoken: "I didn\u2019t catch that.", acted: [], open: [] });
+        return;
+      }
+      const open = [];
+      const outcome = await takeTurn({
+        text,
+        // Spoken, because it is: she should answer the way she answers out
+        // loud, not the way she writes on screen.
+        via: "voice",
+        hooks: { onOpened: (urls) => open.push(...urls) }
+      });
+      if (outcome.error && !outcome.reply.trim()) {
+        res.json({ reply: outcome.error, spoken: outcome.error, acted: [], open: [] });
+        return;
+      }
+      await noteRelayUse();
+      contextCache = null;
+      res.json({
+        reply: outcome.reply,
+        // What to read aloud, with the markdown taken out of it.
+        spoken: forSpeaking(outcome.reply),
+        acted: outcome.acted,
+        // Shortcuts can open these itself, which is the only way opening a page
+        // can work when her own tab isn't the thing being spoken to.
+        open
+      });
     })
   );
   api.use(requireAuth);
@@ -5041,110 +5240,27 @@ function createApi() {
 
 `);
       };
-      if (!isConfigured()) {
-        send2({ type: "error", message: NO_KEY_MESSAGE });
-        res.end();
-        return;
-      }
       const controller = new AbortController();
       res.on("close", () => controller.abort());
-      const [, , profile2, summary, policies, turns, have, attention, briefing, style] = await Promise.all([
-        record2("user", text, via),
-        // The conversation is named after the first thing said in it, and
-        // moves to the top of the list every time it is used.
-        currentChat().then(async (id) => {
-          await titleFrom(id, text);
-          await touch(id);
-        }),
-        getProfile(),
-        getSummary(),
-        getPolicies(),
-        recentTurns(),
-        available(),
-        getMode(),
-        buildBriefing().catch(() => null),
-        styleNote().catch(() => null)
-      ]);
-      const system = buildSystemPrompt({
-        available: have,
-        profile: profile2,
-        summary,
-        policies,
+      const outcome = await takeTurn({
+        text,
         via,
-        now: /* @__PURE__ */ new Date(),
-        mode: attention.mode,
-        briefing,
-        style
-      });
-      turns.push({ role: "user", text });
-      let reply = "";
-      let grounded = false;
-      const shown = /* @__PURE__ */ new Map();
-      onAsk((question, choices) => send2({ type: "asked", question, choices }));
-      onOpen((urls, workspace) => send2({ type: "open", urls, workspace }));
-      try {
-        for await (const delta of getProvider().stream({
-          system,
-          turns,
-          signal: controller.signal,
-          temperature: 0.7,
-          fast: true,
-          // Output tokens cost eight times input. Room for a genuinely long
-          // answer when asked for one; a stop before a runaway reply can
-          // spend a day's budget in one go.
-          maxOutputTokens: 2048,
-          onGrounded: () => {
-            if (!grounded) {
-              grounded = true;
-              send2({ type: "searched" });
-            }
-          },
+        signal: controller.signal,
+        hooks: {
+          onDelta: (delta) => send2({ type: "delta", text: delta }),
+          onSearched: () => send2({ type: "searched" }),
           onSearchFailed: (reason) => send2({ type: "search-failed", reason }),
-          // Only what is connected. Held for minutes at a time so the list
-          // stays byte-identical between messages and keeps the cache discount.
-          tools: declarations(have),
-          // What the model reads and what the user sees are different strings,
-          // and only this layer holds both. The provider hands onToolUsed
-          // whatever onToolCall returned — the raw result — so checking the
-          // mail put the entire inbox on screen no matter how carefully the
-          // tool layer worded its summary. It is kept here instead.
-          onToolCall: async (name, args) => {
-            const outcome = await runTool({ name, args });
-            shown.set(name, outcome.summary);
-            return outcome.result;
-          },
-          onToolUsed: (name, raw) => {
-            const summary2 = shown.get(name) ?? raw;
-            if (name === "search_web") {
-              if (!grounded) {
-                grounded = true;
-                send2({ type: "searched" });
-              }
-              return;
-            }
-            send2({ type: "acted", name, summary: summary2 });
-          }
-        })) {
-          reply += delta;
-          send2({ type: "delta", text: delta });
+          onActed: (name, summary) => send2({ type: "acted", name, summary }),
+          onAsked: (question, choices) => send2({ type: "asked", question, choices }),
+          onOpened: (urls, workspace) => send2({ type: "open", urls, workspace })
         }
-      } catch (error) {
-        const message = error.message ?? "unknown error";
-        console.error("[grace] generation failed:", message);
-        if (reply.trim()) await record2("grace", reply, via);
-        send2({
-          type: "error",
-          message: `I couldn't finish that thought \u2014 ${message}`
-        });
+      });
+      if (outcome.error) {
+        send2({ type: "error", message: outcome.error });
         res.end();
         return;
       }
-      if (!reply.trim()) {
-        send2({ type: "error", message: "I drew a blank there. Try me again." });
-        res.end();
-        return;
-      }
-      send2({ type: "done", message: await record2("grace", reply, via) });
+      send2({ type: "done", message: outcome.message });
       contextCache = null;
       res.end();
     })
@@ -5276,6 +5392,24 @@ function createApi() {
     "/bridge-status",
     guard(async (_req, res) => {
       res.json({ token: await bridgeToken(), ...await bridgeStatus() });
+    })
+  );
+  api.get(
+    "/relay-key",
+    guard(async (req, res) => {
+      const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
+      const scheme = config.deployed ? "https" : "http";
+      res.json({
+        token: await relayToken(),
+        url: host ? `${scheme}://${host}/api/relay` : "/api/relay",
+        ...await relayStatus()
+      });
+    })
+  );
+  api.post(
+    "/relay-roll",
+    guard(async (_req, res) => {
+      res.json({ token: await rollRelayToken() });
     })
   );
   api.get(

@@ -1,3 +1,4 @@
+import {Anywhere} from './Anywhere';
 import {Bridge} from './Bridge';
 import {VoicePicker} from './VoicePicker';
 import {WorkspaceEditor} from './WorkspaceEditor';
@@ -313,6 +314,10 @@ export function ProfilePanel({
 
         <Section title="Rooms">
           <WorkspaceEditor />
+        </Section>
+
+        <Section title="Hey Siri, Grace">
+          <Anywhere />
         </Section>
 
         <Section title="The laptop bridge">

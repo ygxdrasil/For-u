@@ -20,7 +20,6 @@ import {monthlyCap, spend} from './budget';
 import {config, isConfigured} from './config';
 import {keyStatus, loadKeys, setKey} from './keys';
 import {learnFrom, worthLearningFrom} from './learn';
-import {buildBriefing} from './google/briefing';
 import {upcoming} from './google/calendar';
 import {recentMail} from './google/gmail';
 import {
@@ -44,15 +43,22 @@ import {getProvider} from './llm/index';
 import {playstation, psnConfigured, PsnError, recentlyPlayed} from './ps5';
 import {pulse} from './pulse';
 import {devices, notify, publicKey, subscribe} from './push';
-import {onAsk} from './tools/ask';
 import {markFired, runningTimers} from './tools/timers';
 import {liveWatches} from './watch';
-import {onOpen} from './tools/open';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
-import {available, forgetAvailable} from './available';
+import {forgetAvailable} from './available';
 import {trimTrailingSilence} from '../shared/trim';
 import {research} from './research';
+import {takeTurn} from './turn';
+import {
+  forSpeaking,
+  noteRelayUse,
+  relayAllows,
+  relayStatus,
+  relayToken,
+  rollRelayToken,
+} from './relay';
 import {
   allChats,
   archiveChat,
@@ -60,8 +66,6 @@ import {
   newChat,
   openChat,
   rename,
-  titleFrom,
-  touch,
 } from './chats';
 import {enrol, forgetVoice, isEnrolment, setGuard, voiceGuard} from './voiceguard';
 import {getMode, isMode, setMode} from './modes';
@@ -78,8 +82,7 @@ import {
   setAddressAs,
   supersedeEntry,
 } from './memory';
-import {buildSystemPrompt} from './persona';
-import {learnWritingStyle, styleNote} from './style';
+import {learnWritingStyle} from './style';
 import {weatherLine} from './weather';
 import {getBackend} from './store/index';
 import {hideWorkspace, saveWorkspace, workspaces} from './workspaces';
@@ -137,10 +140,6 @@ async function listeningContext(): Promise<string> {
   contextCache = {text, until: Date.now() + 30_000};
   return text;
 }
-
-const NO_KEY_MESSAGE =
-  'No Gemini API key is configured, so I have no voice to think with. ' +
-  'Add GEMINI_API_KEY and restart me.';
 
 /**
  * A full express app rather than a bare Router: Vite's dev middleware hands over
@@ -248,6 +247,81 @@ export function createApi(): Express {
       }
 
       res.json({commands: claimed.commands});
+    }),
+  );
+
+  /**
+   * Her, reachable from anything that can fetch a URL.
+   *
+   * This is what makes "Hey Siri, Grace — turn the light off" work with the
+   * app closed and the phone locked. It cannot be otherwise: no web page is
+   * permitted to listen for its own name while it isn't open, on any phone, by
+   * deliberate design. So the listening is done by the one thing on the device
+   * that is already allowed to do it, and this is where it hands the sentence
+   * over. A watch face, a car button, a desk macro and a cron job all fit the
+   * same shape.
+   *
+   * Deliberately outside the password wall, like the bridge, and for the same
+   * reason: what calls it is a program, not a person, and it carries a token
+   * instead of a session. A wrong token is told "no" and nothing else.
+   *
+   * It runs the identical turn the browser runs — same memory, same tools,
+   * same guardrails. She will no more spend money from a phone shortcut than
+   * she will from her own page, and everything said this way lands in the same
+   * conversation, so walking in the door and picking up where the hallway left
+   * off actually works.
+   */
+  api.post(
+    '/relay',
+    guard(async (req, res) => {
+      await loadKeys().catch(() => {});
+
+      const offered = String(
+        req.body?.token ?? (req.headers.authorization ?? '').replace(/^Bearer\s+/i, ''),
+      );
+      if (!(await relayAllows(offered))) {
+        // Same pause the password path takes. This door is on the open
+        // internet and guessing at it should be as slow as guessing at that one.
+        await pauseAfterFailure();
+        res.status(401).json({error: 'no'});
+        return;
+      }
+
+      const text = String(req.body?.text ?? '').trim().slice(0, 2000);
+      if (!text) {
+        // Siri hands over an empty string when it mishears silence, and it does
+        // that often enough that a 400 would be the usual outcome. Answering
+        // with something sayable is better than an error tone.
+        res.json({reply: 'I didn’t catch that.', spoken: 'I didn’t catch that.', acted: [], open: []});
+        return;
+      }
+
+      const open: string[] = [];
+      const outcome = await takeTurn({
+        text,
+        // Spoken, because it is: she should answer the way she answers out
+        // loud, not the way she writes on screen.
+        via: 'voice',
+        hooks: {onOpened: (urls) => open.push(...urls)},
+      });
+
+      if (outcome.error && !outcome.reply.trim()) {
+        res.json({reply: outcome.error, spoken: outcome.error, acted: [], open: []});
+        return;
+      }
+
+      await noteRelayUse();
+      contextCache = null;
+
+      res.json({
+        reply: outcome.reply,
+        // What to read aloud, with the markdown taken out of it.
+        spoken: forSpeaking(outcome.reply),
+        acted: outcome.acted,
+        // Shortcuts can open these itself, which is the only way opening a page
+        // can work when her own tab isn't the thing being spoken to.
+        open,
+      });
     }),
   );
 
@@ -373,143 +447,30 @@ export function createApi(): Express {
         if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
       };
 
-      if (!isConfigured()) {
-        send({type: 'error', message: NO_KEY_MESSAGE});
-        res.end();
-        return;
-      }
-
       const controller = new AbortController();
       res.on('close', () => controller.abort());
 
-      /*
-       * Everything the prompt needs, at once, and that word is load-bearing.
-       *
-       * Five of these used to be awaited one after another below the first
-       * batch — what is connected, the attention mode, the briefing, the
-       * writing style. Each is at least one round trip to the store, and the
-       * briefing is two more to Google on a cold instance, so they added up to
-       * something close to two seconds of silence before the model had even
-       * been asked the question. None of them depends on any other. Waiting for
-       * them in sequence bought nothing at all; the cost was simply the sum
-       * rather than the slowest.
-       */
-      const [, , profile, summary, policies, turns, have, attention, briefing, style] =
-        await Promise.all([
-          record('user', text, via),
-          // The conversation is named after the first thing said in it, and
-          // moves to the top of the list every time it is used.
-          currentChat().then(async (id) => {
-            await titleFrom(id, text);
-            await touch(id);
-          }),
-          getProfile(),
-          getSummary(),
-          getPolicies(),
-          recentTurns(),
-          available(),
-          getMode(),
-          buildBriefing().catch(() => null),
-          styleNote().catch(() => null),
-        ]);
-
-      const system = buildSystemPrompt({
-        available: have,
-        profile,
-        summary,
-        policies,
+      const outcome = await takeTurn({
+        text,
         via,
-        now: new Date(),
-        mode: attention.mode,
-        briefing,
-        style,
+        signal: controller.signal,
+        hooks: {
+          onDelta: (delta) => send({type: 'delta', text: delta}),
+          onSearched: () => send({type: 'searched'}),
+          onSearchFailed: (reason) => send({type: 'search-failed', reason}),
+          onActed: (name, summary) => send({type: 'acted', name, summary}),
+          onAsked: (question, choices) => send({type: 'asked', question, choices}),
+          onOpened: (urls, workspace) => send({type: 'open', urls, workspace}),
+        },
       });
 
-      // The turn just recorded is not in `turns`, which was read alongside it.
-      turns.push({role: 'user', text});
-
-      let reply = '';
-      let grounded = false;
-      /** Tool name to the one line the user should see about it. */
-      const shown = new Map<string, string>();
-
-      // A question she asks goes out the instant she asks it, rather than
-      // waiting for the reply to finish — the buttons and the sentence that
-      // introduces them should appear together.
-      onAsk((question, choices) => send({type: 'asked', question, choices}));
-      // Likewise for pages: the browser is the only thing that can open a tab,
-      // so the instruction goes down the same stream as the words.
-      onOpen((urls, workspace) => send({type: 'open', urls, workspace}));
-
-      try {
-        for await (const delta of getProvider().stream({
-          system,
-          turns,
-          signal: controller.signal,
-          temperature: 0.7,
-          fast: true,
-          // Output tokens cost eight times input. Room for a genuinely long
-          // answer when asked for one; a stop before a runaway reply can
-          // spend a day's budget in one go.
-          maxOutputTokens: 2048,
-          onGrounded: () => {
-            if (!grounded) {
-              grounded = true;
-              send({type: 'searched'});
-            }
-          },
-          onSearchFailed: (reason) => send({type: 'search-failed', reason}),
-          // Only what is connected. Held for minutes at a time so the list
-          // stays byte-identical between messages and keeps the cache discount.
-          tools: declarations(have),
-          // What the model reads and what the user sees are different strings,
-          // and only this layer holds both. The provider hands onToolUsed
-          // whatever onToolCall returned — the raw result — so checking the
-          // mail put the entire inbox on screen no matter how carefully the
-          // tool layer worded its summary. It is kept here instead.
-          onToolCall: async (name, args) => {
-            const outcome = await runTool({name, args});
-            shown.set(name, outcome.summary);
-            return outcome.result;
-          },
-          onToolUsed: (name, raw) => {
-            const summary = shown.get(name) ?? raw;
-            // Searching is an action like any other, but reads better as
-            // "checked the web" than as a line of results.
-            if (name === 'search_web') {
-              if (!grounded) {
-                grounded = true;
-                send({type: 'searched'});
-              }
-              return;
-            }
-            send({type: 'acted', name, summary});
-          },
-        })) {
-          reply += delta;
-          send({type: 'delta', text: delta});
-        }
-      } catch (error) {
-        const message = (error as Error).message ?? 'unknown error';
-        console.error('[grace] generation failed:', message);
-
-        // A half-finished reply is still worth keeping; the user heard it.
-        if (reply.trim()) await record('grace', reply, via);
-        send({
-          type: 'error',
-          message: `I couldn't finish that thought — ${message}`,
-        });
+      if (outcome.error) {
+        send({type: 'error', message: outcome.error});
         res.end();
         return;
       }
 
-      if (!reply.trim()) {
-        send({type: 'error', message: 'I drew a blank there. Try me again.'});
-        res.end();
-        return;
-      }
-
-      send({type: 'done', message: await record('grace', reply, via)});
+      send({type: 'done', message: outcome.message!});
       // The conversation has moved on, so the hint the transcriber works from
       // has to move with it — a stale one misses the name just mentioned.
       contextCache = null;
@@ -715,6 +676,29 @@ export function createApi(): Express {
     '/bridge-status',
     guard(async (_req, res) => {
       res.json({token: await bridgeToken(), ...(await bridgeStatus())});
+    }),
+  );
+
+  api.get(
+    '/relay-key',
+    guard(async (req, res) => {
+      // The full URL is assembled here rather than in the browser, because the
+      // thing that has to be typed into a phone must be the address that
+      // actually works — not one guessed from whatever the page thinks it is.
+      const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '');
+      const scheme = config.deployed ? 'https' : 'http';
+      res.json({
+        token: await relayToken(),
+        url: host ? `${scheme}://${host}/api/relay` : '/api/relay',
+        ...(await relayStatus()),
+      });
+    }),
+  );
+
+  api.post(
+    '/relay-roll',
+    guard(async (_req, res) => {
+      res.json({token: await rollRelayToken()});
     }),
   );
 

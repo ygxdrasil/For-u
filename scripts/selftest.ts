@@ -45,6 +45,7 @@ import {trimTrailingSilence} from '../shared/trim';
 import {heardName, isPhantom, toldToSleep} from '../shared/wake';
 import {parseCommand, suggest} from '../shared/commands';
 import {logKey, metaKey} from '../server/chats';
+import {forSpeaking} from '../server/relay';
 import {Document} from '../server/store/index';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
@@ -1961,6 +1962,117 @@ try {
     `no gap between summary and window (${replayed.length} unsummarised of ` +
       `${total} total, all replayed)`,
   );
+
+  // ---- reaching her from outside the browser -----------------------------
+  // The door Siri knocks on. It is on the open internet with a token in front
+  // of it and nothing else, so what is asserted here is mostly what it refuses.
+  const noToken = await call('/relay', {
+    method: 'POST',
+    body: JSON.stringify({text: 'turn the light off'}),
+  });
+  assert.equal(noToken.status, 401, 'the relay must not answer without a token');
+
+  const badToken = await call('/relay', {
+    method: 'POST',
+    body: JSON.stringify({token: 'not-the-token', text: 'turn the light off'}),
+  });
+  assert.equal(badToken.status, 401);
+  assert.deepEqual(
+    await badToken.json(),
+    {error: 'no'},
+    'a wrong token learns nothing about the right one',
+  );
+  ok('the relay refuses a missing or wrong token, and says nothing else');
+
+  // The token itself is behind the password. Anyone who could read it without
+  // signing in would not need to guess at the door it opens.
+  assert.equal(
+    (await call('/relay-key', {headers: {cookie: ''}})).status,
+    401,
+    'the relay token must never be handed to a stranger',
+  );
+
+  const keyResponse = await call('/relay-key');
+  assert.equal(keyResponse.status, 200);
+  const relayKey = (await keyResponse.json()) as {token: string; url: string};
+  assert.ok(relayKey.token.length >= 30, 'the token must be long enough to be a token');
+  assert.match(relayKey.url, /\/api\/relay$/, 'the panel shows the address that works');
+  ok('the relay token is issued to a signed-in browser, with its address');
+
+  const relayed = await call('/relay', {
+    method: 'POST',
+    body: JSON.stringify({token: relayKey.token, text: 'Is there anything on today?'}),
+  });
+  assert.equal(relayed.status, 200);
+  const spokenBack = (await relayed.json()) as {
+    reply: string;
+    spoken: string;
+    acted: unknown[];
+    open: string[];
+  };
+  assert.equal(spokenBack.reply, REPLY, 'the relay runs a real turn, not a stub of one');
+  ok('a valid token gets a full answer back');
+
+  // The whole point of one pipeline: what arrives by phone is in the same
+  // conversation as what was typed, or walking in the door and carrying on
+  // does not work.
+  const afterRelay = await getMessages();
+  assert.ok(
+    afterRelay.some((message) => message.text === 'Is there anything on today?'),
+    'a relayed message must land in the conversation like any other',
+  );
+  assert.equal(
+    afterRelay[afterRelay.length - 1]?.via,
+    'voice',
+    'a sentence spoken to a phone is a spoken sentence',
+  );
+  ok('relayed turns share the conversation, the memory and the input mode');
+
+  // Same tools, same guardrails. A second door into her that offered a
+  // different set of powers would be the bug this whole refactor exists to
+  // make impossible.
+  const relayTools = (stub.lastTools ?? []).map((tool) => tool.name).sort();
+  await chat('And through the browser?');
+  const browserTools = (stub.lastTools ?? []).map((tool) => tool.name).sort();
+  assert.deepEqual(relayTools, browserTools, 'both doors must reach the same Grace');
+  assert.match(stub.lastSystem, /never send|without asking/i, 'limits present either way');
+  ok('the phone and the browser get identical tools and the same hard limits');
+
+  // Markdown read aloud is noise: asterisks are pronounced by some voices, and
+  // nobody has ever wanted to hear a URL spoken.
+  const aloud = forSpeaking(
+    '**Two** things:\n- [the invoice](https://example.com/really/long) is due\n- `npm` broke',
+  );
+  assert.doesNotMatch(aloud, /[*`\[\]]/, 'no markup should survive into speech');
+  assert.doesNotMatch(aloud, /https?:/, 'no URL should be read out');
+  assert.match(aloud, /the invoice is due/, 'the words themselves must survive');
+  ok('replies are stripped of markup before anything speaks them');
+
+  // Siri hands over an empty string when it mishears silence, often enough
+  // that an error would be the usual outcome rather than the exception.
+  const misheard = await call('/relay', {
+    method: 'POST',
+    body: JSON.stringify({token: relayKey.token, text: '   '}),
+  });
+  assert.equal(misheard.status, 200, 'silence is not an error, it is a non-answer');
+  assert.match(
+    ((await misheard.json()) as {spoken: string}).spoken,
+    /didn.t catch/i,
+    'and it must be something sayable',
+  );
+  ok('a misheard silence gets an answer rather than an error tone');
+
+  const rolled = await call('/relay-roll', {method: 'POST'});
+  assert.equal(rolled.status, 200);
+  const {token: newToken} = (await rolled.json()) as {token: string};
+  assert.notEqual(newToken, relayKey.token, 'rolling must actually change it');
+
+  const stale = await call('/relay', {
+    method: 'POST',
+    body: JSON.stringify({token: relayKey.token, text: 'still there?'}),
+  });
+  assert.equal(stale.status, 401, 'the old token must stop working immediately');
+  ok('replacing the token locks out every shortcut carrying the old one');
 
   // ---- signing out actually closes the door ------------------------------
   await call('/logout', {method: 'POST'});
