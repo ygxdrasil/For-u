@@ -32,7 +32,14 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
     localStorage.setItem(KEY, theme);
+
+    // The phone's status bar takes its colour from this. Installed to the home
+    // screen she fills the screen, so a dark bar over a daylight app is the
+    // one seam that gives away that it is a web page.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'light' ? '#f2eff8' : '#06040c');
   }, [theme]);
 
   // Following the machine only holds until a choice is made here; after that

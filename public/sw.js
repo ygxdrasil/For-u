@@ -10,6 +10,17 @@
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
+/**
+ * A fetch handler that handles nothing.
+ *
+ * Required, and only required: a browser will not offer to install a site
+ * whose worker has no fetch listener, and it refuses silently — no prompt, no
+ * warning, nothing to read. Returning without calling respondWith leaves every
+ * request to the network exactly as if this were not here, which is the
+ * behaviour that matters. She must never serve a cached copy of herself.
+ */
+self.addEventListener('fetch', () => {});
+
 self.addEventListener('push', (event) => {
   let title = 'Grace';
   let body = 'Something wants you.';

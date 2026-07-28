@@ -30,6 +30,7 @@ import {useRooms} from './hooks/useRooms';
 import {useChats} from './hooks/useChats';
 import {MANY_CONVERSATIONS} from './lib/features';
 import {Sidebar} from './components/Sidebar';
+import {Install} from './components/Install';
 import {useTheme} from './hooks/useTheme';
 
 const MODE_LABEL: Record<Mode, string> = {
@@ -579,6 +580,8 @@ export default function App() {
         and "I told her to stop" look identical — which is the same mistake the
         voice guard made, and it took two rounds to find that one.
       */}
+      <Install />
+
       {grace.ambient.dormant && (
         <div className="glass mx-4 mb-2 flex items-center gap-3 p-3">
           <Moon size={14} className="accent shrink-0" />

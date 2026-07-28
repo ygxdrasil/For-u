@@ -1364,6 +1364,66 @@ try {
     'the first conversation stays, or there is nothing to be in',
   );
   ok('conversations are separate, the first is preserved, and none are removed');
+
+  // ---- she can be put on a phone -----------------------------------------
+  // Every one of these is refused *silently* by a browser when it is wrong:
+  // no prompt, no warning, nothing in the console. Which makes them precisely
+  // the things worth asserting rather than eyeballing once and forgetting.
+  const manifest = JSON.parse(
+    readFileSync('public/manifest.webmanifest', 'utf8'),
+  ) as {
+    display: string;
+    start_url: string;
+    icons: {src: string; sizes: string; purpose: string; type: string}[];
+  };
+
+  assert.equal(manifest.display, 'standalone', 'or it opens as a browser tab');
+  assert.equal(manifest.start_url, '/');
+
+  // A PNG at each of the two sizes every platform agrees on, and a maskable
+  // one so Android does not crop her into a shape with a corner missing.
+  for (const wanted of ['192x192', '512x512']) {
+    assert.ok(
+      manifest.icons.some(
+        (icon) => icon.sizes === wanted && icon.type === 'image/png',
+      ),
+      `a ${wanted} PNG icon is required for the install prompt`,
+    );
+  }
+  assert.ok(
+    manifest.icons.some((icon) => icon.purpose === 'maskable'),
+    'a maskable icon, or Android crops the artwork',
+  );
+
+  for (const icon of manifest.icons) {
+    assert.ok(existsSync(`public${icon.src}`), `${icon.src} is declared but missing`);
+  }
+  // Declared as PNG and actually PNG. A mislabelled file is accepted by the
+  // manifest parser and rejected by the icon loader, silently.
+  for (const png of ['icon-192.png', 'icon-512.png', 'icon-maskable-512.png']) {
+    const bytes = readFileSync(`public/${png}`);
+    assert.deepEqual(
+      [...bytes.subarray(0, 4)],
+      [0x89, 0x50, 0x4e, 0x47],
+      `${png} is not a PNG`,
+    );
+  }
+
+  // The worker has to exist and has to have a fetch handler, or the browser
+  // will not offer to install her — and will not say why.
+  const worker = readFileSync('public/sw.js', 'utf8');
+  assert.match(worker, /addEventListener\('fetch'/, 'no fetch handler, no install');
+  assert.doesNotMatch(
+    // A call, not the word — the comment explaining why there is no call
+    // would otherwise fail the check that there is no call.
+    worker,
+    /\.respondWith\(/,
+    'she must never serve a cached copy of herself',
+  );
+  // Registered on load rather than by the notifications panel, which is what
+  // made her uninstallable until you went looking for an unrelated setting.
+  assert.match(readFileSync('src/main.tsx', 'utf8'), /serviceWorker\.register/);
+  ok('she is installable on a phone, and every silent requirement is met');
   ok('listening runs on the audio thread, so a hidden tab still hears');
 
   // This is the only route that anything on the open internet can reach
