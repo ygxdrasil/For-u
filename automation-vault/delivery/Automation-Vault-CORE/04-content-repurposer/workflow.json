@@ -1,0 +1,523 @@
+{
+  "name": "Content Repurposer \u2014 Blog to LinkedIn, X & Instagram",
+  "nodes": [
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d001",
+      "name": "Sticky \u2014 Start Here",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1140,
+        60
+      ],
+      "parameters": {
+        "content": "## \ud83d\ude80 START HERE \u2014 Content Repurposer\n\nPaste in one blog post or newsletter \u2192 get a **LinkedIn post**, an **X thread**, and an **Instagram caption** written in the author's voice \u2192 all queued in Google Sheets, optionally emailed to you.\n\n**Setup (about 10 minutes):**\n1. Create a Google Sheet. Row 1 headers exactly:\n`Date | Source Title | LinkedIn Post | X Thread | Instagram Caption | Voice Summary | Status`\n2. Open **Save to Content Queue** \u2192 attach your Google Sheets OAuth2 credential \u2192 replace `YOUR_SHEET_ID` with the ID from your sheet URL (the long string between /d/ and /edit).\n3. Open **Generate Social Posts (AI)** \u2192 create a credential of type **Header Auth**, name it `Gemini API`:\n   - Name: `Authorization`\n   - Value: `Bearer YOUR_API_KEY`\n   Works with OpenAI, OpenRouter, Groq, or any OpenAI-compatible endpoint.\n4. Open **Email the Results** \u2192 attach your Gmail OAuth2 credential (optional \u2014 only used when the payload includes an `email`).\n5. Activate the workflow and copy the **Production URL** from the Content Webhook node.\n6. Test it:\n```\ncurl -X POST YOUR_WEBHOOK_URL \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"title\":\"My post\",\"email\":\"you@example.com\",\"content\":\"<paste 200+ characters of your article here>\"}'\n```\n7. Check the sheet \u2014 every run appends one row with all three assets, marked `Ready for review`.",
+        "height": 620,
+        "width": 440
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d002",
+      "name": "Sticky \u2014 AI Credential",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -80
+      ],
+      "parameters": {
+        "content": "## \ud83e\udd16 AI call \u2014 needs a credential\nThis node POSTs to `/v1/chat/completions` with **gemini-2.5-flash**.\n\nCreate: **Header Auth** credential named `Gemini API`\n- Name: `Authorization`\n- Value: `Bearer sk-...`\n\nSwap providers by changing only the URL:\n- OpenRouter: `https://openrouter.ai/api/v1/chat/completions`\n- Groq: `https://api.groq.com/openai/v1/chat/completions`\n\nThe system prompt inside this node is the product. Tweak the deliverable specs (post length, tweet count, hashtag rules) to match your house style \u2014 the voice-matching and no-fabrication guardrails should stay.",
+        "height": 320,
+        "width": 380
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d003",
+      "name": "Sticky \u2014 Content Queue",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        620,
+        -100
+      ],
+      "parameters": {
+        "content": "## \ud83d\udcca Content queue (Google Sheets)\nAppends one row per source piece.\n\nRow 1 headers must match exactly:\n`Date | Source Title | LinkedIn Post | X Thread | Instagram Caption | Voice Summary | Status`\n\n`Status` starts as `Ready for review` \u2014 a VA or the client edits in place, then posts manually or via a scheduler (Buffer, Metricool, Publer).",
+        "height": 260,
+        "width": 340
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d004",
+      "name": "Sticky \u2014 Optional Email",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        -100
+      ],
+      "parameters": {
+        "content": "## \u2709\ufe0f Optional email copy\nIf the webhook payload includes an `email` field, a formatted copy of all three assets is sent via Gmail.\n\nNo `email` in the payload \u2192 this branch is skipped automatically. Needs a **Gmail OAuth2** credential.",
+        "height": 200,
+        "width": 320
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d101",
+      "name": "Content Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        380
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "content-repurposer",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d102",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -440,
+        380
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "as-content-001",
+              "name": "content",
+              "value": "={{ ($json.body && $json.body.content ? $json.body.content : ($json.content || '')).toString().trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "as-title-002",
+              "name": "title",
+              "value": "={{ ($json.body && $json.body.title ? $json.body.title : ($json.title || 'Untitled piece')).toString().trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "as-email-003",
+              "name": "email",
+              "value": "={{ ($json.body && $json.body.email ? $json.body.email : ($json.email || '')).toString().trim() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d103",
+      "name": "Has Enough Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -220,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-len-001",
+              "leftValue": "={{ $json.content.length }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d104",
+      "name": "Generate Social Posts (AI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        280
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gemini-2.5-flash', temperature: 0.65, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are an elite content repurposing strategist and ghostwriter for busy founders, marketers, and creators. Your job: transform one piece of long-form content (blog post, newsletter, essay) into platform-native social content that sounds exactly like the original author wrote it.\\n\\nVOICE MATCHING\\n- Study the source first: sentence length, vocabulary, formality, humor, use of first or second person, punctuation habits.\\n- Every deliverable must read like the SAME person wrote it. Never fall back to generic marketing voice.\\n- Reuse distinctive phrases from the source where natural.\\n\\nHARD RULES\\n- Never invent facts, numbers, statistics, quotes, names, or claims that are not in the source text.\\n- If a detail is missing from the source, leave it out. Do not fabricate.\\n- No engagement bait. No like-if-you-agree. No follow-for-more spam.\\n- Stay professional. No hate, no politics beyond the source, no medical or financial advice beyond what the source states.\\n\\nDELIVERABLES\\n1) LINKEDIN POST: 150-250 words. Line one is a scroll-stopping hook that is true to the content, not clickbait. Short paragraphs of 1-2 sentences. One clear takeaway. End with a question or a soft call to action. Maximum 3 hashtags, only at the end.\\n2) X THREAD: 5-9 tweets. Tweet one is the hook and must earn the tap. Every tweet 270 characters or fewer and readable on its own. Number tweets from the second onward like 2/ 3/ and so on. Final tweet recaps the big idea and points back to the source. No hashtags inside the thread.\\n3) INSTAGRAM CAPTION: 100-150 words. Conversational, generous line breaks, emoji only if the tone of the source supports them. End with a call to action, then 5-8 relevant hashtags on the final line.\\n\\nOUTPUT FORMAT\\nRespond with ONLY valid JSON. No markdown fences. No commentary. Exact shape: {\"voice_summary\": \"two sentences describing the voice you matched\", \"linkedin_post\": \"string\", \"x_thread\": [\"tweet 1\", \"tweet 2\"], \"instagram_caption\": \"string\"}\\n\\nIf the source is too short, empty, or not usable prose (under roughly 150 words), respond instead with exactly: {\"error\": \"content_too_short\"}' }, { role: 'user', content: 'SOURCE TITLE: ' + $json.title + '\\n\\nSOURCE CONTENT:\\n' + $json.content } ] }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d105",
+      "name": "Parse AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        280
+      ],
+      "parameters": {
+        "jsCode": "// Safely parse the AI response into clean fields for the sheet, email, and webhook response.\nconst raw = $json.choices && $json.choices[0] && $json.choices[0].message ? $json.choices[0].message.content : '';\nlet parsed;\ntry {\n  // Strip accidental markdown fences before parsing\n  const cleaned = String(raw).replace(/```json/gi, '').replace(/```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  parsed = { error: 'parse_failed', raw_output: String(raw).slice(0, 500) };\n}\n\nconst input = $('Normalize Input').first().json;\n\nif (parsed.error || !parsed.linkedin_post) {\n  return [{ json: {\n    success: false,\n    error: parsed.error || 'missing_fields',\n    raw_output: parsed.raw_output || String(raw).slice(0, 500),\n    title: input.title,\n    email: input.email\n  } }];\n}\n\nconst thread = Array.isArray(parsed.x_thread) ? parsed.x_thread.map(t => String(t)) : [String(parsed.x_thread || '')];\n\nreturn [{ json: {\n  success: true,\n  title: input.title,\n  email: input.email,\n  created_at: new Date().toISOString().slice(0, 16).replace('T', ' '),\n  voice_summary: parsed.voice_summary || '',\n  linkedin_post: parsed.linkedin_post || '',\n  x_thread: thread.join('\\n\\n---\\n\\n'),\n  x_thread_count: thread.length,\n  instagram_caption: parsed.instagram_caption || '',\n  status: 'Ready for review'\n} }];"
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d106",
+      "name": "AI Output Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-ok-001",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d107",
+      "name": "Save to Content Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        180
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.created_at }}",
+            "Source Title": "={{ $json.title }}",
+            "LinkedIn Post": "={{ $json.linkedin_post }}",
+            "X Thread": "={{ $json.x_thread }}",
+            "Instagram Caption": "={{ $json.instagram_caption }}",
+            "Voice Summary": "={{ $json.voice_summary }}",
+            "Status": "={{ $json.status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Source Title",
+              "displayName": "Source Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "LinkedIn Post",
+              "displayName": "LinkedIn Post",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "X Thread",
+              "displayName": "X Thread",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Instagram Caption",
+              "displayName": "Instagram Caption",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Voice Summary",
+              "displayName": "Voice Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d108",
+      "name": "Send Email Copy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-email-001",
+              "leftValue": "={{ $('Parse AI Output').first().json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d109",
+      "name": "Email the Results",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        80
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse AI Output').first().json.email }}",
+        "subject": "={{ 'Your repurposed content: ' + $('Parse AI Output').first().json.title }}",
+        "emailType": "html",
+        "message": "={{ '<h2>Content repurposed: ' + $('Parse AI Output').first().json.title + '</h2><p><em>Voice matched: ' + $('Parse AI Output').first().json.voice_summary + '</em></p><h3>LinkedIn post</h3><p>' + $('Parse AI Output').first().json.linkedin_post.replace(/\\n/g, '<br>') + '</p><h3>X thread (' + $('Parse AI Output').first().json.x_thread_count + ' tweets)</h3><p>' + $('Parse AI Output').first().json.x_thread.replace(/\\n/g, '<br>') + '</p><h3>Instagram caption</h3><p>' + $('Parse AI Output').first().json.instagram_caption.replace(/\\n/g, '<br>') + '</p><hr><p>All three assets are saved in your content queue sheet with status <strong>Ready for review</strong>.</p>' }}",
+        "options": {},
+        "operation": "send"
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d110",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        180
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, title: $('Parse AI Output').first().json.title, voice_summary: $('Parse AI Output').first().json.voice_summary, linkedin_post: $('Parse AI Output').first().json.linkedin_post, x_thread: $('Parse AI Output').first().json.x_thread.split('\\n\\n---\\n\\n'), instagram_caption: $('Parse AI Output').first().json.instagram_caption, saved_to_sheet: true, emailed: $('Parse AI Output').first().json.email !== '' }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d111",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        560
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error || 'content_too_short', hint: ($json.error === 'parse_failed' || $json.error === 'missing_fields') ? 'The AI response could not be parsed into the expected fields. Check the AI credential, endpoint URL, and model in the Generate Social Posts (AI) node, then retry.' : 'POST JSON with a content field of at least 200 characters. Optional fields: title, email.' }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Content Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Has Enough Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Enough Content?": {
+      "main": [
+        [
+          {
+            "node": "Generate Social Posts (AI)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Social Posts (AI)": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "AI Output Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Output Valid?": {
+      "main": [
+        [
+          {
+            "node": "Save to Content Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Content Queue": {
+      "main": [
+        [
+          {
+            "node": "Send Email Copy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Copy?": {
+      "main": [
+        [
+          {
+            "node": "Email the Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email the Results": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

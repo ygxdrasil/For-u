@@ -1,0 +1,591 @@
+{
+  "name": "Cold Outreach Personalizer",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Run Daily at 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        340
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Get Leads From Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        340
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Filter: Needs Opener",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        340
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-website-present",
+              "leftValue": "={{ $json.Website }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "cond-opener-empty",
+              "leftValue": "={{ $json.Opener }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Loop Over Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        340
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "All Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        180
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "Fetch Company Homepage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        460
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.Website.trim().startsWith('http') ? $json.Website.trim() : 'https://' + $json.Website.trim() }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": true,
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Extract Website Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// Batch size is 1, so exactly one lead + one fetched page per run of this node.\nconst lead = $('Loop Over Leads').first().json;\nconst res = $input.first().json;\n\n// The HTTP node returns the page body in `data` (responseFormat: text).\n// If the fetch failed (onError: continue), there is no body at all.\nlet raw = '';\nif (typeof res.data === 'string') { raw = res.data; }\nelse if (typeof res.body === 'string') { raw = res.body; }\n\nlet title = '';\nlet metaDesc = '';\nlet text = '';\n\nif (raw) {\n  const t = raw.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i);\n  if (t) { title = t[1].replace(/\\s+/g, ' ').trim(); }\n\n  const m = raw.match(/<meta[^>]*name=[\"']description[\"'][^>]*content=[\"']([^\"']*)[\"']/i)\n    || raw.match(/<meta[^>]*content=[\"']([^\"']*)[\"'][^>]*name=[\"']description[\"']/i);\n  if (m) { metaDesc = m[1].trim(); }\n\n  text = raw\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<noscript[\\s\\S]*?<\\/noscript>/gi, ' ')\n    .replace(/<svg[\\s\\S]*?<\\/svg>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&[a-zA-Z#0-9]+;/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\n// Title + meta description first: usually the densest signal on a homepage.\nlet combined = [title, metaDesc, text].filter(Boolean).join(' | ').slice(0, 3500);\n\n// If there are fewer than 80 letters of real content, personalization would be\n// guesswork -> blank it so the IF node routes this lead to the fallback branch.\nif (combined.replace(/[^a-zA-Z]/g, '').length < 80) { combined = ''; }\n\nreturn [{ json: {\n  name: (lead.Name || '').toString().trim(),\n  company: (lead.Company || '').toString().trim(),\n  website: (lead.Website || '').toString().trim(),\n  row_number: lead.row_number,\n  website_text: combined\n} }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Website Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        460
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-has-text",
+              "leftValue": "={{ $json.website_text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "AI: Write Personalized Opener",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        360
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gemini-2.5-flash', temperature: 0.7, max_tokens: 300, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are an elite B2B cold email copywriter who has written openers for hundreds of campaigns. Your only job: write a genuinely specific 2-sentence cold email opener for one prospect, using ONLY the homepage text provided by the user.\\n\\nRULES:\\n1. Sentence 1 must reference something concrete this company actually does, sells, or claims on their homepage - a product, a niche, a customer type, or a positioning detail. Generic lines that could apply to any company are failure.\\n2. Sentence 2 bridges naturally toward why someone might be reaching out - a relevant pain, opportunity, or sharp question - WITHOUT pitching any specific product or service.\\n3. NEVER invent facts, metrics, awards, funding, clients, or news that are not in the provided text.\\n4. Banned phrases: \"I noticed\", \"I came across\", \"I was impressed\", \"I love what\", \"Hope this finds you well\", \"quick question\".\\n5. Max 45 words total. Second person (you, your team). Plain, conversational, professional. No emojis, no exclamation marks, no flattery cliches.\\n6. If a prospect first name is provided you may address them, but never invent a name.\\n\\nOUTPUT FORMAT: respond with ONLY a valid JSON object, no markdown fences, exactly this shape:\\n{\"opener\": \"<two sentences>\", \"company_summary\": \"<one plain sentence describing what the company does>\", \"confidence\": \"high|medium|low\"}\\n\\nSet confidence to \"low\" when the homepage text is vague or boilerplate and you could not find a truly specific detail - still return the safest accurate opener you can.' }, { role: 'user', content: 'Prospect first name: ' + ($json.name || 'unknown') + '\\nCompany: ' + ($json.company || 'unknown') + '\\nWebsite: ' + $json.website + '\\n\\nExtracted homepage text:\\n' + $json.website_text } ] }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        360
+      ],
+      "parameters": {
+        "jsCode": "// Safely parse the model reply. A malformed reply flags the row instead of\n// crashing the whole run.\nconst lead = $('Extract Website Text').first().json;\nconst res = $input.first().json;\n\nlet content = '';\nif (res && res.choices && res.choices[0] && res.choices[0].message) {\n  content = res.choices[0].message.content || '';\n}\n\n// Strip accidental markdown fences, then parse.\ncontent = content.trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();\n\nlet parsed = null;\ntry {\n  parsed = JSON.parse(content);\n} catch (e) {\n  const m = content.match(/\\{[\\s\\S]*\\}/);\n  if (m) {\n    try { parsed = JSON.parse(m[0]); } catch (e2) { parsed = null; }\n  }\n}\n\nif (!parsed || !parsed.opener) {\n  return [{ json: {\n    row_number: lead.row_number,\n    opener: '',\n    summary: '',\n    status: 'AI ERROR - will retry automatically on next run'\n  } }];\n}\n\nconst conf = String(parsed.confidence || 'medium').toLowerCase();\n\nreturn [{ json: {\n  row_number: lead.row_number,\n  opener: String(parsed.opener).replace(/\\s+/g, ' ').trim(),\n  summary: String(parsed.company_summary || '').replace(/\\s+/g, ' ').trim(),\n  status: conf === 'low' ? 'REVIEW - low confidence' : 'READY'\n} }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0011-4000-8000-000000000011",
+      "name": "Fallback: Flag For Review",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1580,
+        580
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fb-row",
+              "name": "row_number",
+              "value": "={{ $json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "fb-opener",
+              "name": "opener",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "fb-summary",
+              "name": "summary",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "fb-status",
+              "name": "status",
+              "value": "SKIPPED - site unreachable or too little text",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0012-4000-8000-000000000012",
+      "name": "Save Opener To Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2020,
+        460
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Opener": "={{ $json.opener }}",
+            "Status": "={{ $json.status }}",
+            "Summary": "={{ $json.summary }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Opener",
+              "displayName": "Opener",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0013-4000-8000-000000000013",
+      "name": "Pace Requests (2s)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2240,
+        460
+      ],
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0014-4000-8000-000000000014",
+      "name": "Sticky: Start Here",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        20
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 420,
+        "height": 660,
+        "content": "## START HERE - Cold Outreach Personalizer\n\n**What it does:** reads leads from Google Sheets, visits each company website, has AI write a genuinely specific 2-sentence opener, then writes it back to the sheet with a status flag.\n\n**Setup (about 10 minutes):**\n\n1. Create a Google Sheet with a tab named **Leads** and these exact headers in row 1:\n`Name | Company | Website | Opener | Status | Summary`\n2. Open both Google Sheets nodes, attach your **Google Sheets OAuth2** credential, and paste your **Sheet ID** (the long string in the sheet URL) into *Document ID* on both.\n3. Create a **Header Auth** credential named `Gemini API`:\nName = `Authorization`, Value = `Bearer sk-YOUR_KEY`.\nAttach it to the **AI: Write Personalized Opener** node.\n4. Add 2-3 test leads. Website can be plain like `acme.com` - `https://` is added automatically. Leave Opener empty.\n5. Click **Execute workflow** and watch openers land in the sheet.\n6. Activate the workflow. It runs daily at 08:00 and only processes rows with an empty **Opener**, so re-runs never overwrite or duplicate.\n\n**Status values written:**\nREADY / REVIEW - low confidence / SKIPPED / AI ERROR"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0015-4000-8000-000000000015",
+      "name": "Sticky: Google Sheets",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        140,
+        40
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 400,
+        "height": 240,
+        "content": "## Google Sheets (2 nodes)\n\nBoth nodes need the same Sheet ID and a **Google Sheets OAuth2** credential.\n\n- **Read**: pulls every row, then the Filter keeps only rows that have a Website and an empty Opener. That makes the workflow re-run safe - processed leads are never touched twice.\n- **Update**: matches on the hidden `row_number` n8n returns with every row, so each opener is written back to exactly the right lead."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0016-4000-8000-000000000016",
+      "name": "Sticky: AI Node",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        20
+      ],
+      "parameters": {
+        "color": 5,
+        "width": 460,
+        "height": 300,
+        "content": "## The AI opener (the money node)\n\n- **Credential**: Header Auth named `Gemini API` - Name: `Authorization`, Value: `Bearer YOUR_KEY`.\n- Works with **any OpenAI-compatible provider**: swap the URL (e.g. `https://openrouter.ai/api/v1/chat/completions`) and the `model` value inside the JSON body.\n- Cost with `gemini-2.5-flash`: roughly $0.001 per lead.\n- The system prompt bans cliches (\"I noticed...\", \"I was impressed...\") and forbids inventing facts. Edit it to add your tone and what sentence 2 should bridge toward (your actual offer).\n- The model must answer in strict JSON. **Parse AI Response** has a try/catch fallback, so a malformed reply flags the row as AI ERROR instead of killing the run."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0017-4000-8000-000000000017",
+      "name": "Sticky: Loop and Failures",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        820,
+        680
+      ],
+      "parameters": {
+        "color": 7,
+        "width": 480,
+        "height": 220,
+        "content": "## Loop, pacing and dead sites\n\n- Leads are processed one at a time; the 2-second Wait keeps you polite to target sites and safely under AI rate limits.\n- Homepage fetch: 15s timeout, browser User-Agent, follows redirects. A failed or JS-only site does **not** stop the run - the lead routes to the fallback and gets `Status = SKIPPED` so a human can write that one by hand.\n- Sites with under ~80 letters of real text are also skipped: personalizing from nothing produces generic slop, and generic slop burns your domain reputation."
+      }
+    }
+  ],
+  "connections": {
+    "Run Daily at 8am": {
+      "main": [
+        [
+          {
+            "node": "Get Leads From Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Leads From Sheet": {
+      "main": [
+        [
+          {
+            "node": "Filter: Needs Opener",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Needs Opener": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Leads": {
+      "main": [
+        [
+          {
+            "node": "All Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Company Homepage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Company Homepage": {
+      "main": [
+        [
+          {
+            "node": "Extract Website Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Website Text": {
+      "main": [
+        [
+          {
+            "node": "Website Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Website Content?": {
+      "main": [
+        [
+          {
+            "node": "AI: Write Personalized Opener",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Flag For Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Write Personalized Opener": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Save Opener To Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback: Flag For Review": {
+      "main": [
+        [
+          {
+            "node": "Save Opener To Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Opener To Sheet": {
+      "main": [
+        [
+          {
+            "node": "Pace Requests (2s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pace Requests (2s)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

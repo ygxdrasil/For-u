@@ -1,0 +1,720 @@
+{
+  "name": "Review & Testimonial Collector",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Daily Trigger (9 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Read Completed Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Jobs"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Find Jobs Due",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ============ CONFIG - EDIT ME ============\nconst DAYS_AFTER_COMPLETION = 3;   // send the ask N days after the job is done\nconst MAX_AGE_DAYS = 30;           // never chase jobs older than this (stale = awkward)\nconst BUSINESS_NAME = 'Acme Home Services';\nconst OWNER_NAME = 'Alex';\n// Link to YOUR feedback form (Tally / Fillout / your site). The form should POST\n// name, email, rating, message to this workflow's 'Review Reply Webhook'.\nconst FEEDBACK_URL = 'https://YOUR-FEEDBACK-FORM-URL';\n// ==========================================\n\nconst out = [];\nconst today = new Date();\n\nfor (const item of $input.all()) {\n  const j = item.json;\n  const status = String(j['Status'] || '').trim().toLowerCase();\n  const email = String(j['Email'] || '').trim();\n  const alreadySent = String(j['Review Requested'] || '').trim();\n  const rawDate = String(j['Completion Date'] || '').trim();\n\n  if (status !== 'completed') continue;          // only finished jobs\n  if (!email || !email.includes('@')) continue;  // no valid email -> nothing to send\n  if (alreadySent) continue;                     // already asked -> NEVER double-send\n  if (!rawDate) continue;                        // no completion date -> can't compute timing\n\n  const done = new Date(rawDate);\n  if (isNaN(done.getTime())) continue;           // unparseable date -> skip safely\n\n  const days = Math.floor((today - done) / 86400000);\n  if (days < DAYS_AFTER_COMPLETION || days > MAX_AGE_DAYS) continue;\n\n  const name = String(j['Customer Name'] || '').trim();\n  out.push({ json: {\n    job_id: String(j['Job ID'] || '').trim(),\n    customer_name: name,\n    first_name: name.split(' ')[0] || 'there',\n    email: email,\n    job_type: String(j['Job Type'] || 'recent job').trim(),\n    technician: String(j['Technician'] || '').trim(),\n    completion_date: rawDate,\n    days_since: days,\n    business_name: BUSINESS_NAME,\n    owner_name: OWNER_NAME,\n    feedback_url: FEEDBACK_URL\n  }});\n}\n\n// Empty array = nothing due today; downstream nodes simply don't run.\nreturn out;"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "AI: Write Review Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gemini-2.5-flash', temperature: 0.7, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are the review-request email writer for ' + $json.business_name + ', a local service business. You write short, warm, genuinely personal follow-up emails asking a customer how their recent job went.\\n\\nRULES:\\n- Under 120 words. Plain text only: no HTML, no markdown, no emojis.\\n- Reference the specific job details you are given. NEVER invent details, prices, discounts, or promises that were not provided.\\n- Friendly and human, never salesy or pushy. Exactly one ask: tell us how it went.\\n- Include the feedback link you are given EXACTLY as provided, on its own line, introduced naturally (for example: It takes 30 seconds:).\\n- No placeholder text like [Name] or [Company]. Use the real values provided. If a value is missing, write around it naturally.\\n- If a technician name is provided, mention them once by first name.\\n- Sign off with the owner name and business name provided.\\n\\nOUTPUT: strict JSON only, no commentary: {\"subject\": string, \"body\": string}. Subject under 8 words, sentence case, no clickbait. Body uses \\\\n for line breaks.' }, { role: 'user', content: 'Customer first name: ' + $json.first_name + '\\nJob type: ' + $json.job_type + '\\nCompleted on: ' + $json.completion_date + ' (' + $json.days_since + ' days ago)\\nTechnician: ' + ($json.technician || 'not specified') + '\\nBusiness name: ' + $json.business_name + '\\nOwner name: ' + $json.owner_name + '\\nFeedback link: ' + $json.feedback_url } ] }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Parse Email Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Safely parse the AI's JSON. If the model returns junk, fall back to a\n// solid hand-written template so the send NEVER fails or goes out broken.\nconst jobs = $('Find Jobs Due').all();\n\nreturn $input.all().map((item, i) => {\n  const job = jobs[i] ? jobs[i].json : {};\n  let subject = 'How did we do, ' + (job.first_name || 'there') + '?';\n  let body = 'Hi ' + (job.first_name || 'there') + ',\\n\\nThanks for choosing ' + (job.business_name || 'us') + ' for your ' + (job.job_type || 'recent job') + '. We would love to hear how everything went - it takes 30 seconds:\\n' + (job.feedback_url || '') + '\\n\\nThanks again,\\n' + (job.owner_name || '') + '\\n' + (job.business_name || '');\n  let used_fallback_template = true;\n\n  try {\n    let raw = ((item.json.choices || [])[0] || {}).message ? item.json.choices[0].message.content : '';\n    raw = String(raw || '').replace(/```json/gi, '').replace(/```/g, '').trim();\n    const parsed = JSON.parse(raw);\n    if (parsed.subject && parsed.body) {\n      subject = String(parsed.subject);\n      body = String(parsed.body);\n      used_fallback_template = false;\n    }\n  } catch (e) {\n    // keep the safe fallback template\n  }\n\n  return { json: Object.assign({}, job, { subject, body, used_fallback_template }) };\n});"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "Send Review Request",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false
+        },
+        "operation": "send"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Mark Review Requested",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Jobs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Job ID": "={{ $('Parse Email Draft').item.json.job_id }}",
+            "Review Requested": "={{ $now.toFormat('yyyy-MM-dd') }}"
+          },
+          "matchingColumns": [
+            "Job ID"
+          ],
+          "schema": [
+            {
+              "id": "Job ID",
+              "displayName": "Job ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Review Requested",
+              "displayName": "Review Requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Review Reply Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        420
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "review-feedback",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "Normalize Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// ============ CONFIG - EDIT ME ============\nconst OWNER_EMAIL = 'owner@yourbusiness.com';   // where private alerts go\nconst OWNER_NAME = 'Alex';\nconst BUSINESS_NAME = 'Acme Home Services';\n// Your public review link (Google Business Profile 'write a review' URL works great)\nconst PUBLIC_REVIEW_LINK = 'https://g.page/r/YOUR_GOOGLE_REVIEW_ID/review';\n// ==========================================\n\n// Accept JSON bodies, form posts, or query params - form tools all differ.\nconst hook = $json;\nconst src = (hook.body && Object.keys(hook.body).length) ? hook.body : (hook.query || {});\n\nconst pick = (...keys) => {\n  for (const k of keys) {\n    const v = src[k];\n    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();\n  }\n  return '';\n};\n\nconst name = pick('name', 'Name', 'customer_name', 'full_name');\nconst email = pick('email', 'Email', 'customer_email').toLowerCase();\nconst message = pick('message', 'Message', 'feedback', 'Feedback', 'comments', 'review', 'text');\nconst ratingRaw = pick('rating', 'Rating', 'stars', 'score');\nconst rating = (ratingRaw && !isNaN(Number(ratingRaw)))\n  ? Math.max(1, Math.min(5, Math.round(Number(ratingRaw))))\n  : null;\n\n// A reply with neither text nor a rating is noise (bots, empty form submits).\nconst valid = Boolean(message || rating);\n\nreturn [{ json: {\n  name: name,\n  first_name: name.split(' ')[0] || 'there',\n  email: email,\n  message: message,\n  rating: rating,\n  valid: valid,\n  response_message: valid ? 'Feedback received - thank you!' : 'No rating or message found in the payload.',\n  owner_email: OWNER_EMAIL,\n  owner_name: OWNER_NAME,\n  business_name: BUSINESS_NAME,\n  review_link: PUBLIC_REVIEW_LINK\n} }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "IF Valid Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-valid-1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0011-4000-8000-000000000011",
+      "name": "AI: Sentiment Sort",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        340
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gemini-2.5-flash', temperature: 0.1, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are a customer-feedback triage analyst for a local service business. You read ONE piece of customer feedback (free text and/or a 1-5 star rating) and classify it so an automation can route it.\\n\\nRULES:\\n- Judge ONLY the text and rating provided. Never invent facts, names, or quotes.\\n- A rating of 1-2 is negative regardless of wording. A rating of 3 is neutral unless the text is clearly delighted or clearly upset. A rating of 4-5 is positive unless the text contains a real complaint.\\n- If the message is ambiguous, empty, or possibly sarcastic, choose neutral. When torn between two labels, pick the more negative one - it is safer for the owner to see it than to spam an unhappy customer with a review ask.\\n- testimonial_quote must be a VERBATIM sentence copied from the customer message that would look great in marketing. If nothing qualifies, return an empty string. Never edit or improve the quote.\\n- summary is ONE factual sentence for the business owner. Professional tone, no dramatics.\\n- suggested_action is one short imperative sentence (for example: Call the customer today and offer to redo the caulking.).\\n\\nOUTPUT strict JSON only, no commentary: {\"sentiment\": \"positive\" | \"neutral\" | \"negative\", \"confidence\": number between 0 and 1, \"summary\": string, \"testimonial_quote\": string, \"suggested_action\": string}' }, { role: 'user', content: 'Star rating: ' + ($json.rating || 'none given') + '\\nCustomer name: ' + ($json.name || 'unknown') + '\\nFeedback message: ' + ($json.message || '(no text - rating only)') } ] }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a1b2c3d4-0012-4000-8000-000000000012",
+      "name": "Parse Sentiment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        340
+      ],
+      "parameters": {
+        "jsCode": "// Safely parse the classifier output. Fail-safe design: if the AI response\n// can't be parsed, we treat it as NEGATIVE so it routes to the owner and a\n// human looks at it. Nothing ever gets silently lost.\nconst reply = $('Normalize Reply').first().json;\nconst item = $input.first();\n\nlet sentiment = 'negative';\nlet confidence = 0;\nlet summary = 'AI response could not be parsed - routing to owner for manual review.';\nlet testimonial_quote = '';\nlet suggested_action = 'Read the raw feedback below and reply personally.';\nlet ai_parse_error = true;\n\ntry {\n  let raw = ((item.json.choices || [])[0] || {}).message ? item.json.choices[0].message.content : '';\n  raw = String(raw || '').replace(/```json/gi, '').replace(/```/g, '').trim();\n  const p = JSON.parse(raw);\n  if (['positive', 'neutral', 'negative'].includes(p.sentiment)) {\n    sentiment = p.sentiment;\n    confidence = Number(p.confidence) || 0;\n    summary = String(p.summary || '');\n    testimonial_quote = String(p.testimonial_quote || '');\n    suggested_action = String(p.suggested_action || '');\n    ai_parse_error = false;\n  }\n} catch (e) {\n  // keep fail-safe defaults\n}\n\n// Only send the public-review ask when the customer is CLEARLY happy AND we\n// actually have an email address to send it to. Neutral goes to the owner.\nconst is_happy = !ai_parse_error\n  && sentiment === 'positive'\n  && Boolean(reply.email)\n  && (reply.rating === null || reply.rating >= 4);\n\nreturn [{ json: Object.assign({}, reply, {\n  sentiment: sentiment,\n  confidence: confidence,\n  summary: summary,\n  testimonial_quote: testimonial_quote,\n  suggested_action: suggested_action,\n  ai_parse_error: ai_parse_error,\n  is_happy: is_happy,\n  routed_to: is_happy ? 'public review ask' : 'owner alert'\n}) }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0013-4000-8000-000000000013",
+      "name": "Log Feedback",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        340
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Feedback"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+            "Name": "={{ $json.name }}",
+            "Email": "={{ $json.email }}",
+            "Rating": "={{ $json.rating }}",
+            "Message": "={{ $json.message }}",
+            "Sentiment": "={{ $json.sentiment }}",
+            "Confidence": "={{ $json.confidence }}",
+            "Summary": "={{ $json.summary }}",
+            "Testimonial Quote": "={{ $json.testimonial_quote }}",
+            "Routed To": "={{ $json.routed_to }}"
+          },
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Rating",
+              "displayName": "Rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Message",
+              "displayName": "Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Sentiment",
+              "displayName": "Sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Confidence",
+              "displayName": "Confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Testimonial Quote",
+              "displayName": "Testimonial Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Routed To",
+              "displayName": "Routed To",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0014-4000-8000-000000000014",
+      "name": "IF Happy Customer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        340
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-happy-1",
+              "leftValue": "={{ $json.is_happy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0015-4000-8000-000000000015",
+      "name": "Send Public Review Ask",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        240
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ 'Thank you, ' + $json.first_name + ' - one tiny favor?' }}",
+        "emailType": "text",
+        "message": "=Hi {{ $json.first_name }},\n\nThank you so much for the kind words - feedback like yours is what keeps a small business going.\n\nIf you have 60 seconds, would you mind sharing that experience as a public review? It genuinely helps more than you know:\n{{ $json.review_link }}\n\n{{ $json.testimonial_quote ? 'PS: We especially loved this line from your note: ' + $json.testimonial_quote : '' }}\n\nWith thanks,\n{{ $json.owner_name }}\n{{ $json.business_name }}",
+        "options": {
+          "appendAttribution": false
+        },
+        "operation": "send"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0016-4000-8000-000000000016",
+      "name": "Alert Owner Privately",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        440
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.owner_email }}",
+        "subject": "={{ 'Heads up: ' + ($json.sentiment === 'negative' ? 'unhappy' : 'lukewarm') + ' feedback from ' + ($json.name || $json.email || 'a customer') }}",
+        "emailType": "text",
+        "message": "=A feedback reply just came in that needs your eyes. It was NOT sent a public review ask.\n\nCustomer: {{ $json.name || 'unknown' }}\nEmail: {{ $json.email || 'not provided' }}\nRating: {{ $json.rating !== null ? $json.rating + ' / 5' : 'none given' }}\nSentiment: {{ $json.sentiment }} (confidence {{ $json.confidence }})\n\nAI summary: {{ $json.summary }}\nSuggested next step: {{ $json.suggested_action }}\n\nFull message:\n{{ $json.message || '(rating only - no text)' }}\n\n- Review & Testimonial Collector",
+        "options": {
+          "appendAttribution": false
+        },
+        "operation": "send"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0017-4000-8000-000000000017",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        560
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: $json.valid === false ? 'ignored' : 'ok', message: $json.response_message || 'Feedback received - thank you!' }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0018-4000-8000-000000000018",
+      "name": "Sticky Note - Start Here",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -80
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 460,
+        "height": 700,
+        "content": "## START HERE - Review & Testimonial Collector\n\n**What it does:** Every morning it finds jobs completed N days ago, sends each customer a personalized AI-written 'how did we do?' email. A webhook catches their feedback: happy customers get a public-review ask, unhappy ones alert you privately - BEFORE they vent on Google.\n\n**Setup (about 10 minutes):**\n1. Make a Google Sheet with two tabs: `Jobs` and `Feedback` (exact columns on the sticky above the Sheets node).\n2. Attach your **Google Sheets** credential to the 3 Sheets nodes and replace `YOUR_GOOGLE_SHEET_ID` in each (the long ID in your sheet's URL).\n3. Attach your **Gmail** credential to the 3 email nodes.\n4. Create a **Header Auth** credential called `Gemini API` (details on the AI sticky) and attach it to both AI nodes.\n5. Open **Find Jobs Due** and **Normalize Reply** - edit the CONFIG blocks at the top: business name, owner email, public review link, feedback form URL, days to wait.\n6. Point your feedback form (Tally, Fillout, your website form) at the webhook URL so it POSTs name / email / rating / message.\n7. Activate the workflow.\n8. Test: add a row to `Jobs` with Status = `completed` and a Completion Date 3+ days ago, then click 'Execute workflow' on the schedule trigger."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0019-4000-8000-000000000019",
+      "name": "Sticky Note - Sheet Layout",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -320
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 520,
+        "height": 300,
+        "content": "## Google Sheet layout\n\n**`Jobs` tab** (read every morning) - header row:\n`Job ID | Customer Name | Email | Job Type | Completion Date | Technician | Status | Review Requested`\n- Status must be `completed` to qualify.\n- `Review Requested` is stamped by this workflow. Leave it blank - it is what prevents double-sends.\n- Completion Date: `YYYY-MM-DD` is safest.\n\n**`Feedback` tab** (written by the webhook flow) - header row:\n`Date | Name | Email | Rating | Message | Sentiment | Confidence | Summary | Testimonial Quote | Routed To`"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0020-4000-8000-000000000020",
+      "name": "Sticky Note - AI Credential",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        740,
+        -320
+      ],
+      "parameters": {
+        "color": 5,
+        "width": 460,
+        "height": 300,
+        "content": "## AI nodes - one credential for both\n\nBoth AI nodes POST to OpenAI's `/v1/chat/completions`.\n\n1. Create credential type **Header Auth**, name it `Gemini API`:\n   - Name: `Authorization`\n   - Value: `Bearer sk-YOUR_KEY`\n2. Attach it to **AI: Write Review Request** and **AI: Sentiment Sort**.\n\nWorks with ANY OpenAI-compatible provider (OpenRouter, Groq, local) - just swap the URL and model in the node.\n\nThe system prompts are the product. Tweak the tone rules freely, but keep the strict-JSON output lines intact - downstream code nodes parse them (with safe fallbacks)."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0021-4000-8000-000000000021",
+      "name": "Sticky Note - Webhook",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        660
+      ],
+      "parameters": {
+        "color": 3,
+        "width": 640,
+        "height": 320,
+        "content": "## Feedback webhook (the reply catcher)\n\nPOST `https://YOUR-N8N-URL/webhook/review-feedback` with JSON or form fields:\n`name`, `email`, `rating` (1-5), `message`. Point any form tool here.\n\n- Invalid payloads (no rating AND no message) get a polite response and are dropped - no junk in your sheet.\n- If the AI reply can't be parsed, the feedback routes to the OWNER alert on purpose. Nothing is ever lost.\n- Neutral / mixed sentiment also goes to the owner - only clearly happy customers get the public-review ask.\n\nTest with curl:\n`curl -X POST https://YOUR-N8N-URL/webhook/review-feedback -H \"Content-Type: application/json\" -d '{\"name\":\"Sam Lee\",\"email\":\"sam@example.com\",\"rating\":5,\"message\":\"Fantastic job, spotless work!\"}'`"
+      }
+    }
+  ],
+  "connections": {
+    "Daily Trigger (9 AM)": {
+      "main": [
+        [
+          {
+            "node": "Read Completed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Completed Jobs": {
+      "main": [
+        [
+          {
+            "node": "Find Jobs Due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Jobs Due": {
+      "main": [
+        [
+          {
+            "node": "AI: Write Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Write Review Request": {
+      "main": [
+        [
+          {
+            "node": "Parse Email Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email Draft": {
+      "main": [
+        [
+          {
+            "node": "Send Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Review Request": {
+      "main": [
+        [
+          {
+            "node": "Mark Review Requested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review Reply Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reply": {
+      "main": [
+        [
+          {
+            "node": "IF Valid Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Valid Reply?": {
+      "main": [
+        [
+          {
+            "node": "AI: Sentiment Sort",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Sentiment Sort": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Log Feedback",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Feedback": {
+      "main": [
+        [
+          {
+            "node": "IF Happy Customer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Happy Customer?": {
+      "main": [
+        [
+          {
+            "node": "Send Public Review Ask",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert Owner Privately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

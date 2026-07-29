@@ -1,0 +1,14 @@
+THE AUTOMATION VAULT — LICENSE (one license per person)
+
+YOU MAY:
+- Import and run all workflows for your own business, on any number of n8n instances you control.
+- Deploy, configure, and customize any workflow for clients as a paid service. No per-client fees, no install limits.
+- Modify, extend, and combine the workflows for your own or your clients' use.
+
+YOU MAY NOT:
+- Resell, redistribute, share, or give away the workflow JSON files, setup guides, or Playbook, in whole or in part, modified or not.
+- Include these files in any product, template library, course, community vault, or bundle - free or paid.
+- Claim authorship of the original workflows for the purpose of reselling them as templates.
+
+Plain version: use them everywhere, sell the outcome to anyone, never sell the files.
+Questions: reply to your Gumroad receipt email.

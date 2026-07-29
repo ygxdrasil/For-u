@@ -1,0 +1,457 @@
+{
+  "name": "AI Email Triage & Draft Replies",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -280,
+        40
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "in:inbox"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Extract & Clean Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -60,
+        40
+      ],
+      "parameters": {
+        "jsCode": "// Normalizes Gmail Trigger output into clean fields for the AI.\n// Works whether the trigger's 'Simplify' toggle is ON or OFF.\nconst MAX_BODY_CHARS = 4000; // caps token cost per email\nconst results = [];\n\nconst decode = (data) => {\n  try {\n    return Buffer.from(String(data).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');\n  } catch (e) {\n    return '';\n  }\n};\n\nconst findTextPart = (p) => {\n  if (!p) return null;\n  if (p.mimeType === 'text/plain' && p.body && p.body.data) return p;\n  if (Array.isArray(p.parts)) {\n    for (const sub of p.parts) {\n      const hit = findTextPart(sub);\n      if (hit) return hit;\n    }\n  }\n  return null;\n};\n\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  let from = '';\n  let subject = '';\n  let body = '';\n\n  // Raw Gmail API shape (Simplify OFF)\n  if (j.payload && Array.isArray(j.payload.headers)) {\n    const header = (name) => (j.payload.headers.find((h) => String(h.name).toLowerCase() === name) || {}).value || '';\n    from = header('from');\n    subject = header('subject');\n    const part = findTextPart(j.payload) || (j.payload.body && j.payload.body.data ? j.payload : null);\n    if (part) body = decode(part.body.data);\n  }\n\n  // Simplified shape fallbacks (Simplify ON)\n  if (!from) from = (j.from && j.from.text) ? j.from.text : (j.From || '');\n  if (!subject) subject = j.subject || j.Subject || '';\n  if (!body) body = j.text || j.textPlain || j.snippet || '';\n\n  // Drop quoted reply history, collapse whitespace, cap length\n  body = String(body)\n    .split(/\\r?\\n(?:>|On .{5,80} wrote:)/)[0]\n    .replace(/[\\t ]+/g, ' ')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim()\n    .slice(0, MAX_BODY_CHARS);\n\n  const emailMatch = String(from).match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/);\n\n  results.push({\n    json: {\n      messageId: j.id || '',\n      threadId: j.threadId || '',\n      fromRaw: String(from).trim(),\n      fromEmail: emailMatch ? emailMatch[0].toLowerCase() : '',\n      subject: String(subject).trim(),\n      bodyText: body,\n      snippet: j.snippet || '',\n      receivedAt: j.internalDate ? new Date(Number(j.internalDate)).toISOString() : new Date().toISOString()\n    }\n  });\n}\n\nreturn results;"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Has Usable Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-body-not-empty",
+              "leftValue": "={{ $json.bodyText }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "cond-subject-not-empty",
+              "leftValue": "={{ $json.subject }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "AI Triage & Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        380,
+        -60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gemini-2.5-flash', temperature: 0.4, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are an elite email triage assistant embedded in an automated inbox pipeline for a small business. For each inbound email you do two jobs: (1) classify it into exactly one category, and (2) write a reply draft that a human will review and send. CATEGORIES: sales_lead = the sender shows buying interest (pricing, quote, demo, availability, wants to hire or partner). support = an existing customer or user needs help (question, bug, complaint, billing issue, how-to). urgent = time-critical or high-stakes regardless of source (outage, deadline within 48 hours, angry escalation, legal or payment problem, anything where a slow reply causes real damage); urgent OUTRANKS every other category. spam = unsolicited marketing, mass cold outreach, link bait, phishing, or anything with no genuine reason to reply. DRAFT RULES: Write in the same language as the email. Professional, warm, concise: 60 to 140 words in short paragraphs. Greet the sender by first name only if it is clearly present, otherwise open with Hello. NEVER invent facts, prices, discounts, dates, availability, or commitments; if key information is missing, the draft must ask for it. For sales_lead: thank them, confirm interest, ask one or two qualifying questions, and propose a quick call. For support: acknowledge the issue, restate it in one line so they feel heard, say it is being looked into, and request any missing details such as an order number or screenshots. For urgent: acknowledge the urgency in the first sentence and commit to a fast follow-up without promising a specific resolution. For spam: draft_subject and draft_body MUST be empty strings. End every draft with Best regards and nothing after it; the signature is added by the mailbox. OUTPUT FORMAT: respond with STRICT JSON only, no markdown, no code fences, no commentary, using exactly these keys: category (one of sales_lead, support, urgent, spam), confidence (number between 0 and 1), urgency_reason (one short sentence, empty string unless urgent), summary (plain text, 25 words max), draft_subject (string, usually Re: plus the original subject), draft_body (string with real line breaks).' }, { role: 'user', content: 'FROM: ' + $json.fromRaw + '\\nSUBJECT: ' + $json.subject + '\\nRECEIVED: ' + $json.receivedAt + '\\n\\nEMAIL BODY:\\n' + ($json.bodyText || $json.snippet || '(empty body)') } ] }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Skip (No Content)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        380,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        -60
+      ],
+      "parameters": {
+        "jsCode": "// Safely parses the AI JSON and maps each category to a Gmail label.\n// ================= EDIT ME: paste your Gmail label IDs =================\n// How to find them: see the 'Finding Gmail label IDs' sticky note.\nconst LABEL_MAP = {\n  sales_lead: 'PASTE_SALES_LEAD_LABEL_ID',\n  support: 'PASTE_SUPPORT_LABEL_ID',\n  urgent: 'PASTE_URGENT_LABEL_ID',\n  spam: 'PASTE_SPAM_LABEL_ID'\n};\n// =======================================================================\nconst ALLOWED = ['sales_lead', 'support', 'urgent', 'spam'];\nconst items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  let src = {};\n  try {\n    src = $('Extract & Clean Email').itemMatching(i).json;\n  } catch (e) {\n    // keep empty, fall back to defaults below\n  }\n\n  const resp = items[i].json || {};\n  const raw = resp.choices && resp.choices[0] && resp.choices[0].message ? String(resp.choices[0].message.content || '') : '';\n\n  let ai = null;\n  try {\n    ai = JSON.parse(raw);\n  } catch (e) {\n    // Model wrapped JSON in prose or fences: grab the outermost object\n    const match = raw.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      try { ai = JSON.parse(match[0]); } catch (e2) { ai = null; }\n    }\n  }\n\n  const parseFailed = !ai || typeof ai !== 'object';\n  if (parseFailed) ai = {};\n\n  let category = String(ai.category || '').toLowerCase().trim().replace(/[\\s-]+/g, '_');\n  if (!ALLOWED.includes(category)) category = 'support'; // safe default: a human reviews every draft anyway\n\n  const draftSubject = String(ai.draft_subject || '').trim() || ('Re: ' + (src.subject || 'your email'));\n  let draftBody = String(ai.draft_body || '').trim();\n  if (!draftBody && category !== 'spam') {\n    draftBody = 'Hello,\\n\\nThank you for your email. We have received it and will get back to you shortly.\\n\\nBest regards,';\n  }\n\n  results.push({\n    json: {\n      messageId: src.messageId || '',\n      threadId: src.threadId || '',\n      fromRaw: src.fromRaw || '',\n      fromEmail: src.fromEmail || '',\n      subject: src.subject || '',\n      receivedAt: src.receivedAt || '',\n      category: category,\n      confidence: typeof ai.confidence === 'number' ? ai.confidence : 0,\n      summary: String(ai.summary || src.snippet || '').slice(0, 300),\n      urgencyReason: String(ai.urgency_reason || ''),\n      draftSubject: draftSubject,\n      draftBody: draftBody,\n      labelId: LABEL_MAP[category] || '',\n      isUrgent: category === 'urgent',\n      parseFailed: parseFailed\n    }\n  });\n}\n\nreturn results;"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Is Spam?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        820,
+        -60
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-is-spam",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "spam",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Create Draft Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1040,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $json.draftSubject }}",
+        "emailType": "text",
+        "message": "={{ $json.draftBody }}",
+        "options": {
+          "sendTo": "={{ $json.fromEmail }}",
+          "threadId": "={{ $json.threadId }}"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "Label Thread",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1260,
+        -60
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "thread",
+        "operation": "addLabels",
+        "threadId": "={{ $('Parse AI Response').item.json.threadId }}",
+        "labelIds": [
+          "={{ $('Parse AI Response').item.json.labelId }}"
+        ]
+      }
+    },
+    {
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "Is Urgent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1480,
+        -60
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-is-urgent",
+              "leftValue": "={{ $('Parse AI Response').item.json.isUrgent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0011-4000-8000-000000000011",
+      "name": "Send Urgent Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1700,
+        -160
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "YOUR_ALERT_EMAIL@example.com",
+        "subject": "={{ '[URGENT INBOX] ' + $('Parse AI Response').item.json.subject + ' - from ' + $('Parse AI Response').item.json.fromEmail }}",
+        "emailType": "text",
+        "message": "={{ 'An urgent email just landed and a reply draft is already waiting in your Gmail Drafts folder.\\n\\nFrom: ' + $('Parse AI Response').item.json.fromRaw + '\\nSubject: ' + $('Parse AI Response').item.json.subject + '\\nWhy urgent: ' + ($('Parse AI Response').item.json.urgencyReason || 'not specified') + '\\nSummary: ' + $('Parse AI Response').item.json.summary + '\\n\\nOpen the thread: https://mail.google.com/mail/u/0/#all/' + $('Parse AI Response').item.json.threadId + '\\n\\nReview the draft, tweak if needed, hit send.' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0012-4000-8000-000000000012",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        40
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0013-4000-8000-000000000013",
+      "name": "Sticky - Start Here",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        -440
+      ],
+      "parameters": {
+        "width": 540,
+        "height": 720,
+        "content": "## START HERE - AI Email Triage & Draft Replies\n\nEvery new inbox email is classified by AI (**sales lead / support / urgent / spam**), a ready-to-send reply lands in your **Drafts** folder, the thread gets a category **label**, and urgent emails fire an **instant alert** email.\n\nNothing is ever auto-sent. Every reply waits in Drafts for human review.\n\n### Setup (about 10 minutes)\n1. **Gmail credential** - open *Gmail Trigger*, *Create Draft Reply*, *Label Thread* and *Send Urgent Alert*, and attach one **Gmail OAuth2** credential (Google Cloud Console: enable Gmail API, create OAuth client, paste ID + secret into n8n).\n2. **AI credential** - open *AI Triage & Draft* and create a **Header Auth** credential called `Gemini API`:\n   - Name: `Authorization`\n   - Value: `Bearer YOUR_API_KEY`\n3. **Create 4 Gmail labels** in Gmail: `AI/Sales Lead`, `AI/Support`, `AI/Urgent`, `AI/Spam`.\n4. **Paste the 4 label IDs** into `LABEL_MAP` at the top of *Parse AI Response* (see the label sticky on the right for how to find IDs).\n5. **Set your alert address** - in *Send Urgent Alert*, replace `YOUR_ALERT_EMAIL@example.com`.\n6. **Test** - email yourself something urgent-sounding, press *Execute Workflow*, then check Drafts, labels and your alert inbox.\n7. **Activate** the workflow. Done.\n\nCost: roughly $0.01 per 100 emails with gemini-2.5-flash."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0014-4000-8000-000000000014",
+      "name": "Sticky - AI Brain",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        300,
+        -440
+      ],
+      "parameters": {
+        "width": 380,
+        "height": 340,
+        "content": "## AI Brain\nWorks with **Google Gemini by default** (any OpenAI-compatible API works). Default model: `gemini-2.5-flash`.\n\n**Credential: Header Auth**\n- Name: `Authorization`\n- Value: `Bearer YOUR_KEY`\n\nSwap provider by editing the URL + model in the JSON body:\n- OpenRouter: `https://openrouter.ai/api/v1/chat/completions`\n- Groq: `https://api.groq.com/openai/v1/chat/completions`\n\n**Make the drafts yours:** add your company name, offer, pricing page URL, support SLA and tone-of-voice rules to the system prompt. More business context = better drafts.\n\nThe node retries 3x on API hiccups."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0015-4000-8000-000000000015",
+      "name": "Sticky - Label IDs",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -440
+      ],
+      "parameters": {
+        "width": 400,
+        "height": 320,
+        "content": "## Finding Gmail label IDs\n1. Create the 4 labels in Gmail first (`AI/Sales Lead`, `AI/Support`, `AI/Urgent`, `AI/Spam`).\n2. In n8n open *Label Thread* and temporarily switch the **Label Names or IDs** field from Expression to the dropdown list - every label shows its ID (looks like `Label_1234567890`).\n3. Copy each ID into `LABEL_MAP` inside *Parse AI Response*.\n4. Restore the field to this expression:\n`{{ [ $('Parse AI Response').item.json.labelId ] }}`\n\nBoth Gmail action nodes are set to **continue on error**, so the workflow still drafts replies and sends urgent alerts even before labels are configured."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0016-4000-8000-000000000016",
+      "name": "Sticky - Urgent Alerts",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        -440
+      ],
+      "parameters": {
+        "width": 340,
+        "height": 280,
+        "content": "## Urgent alerts\nAnything classified **urgent** triggers an immediate email to you with the AI's one-line summary, the reason it is urgent, and a direct link to the Gmail thread. The reply draft is already waiting in Drafts.\n\n**Tips**\n- Use your carrier's email-to-SMS gateway address to get these as text messages.\n- Or point it at a Slack channel's email address for instant team visibility."
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract & Clean Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Clean Email": {
+      "main": [
+        [
+          {
+            "node": "Has Usable Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Usable Content?": {
+      "main": [
+        [
+          {
+            "node": "AI Triage & Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (No Content)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Triage & Draft": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Is Spam?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Spam?": {
+      "main": [
+        [
+          {
+            "node": "Label Thread",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Draft Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Draft Reply": {
+      "main": [
+        [
+          {
+            "node": "Label Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Thread": {
+      "main": [
+        [
+          {
+            "node": "Is Urgent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Urgent?": {
+      "main": [
+        [
+          {
+            "node": "Send Urgent Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

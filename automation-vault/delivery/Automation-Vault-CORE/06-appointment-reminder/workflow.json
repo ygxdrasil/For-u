@@ -1,0 +1,549 @@
+{
+  "name": "Appointment Reminder & No-Show Reducer",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Hourly Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        304
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Fetch Upcoming Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        304
+      ],
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "Primary Calendar"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $now.toISO() }}",
+        "timeMax": "={{ $now.plus({ hours: 26 }).toISO() }}",
+        "options": {
+          "recurringEventHandling": "expand",
+          "orderBy": "startTime"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Build Reminder Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        304
+      ],
+      "parameters": {
+        "jsCode": "// Flatten calendar events into one reminder task per attendee per due window.\n// Windows are 2h wide and the workflow runs hourly, so every event is caught\n// exactly once per window. The Sheets log downstream guarantees zero duplicates\n// even if you re-run manually.\n//   24h reminder -> event starts 23-25 hours from now\n//    2h reminder -> event starts 1-3 hours from now\nconst now = Date.now();\nconst HOUR = 3600 * 1000;\nconst out = [];\n\nfor (const item of $input.all()) {\n  const ev = item.json;\n\n  // Skip cancelled events and events without a concrete start time\n  if (ev.status === 'cancelled') continue;\n  const startRaw = ev.start && (ev.start.dateTime || ev.start.date);\n  if (!startRaw) continue;\n  const start = new Date(startRaw).getTime();\n  if (isNaN(start)) continue;\n\n  const hoursUntil = (start - now) / HOUR;\n  let reminderType = null;\n  if (hoursUntil >= 23 && hoursUntil < 25) reminderType = '24h';\n  else if (hoursUntil >= 1 && hoursUntil < 3) reminderType = '2h';\n  if (!reminderType) continue;\n\n  // Only remind real guests: skip the organizer, yourself, meeting rooms,\n  // and anyone who already declined.\n  const attendees = (ev.attendees || []).filter(function (a) {\n    return a.email && !a.organizer && !a.self && !a.resource && a.responseStatus !== 'declined';\n  });\n  if (attendees.length === 0) continue;\n\n  const startDate = new Date(startRaw);\n  const readable = startDate.toLocaleString('en-US', {\n    weekday: 'long', month: 'long', day: 'numeric',\n    hour: 'numeric', minute: '2-digit'\n  });\n\n  for (const a of attendees) {\n    out.push({\n      json: {\n        dedupe_key: ev.id + '|' + a.email + '|' + reminderType,\n        event_id: ev.id,\n        event_title: ev.summary || 'Your appointment',\n        event_description: (ev.description || '').replace(/<[^>]*>/g, ' ').slice(0, 400),\n        event_location: ev.location || '',\n        meeting_link: ev.hangoutLink || '',\n        event_start_iso: startRaw,\n        event_start_readable: readable,\n        event_timezone: (ev.start && ev.start.timeZone) || '',\n        attendee_email: a.email,\n        attendee_name: a.displayName || a.email.split('@')[0],\n        organizer_name: (ev.organizer && (ev.organizer.displayName || ev.organizer.email)) || 'the team',\n        reminder_type: reminderType,\n        hours_until: Math.round(hoursUntil * 10) / 10\n      }\n    });\n  }\n}\n\nreturn out;"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Fetch Sent Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        304
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "ReminderLog"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Filter Unsent Reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        304
+      ],
+      "parameters": {
+        "jsCode": "// Duplicate protection: drop any reminder whose dedupe_key already exists\n// in the ReminderLog sheet. dedupe_key = eventId|attendeeEmail|reminderType,\n// so each guest gets at most one 24h email and one 2h email per event -\n// even across manual re-runs, restarts, or overlapping executions.\nconst queue = $('Build Reminder Queue').all();\nconst logRows = $input.all();\n\nconst alreadySent = new Set();\nfor (const row of logRows) {\n  const key = row.json && row.json.dedupe_key;\n  if (key) alreadySent.add(String(key).trim());\n}\n\nconst fresh = queue.filter(function (item) {\n  return !alreadySent.has(item.json.dedupe_key);\n});\n\nreturn fresh;"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "Loop Over Reminders",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        304
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Valid Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        304
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-0001",
+              "leftValue": "={{ $json.attendee_email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "AI: Personalize Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        192
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gemini-2.5-flash',\n  temperature: 0.6,\n  response_format: { type: 'json_object' },\n  messages: [\n    {\n      role: 'system',\n      content: `You are the appointment-reminder copywriter for a professional services business. Your emails measurably reduce no-shows: warm, brief, and impossible to misread.\n\nRULES\n1. Use ONLY the appointment data provided in the user message. NEVER invent details - no prices, addresses, phone numbers, or services that are not provided.\n2. Greet the attendee by first name (derive it from attendee_name; if attendee_name looks like an email handle, use a polite generic greeting instead).\n3. Tone: friendly front-desk professional. No hype, no emojis, no spammy phrases, no exclamation overload.\n4. If reminder_type is 24h: this is the day-before confirmation. Restate the day, time, and place, and invite them to simply reply to this email if they need to reschedule.\n5. If reminder_type is 2h: this is the same-day nudge. Keep it under 70 words, lead with the time, put the meeting link or location front and center, and suggest joining or arriving 5 minutes early.\n6. If meeting_link is non-empty the appointment is virtual - reference joining via the link. Otherwise, if event_location is non-empty, reference that location. If both are empty, simply confirm the time.\n7. body_html: simple inline HTML only - 2 to 4 short <p> paragraphs, maximum 120 words, at most one <a> tag (the meeting link). No images, no CSS classes, no scripts.\n8. Sign off with organizer_name. Never mention AI, automation, or that this message was generated.\n9. Respond with ONLY a valid JSON object, exactly this shape: {\"subject\": \"string\", \"body_html\": \"string\"} - no markdown fences, no extra keys, no commentary.`\n    },\n    {\n      role: 'user',\n      content: JSON.stringify({\n        attendee_name: $json.attendee_name,\n        event_title: $json.event_title,\n        event_start_readable: $json.event_start_readable,\n        event_timezone: $json.event_timezone,\n        event_location: $json.event_location,\n        meeting_link: $json.meeting_link,\n        event_description: $json.event_description,\n        organizer_name: $json.organizer_name,\n        reminder_type: $json.reminder_type\n      })\n    }\n  ]\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        192
+      ],
+      "parameters": {
+        "jsCode": "// Safely parse the AI's JSON output. If the model ever returns malformed JSON\n// (or the API errors), we fall back to a clean built-in template so the\n// reminder ALWAYS goes out - a bad AI response never costs you a show-up.\nconst reminder = $('Loop Over Reminders').first().json;\n\nlet subject = '';\nlet bodyHtml = '';\n\ntry {\n  const raw = $input.first().json;\n  let content = '';\n  if (raw.choices && raw.choices[0] && raw.choices[0].message) {\n    content = raw.choices[0].message.content || '';\n  }\n  // Strip accidental markdown fences before parsing\n  content = content.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();\n  const parsed = JSON.parse(content);\n  if (parsed.subject && parsed.body_html) {\n    subject = String(parsed.subject).slice(0, 200);\n    bodyHtml = String(parsed.body_html);\n  }\n} catch (e) {\n  // fall through to the template below\n}\n\nif (!subject || !bodyHtml) {\n  const linkLine = reminder.meeting_link\n    ? '<p><a href=\"' + reminder.meeting_link + '\">Join your meeting here</a></p>'\n    : (reminder.event_location ? '<p>Location: ' + reminder.event_location + '</p>' : '');\n  subject = (reminder.reminder_type === '2h' ? 'Starting soon: ' : 'Reminder: ')\n    + reminder.event_title + ' - ' + reminder.event_start_readable;\n  bodyHtml = '<p>Hi ' + reminder.attendee_name + ',</p>'\n    + '<p>This is a friendly reminder about <strong>' + reminder.event_title + '</strong> on '\n    + reminder.event_start_readable + '.</p>'\n    + linkLine\n    + '<p>Need to reschedule? Just reply to this email.</p>'\n    + '<p>See you soon,<br>' + reminder.organizer_name + '</p>';\n}\n\nreturn [{\n  json: Object.assign({}, reminder, {\n    email_subject: subject,\n    email_body: bodyHtml,\n    sent_at: new Date().toISOString()\n  })\n}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "Send Reminder Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1980,
+        192
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.attendee_email }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "html",
+        "message": "={{ $json.email_body }}",
+        "options": {
+          "appendAttribution": false
+        },
+        "operation": "send"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0011-4000-8000-000000000011",
+      "name": "Log Reminder Sent",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2200,
+        192
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "ReminderLog"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dedupe_key": "={{ $('Parse AI Response').item.json.dedupe_key }}",
+            "event_id": "={{ $('Parse AI Response').item.json.event_id }}",
+            "event_title": "={{ $('Parse AI Response').item.json.event_title }}",
+            "attendee_email": "={{ $('Parse AI Response').item.json.attendee_email }}",
+            "reminder_type": "={{ $('Parse AI Response').item.json.reminder_type }}",
+            "event_start": "={{ $('Parse AI Response').item.json.event_start_iso }}",
+            "sent_at": "={{ $('Parse AI Response').item.json.sent_at }}",
+            "subject": "={{ $('Parse AI Response').item.json.email_subject }}"
+          },
+          "schema": [
+            {
+              "id": "dedupe_key",
+              "displayName": "dedupe_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "event_id",
+              "displayName": "event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "event_title",
+              "displayName": "event_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "attendee_email",
+              "displayName": "attendee_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reminder_type",
+              "displayName": "reminder_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "event_start",
+              "displayName": "event_start",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "sent_at",
+              "displayName": "sent_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0012-4000-8000-000000000012",
+      "name": "Skip Invalid Attendee",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        432
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0013-4000-8000-000000000013",
+      "name": "All Reminders Processed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        512
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-1001-4000-8000-000000001001",
+      "name": "Sticky - Start Here",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        -40
+      ],
+      "parameters": {
+        "width": 500,
+        "height": 760,
+        "content": "## \ud83d\ude80 START HERE \u2014 Appointment Reminder & No-Show Reducer\n\nEvery hour this workflow reads your Google Calendar, finds appointments ~24 hours and ~2 hours away, sends each guest an AI-personalized reminder email, and logs every send to Google Sheets so nobody is ever double-emailed.\n\n**Setup (about 10 minutes):**\n\n1. Create a Google Sheet. Rename its first tab to `ReminderLog` and add these headers in row 1:\n`dedupe_key | event_id | event_title | attendee_email | reminder_type | event_start | sent_at | subject`\n2. Copy the Sheet ID from the sheet URL (the long string between `/d/` and `/edit`) and paste it into BOTH Google Sheets nodes, replacing `YOUR_SHEET_ID`.\n3. Attach credentials:\n   - **Fetch Upcoming Events** \u2192 Google Calendar OAuth2\n   - **Fetch Sent Log** + **Log Reminder Sent** \u2192 Google Sheets OAuth2\n   - **Send Reminder Email** \u2192 Gmail OAuth2\n   - **AI: Personalize Reminder** \u2192 Header Auth credential (see the AI sticky note)\n4. In **Fetch Upcoming Events**, pick the calendar to watch (default: your primary calendar).\n5. Test: create a calendar event starting ~2 hours from now, add your own email as a guest, then click *Execute workflow*. You should receive the reminder and see one new row in the sheet.\n6. Run it again \u2014 it should send nothing (the dedupe log is working).\n7. Activate the workflow. It now runs every hour on its own.\n\n**Good to know:** reminders only go to events that have guests with email addresses. Organizers, meeting-room resources, and guests who declined are never emailed."
+      }
+    },
+    {
+      "id": "a1b2c3d4-1002-4000-8000-000000001002",
+      "name": "Sticky - Timing Logic",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        140,
+        20
+      ],
+      "parameters": {
+        "width": 460,
+        "height": 240,
+        "content": "## \u23f1\ufe0f How the reminder windows work\n\n- Runs **hourly**. 24h reminder = events starting **23\u201325h** from now. 2h reminder = events starting **1\u20133h** from now.\n- Windows are 2 hours wide and the trigger fires hourly, so every appointment is caught exactly once per window \u2014 and the Sheets log blocks duplicates even if you re-run manually.\n- To change timings (e.g. 48h + 4h), edit the two `hoursUntil` checks in **Build Reminder Queue** and widen `timeMax` in **Fetch Upcoming Events**."
+      }
+    },
+    {
+      "id": "a1b2c3d4-1003-4000-8000-000000001003",
+      "name": "Sticky - Dedupe Log",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        600,
+        540
+      ],
+      "parameters": {
+        "width": 460,
+        "height": 250,
+        "content": "## \ud83d\udccb The dedupe log (Google Sheets)\n\nBoth Sheets nodes point at the tab `ReminderLog`. Row 1 headers must be exactly:\n`dedupe_key, event_id, event_title, attendee_email, reminder_type, event_start, sent_at, subject`\n\n`dedupe_key` = `eventId|attendeeEmail|reminderType` \u2014 this single column is what prevents double-sends. Don't delete rows for upcoming events.\n\nBonus: this sheet doubles as a client-facing audit trail of every reminder ever sent."
+      }
+    },
+    {
+      "id": "a1b2c3d4-1004-4000-8000-000000001004",
+      "name": "Sticky - AI Credential",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        -140
+      ],
+      "parameters": {
+        "width": 470,
+        "height": 290,
+        "content": "## \ud83e\udd16 AI credential (works with any OpenAI-compatible API)\n\nCreate a **Header Auth** credential named `Gemini API` and attach it here:\n- Name: `Authorization`\n- Value: `Bearer sk-YOUR_KEY`\n\nUsing OpenRouter, Groq, or a local model? Just change the URL and the `model` in this node's JSON body \u2014 the prompt stays the same.\n\n**Failsafe:** if the model ever returns broken JSON, the **Parse AI Response** node falls back to a clean built-in template, so reminders always go out."
+      }
+    }
+  ],
+  "connections": {
+    "Hourly Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Upcoming Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Upcoming Events": {
+      "main": [
+        [
+          {
+            "node": "Build Reminder Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reminder Queue": {
+      "main": [
+        [
+          {
+            "node": "Fetch Sent Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Sent Log": {
+      "main": [
+        [
+          {
+            "node": "Filter Unsent Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Unsent Reminders": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Reminders": {
+      "main": [
+        [
+          {
+            "node": "All Reminders Processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Valid Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Email?": {
+      "main": [
+        [
+          {
+            "node": "AI: Personalize Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Invalid Attendee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Personalize Reminder": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Send Reminder Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reminder Email": {
+      "main": [
+        [
+          {
+            "node": "Log Reminder Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Reminder Sent": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Invalid Attendee": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,591 @@
+{
+  "name": "Lead Enricher & Scorer",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "New Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Normalize & Validate Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Webhook v2 puts the POST payload under $json.body. Fall back to $json for manual test runs.\nconst body = $json.body ?? $json;\n\nconst rawEmail = (body.email || '').toString().trim().toLowerCase();\nlet domain = (body.company_domain || body.domain || body.website || '').toString().trim().toLowerCase();\n\n// Strip protocol, www, paths and query strings so 'https://www.acme.com/pricing' becomes 'acme.com'\ndomain = domain.replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0].split('?')[0].trim();\n\nconst freeProviders = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'yandex.com', 'live.com', 'msn.com'];\nconst emailDomain = rawEmail.includes('@') ? rawEmail.split('@')[1] : '';\n\n// If no domain was supplied, derive it from a work email (never from a free provider)\nif (!domain && emailDomain && !freeProviders.includes(emailDomain)) {\n  domain = emailDomain;\n}\n\nconst emailOk = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(rawEmail);\nconst domainOk = domain.length > 3 && domain.includes('.') && !domain.includes(' ');\n\nreturn [{\n  json: {\n    email: rawEmail,\n    domain,\n    name: (body.name || body.full_name || '').toString().trim(),\n    source: (body.source || 'webhook').toString().trim(),\n    is_free_email: freeProviders.includes(emailDomain),\n    valid: emailOk && domainOk,\n    received_at: new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Lead Data OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Fetch Company Homepage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        180
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "url": "=https://{{ $json.domain }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Extract Homepage Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        180
+      ],
+      "parameters": {
+        "jsCode": "// Pull the validated lead forward (the HTTP node output replaced it)\nconst lead = $('Normalize & Validate Lead').first().json;\n\n// The HTTP node has onError: continue, so a dead site still flows through here\nlet html = '';\nif (typeof $json.data === 'string') html = $json.data;\nelse if (typeof $json.body === 'string') html = $json.body;\n\nconst fetchOk = !$json.error && html.length > 0;\n\n// Grab title + meta description before stripping tags - highest signal-per-token\nconst titleMatch = html.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i);\nconst metaMatch = html.match(/<meta[^>]+name=[\"']description[\"'][^>]*content=[\"']([^\"']*)[\"']/i)\n  || html.match(/<meta[^>]+content=[\"']([^\"']*)[\"'][^>]*name=[\"']description[\"']/i);\n\nlet text = html\n  .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n  .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n  .replace(/<noscript[\\s\\S]*?<\\/noscript>/gi, ' ')\n  .replace(/<!--[\\s\\S]*?-->/g, ' ')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&nbsp;/gi, ' ')\n  .replace(/&amp;/gi, '&')\n  .replace(/&quot;/gi, '\"')\n  .replace(/&#39;|&apos;/gi, \"'\")\n  .replace(/\\s+/g, ' ')\n  .trim();\n\n// Decode common HTML entities so titles like 'Stripe &amp; Co' read cleanly\nconst decode = (s) => s.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '\"').replace(/&#39;|&apos;/gi, \"'\").replace(/&lt;/gi, '<').replace(/&gt;/gi, '>');\n\n// Cap tokens sent to the AI - 8000 chars of homepage text is plenty for scoring\nconst MAX_CHARS = 8000;\n\nreturn [{\n  json: {\n    ...lead,\n    fetch_ok: fetchOk,\n    page_title: titleMatch ? decode(titleMatch[1].trim()).slice(0, 200) : '',\n    meta_description: metaMatch ? decode(metaMatch[1].trim()).slice(0, 500) : '',\n    page_text: text.slice(0, MAX_CHARS),\n  },\n}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "AI: Enrich & Score Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gemini-2.5-flash\",\n  \"temperature\": 0.2,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a senior B2B lead-qualification analyst working inside an automated pipeline. You receive one lead: an email address, a company domain, and raw text extracted from the company homepage. Enrich the lead and score it against the ideal customer profile below.\\n\\nIDEAL CUSTOMER PROFILE - EDIT THIS BLOCK TO MATCH YOUR BUSINESS:\\n- B2B companies, roughly 5 to 500 employees\\n- Sells software, professional services, or e-commerce products\\n- Budget signals: careers or hiring page, multiple product lines, named customers or case studies, funding or growth mentions\\n\\nRULES:\\n1. Use ONLY the text provided. Never invent facts, names, or numbers. When information is missing, use the exact string: unknown\\n2. If FREE EMAIL PROVIDER is true and the homepage gave no useful text, cap the score at 4.\\n3. If HOMEPAGE FETCH OK is false or the homepage text is empty, judge only from the domain and email, cap the score at 4, and state that confidence is low in score_reasoning.\\n4. Be professional and factual. No hype, and no speculation presented as certainty.\\n5. Respond with ONLY a valid JSON object. No markdown, no code fences, no extra commentary.\\n\\nSCORING RUBRIC - score is an integer 1 to 10:\\n1-3 = clearly bad fit or no usable information\\n4-5 = possible fit, weak or ambiguous signals\\n6-7 = decent fit with some concrete positive signals\\n8-10 = strong fit: clear ICP match plus concrete size, budget, or buying signals cited from the page\\n\\nRETURN A JSON OBJECT WITH EXACTLY THESE KEYS:\\ncompany_summary - 1 to 2 sentences on what the company does\\nindustry - short label such as SaaS, logistics, agency\\ncompany_size - one of: solo, 2-10, 11-50, 51-200, 201-1000, 1000+, unknown\\nsize_signals - the evidence you used for the size estimate\\nbuying_signals - anything suggesting budget or active need, otherwise: none found\\nfit_assessment - 1 to 2 sentences on fit versus the ideal customer profile\\nscore - integer 1 to 10\\nscore_reasoning - 2 to 3 sentences justifying the score, citing evidence from the page\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify('LEAD EMAIL: ' + $json.email + '\\nCOMPANY DOMAIN: ' + $json.domain + '\\nFREE EMAIL PROVIDER: ' + $json.is_free_email + '\\nHOMEPAGE FETCH OK: ' + $json.fetch_ok + '\\nPAGE TITLE: ' + ($json.page_title || 'n/a') + '\\nMETA DESCRIPTION: ' + ($json.meta_description || 'n/a') + '\\nHOMEPAGE TEXT:\\n' + ($json.page_text || '(homepage could not be fetched)')) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Parse & Guard AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        180
+      ],
+      "parameters": {
+        "jsCode": "const lead = $('Extract Homepage Text').first().json;\n\n// Pull the model's text out of the OpenAI-shaped response\nlet raw = '';\ntry {\n  raw = $json.choices[0].message.content || '';\n} catch (e) {\n  raw = '';\n}\n\n// Strip accidental markdown fences, just in case a provider ignores response_format\nraw = raw.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\n\nlet ai = {};\nlet parseOk = true;\ntry {\n  ai = JSON.parse(raw);\n} catch (e) {\n  parseOk = false;\n}\n\nconst clean = (v) => (v === undefined || v === null || v === '') ? 'unknown' : String(v).trim();\n\nlet score = parseInt(ai.score, 10);\nif (isNaN(score)) {\n  score = 1;\n  parseOk = false;\n}\nscore = Math.max(1, Math.min(10, score));\n\nreturn [{\n  json: {\n    email: lead.email,\n    name: lead.name || '',\n    domain: lead.domain,\n    source: lead.source,\n    enriched_at: new Date().toISOString(),\n    company_summary: clean(ai.company_summary),\n    industry: clean(ai.industry),\n    company_size: clean(ai.company_size),\n    size_signals: clean(ai.size_signals),\n    buying_signals: clean(ai.buying_signals),\n    fit_assessment: clean(ai.fit_assessment),\n    score,\n    score_reasoning: parseOk\n      ? clean(ai.score_reasoning)\n      : 'AI response could not be parsed - defaulted to score 1. Check the AI node output and your API credential.',\n    ai_parse_ok: parseOk,\n    homepage_fetched: lead.fetch_ok,\n  },\n}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Save Enriched Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        180
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.enriched_at }}",
+            "Email": "={{ $json.email }}",
+            "Name": "={{ $json.name }}",
+            "Domain": "={{ $json.domain }}",
+            "Source": "={{ $json.source }}",
+            "Company Summary": "={{ $json.company_summary }}",
+            "Industry": "={{ $json.industry }}",
+            "Company Size": "={{ $json.company_size }}",
+            "Size Signals": "={{ $json.size_signals }}",
+            "Buying Signals": "={{ $json.buying_signals }}",
+            "Fit Assessment": "={{ $json.fit_assessment }}",
+            "Score": "={{ $json.score }}",
+            "Score Reasoning": "={{ $json.score_reasoning }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Domain",
+              "displayName": "Domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Company Summary",
+              "displayName": "Company Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Industry",
+              "displayName": "Industry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Company Size",
+              "displayName": "Company Size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Size Signals",
+              "displayName": "Size Signals",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Buying Signals",
+              "displayName": "Buying Signals",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Fit Assessment",
+              "displayName": "Fit Assessment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Score Reasoning",
+              "displayName": "Score Reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "Respond: Lead Enriched",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        20
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'enriched', email: $json.email, domain: $json.domain, score: $json.score, fit_assessment: $json.fit_assessment }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
+      "name": "Hot Lead? (Score 8+)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Parse & Guard AI Output').first().json.score }}",
+              "rightValue": 8,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0011-4000-8000-000000000011",
+      "name": "Send Hot Lead Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1980,
+        80
+      ],
+      "parameters": {
+        "sendTo": "sales@yourcompany.com",
+        "emailType": "html",
+        "subject": "=HOT LEAD {{ $('Parse & Guard AI Output').first().json.score }}/10: {{ $('Parse & Guard AI Output').first().json.email }}",
+        "message": "=<b>A hot lead just landed.</b><br><br><b>Email:</b> {{ $('Parse & Guard AI Output').first().json.email }}<br><b>Name:</b> {{ $('Parse & Guard AI Output').first().json.name || 'unknown' }}<br><b>Company:</b> {{ $('Parse & Guard AI Output').first().json.domain }}<br><b>Score:</b> {{ $('Parse & Guard AI Output').first().json.score }}/10<br><br><b>What they do:</b> {{ $('Parse & Guard AI Output').first().json.company_summary }}<br><b>Company size:</b> {{ $('Parse & Guard AI Output').first().json.company_size }}<br><b>Buying signals:</b> {{ $('Parse & Guard AI Output').first().json.buying_signals }}<br><b>Why this score:</b> {{ $('Parse & Guard AI Output').first().json.score_reasoning }}<br><br>Reply while it is warm - speed to lead wins deals.",
+        "options": {},
+        "operation": "send"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0012-4000-8000-000000000012",
+      "name": "Standard Lead - No Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0013-4000-8000-000000000013",
+      "name": "Respond: Bad Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\":\"error\",\"message\":\"Invalid payload. POST JSON with at least: email (a valid address) and company_domain (or use a work email so the domain can be derived).\"}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0014-4000-8000-000000000014",
+      "name": "Sticky: Start Here",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        -400
+      ],
+      "parameters": {
+        "width": 520,
+        "height": 640,
+        "content": "## START HERE - Lead Enricher & Scorer\n\nWebhook lead in -> homepage scraped -> AI enriches + scores 1-10 -> row in Google Sheets -> instant email alert on 8+.\n\n### Setup (10 minutes)\n1. **Credentials** - create these three in n8n:\n   - Header Auth credential named `Gemini API` (see AI sticky ->)\n   - Google Sheets OAuth2\n   - Gmail OAuth2\n2. **Create a Google Sheet** with a tab named `Leads` and this exact header row:\n   `Timestamp | Email | Name | Domain | Source | Company Summary | Industry | Company Size | Size Signals | Buying Signals | Fit Assessment | Score | Score Reasoning`\n3. Open **Save Enriched Lead** -> paste your Sheet ID (the long string in the sheet URL) and attach the Sheets credential.\n4. Open **Send Hot Lead Alert** -> set `sendTo` to your sales inbox and attach the Gmail credential.\n5. Open **AI: Enrich & Score Lead** -> attach the `Gemini API` credential and **edit the IDEAL CUSTOMER PROFILE block** in the system prompt. This is what makes scoring match YOUR business.\n6. **Activate** the workflow and copy the Production webhook URL.\n7. Test:\n```\ncurl -X POST YOUR_WEBHOOK_URL \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"email\":\"jane@stripe.com\",\"company_domain\":\"stripe.com\",\"name\":\"Jane Doe\",\"source\":\"pricing page form\"}'\n```\n\nAccepted fields: `email` (required), `company_domain` / `domain` / `website`, `name`, `source`. If no domain is sent, it is derived from a work email automatically. Bad payloads get an HTTP 400 back."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0015-4000-8000-000000000015",
+      "name": "Sticky: AI Credential & Prompt",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        -160
+      ],
+      "parameters": {
+        "width": 360,
+        "height": 300,
+        "content": "## AI Node\n\nCreate a **Header Auth** credential named `Gemini API`:\n- Name: `Authorization`\n- Value: `Bearer YOUR_API_KEY`\n\nWorks with ANY OpenAI-compatible provider - OpenRouter, Groq, or a local server. Just change the URL and `model` in this node.\n\nThe **IDEAL CUSTOMER PROFILE** block inside the system prompt drives the whole score. Edit it to describe who you actually sell to."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0016-4000-8000-000000000016",
+      "name": "Sticky: Google Sheet",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        420
+      ],
+      "parameters": {
+        "width": 340,
+        "height": 240,
+        "content": "## Google Sheets\n\nAttach your Google Sheets OAuth2 credential, replace `YOUR_SHEET_ID`, and keep the tab name `Leads` (or update it here).\n\nThe header row in the sheet must match the column names in this node exactly - copy them from the START HERE note."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0017-4000-8000-000000000017",
+      "name": "Sticky: Hot Lead Alert",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2220,
+        40
+      ],
+      "parameters": {
+        "width": 320,
+        "height": 240,
+        "content": "## Hot Lead Alert\n\nAttach your Gmail OAuth2 credential and set `sendTo` to the inbox that should get pinged.\n\nThe threshold lives in the **Hot Lead? (Score 8+)** IF node - lower it to 7 if you want more alerts, or point this branch at Slack instead."
+      }
+    }
+  ],
+  "connections": {
+    "New Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Validate Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Validate Lead": {
+      "main": [
+        [
+          {
+            "node": "Lead Data OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Data OK?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Company Homepage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Bad Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Company Homepage": {
+      "main": [
+        [
+          {
+            "node": "Extract Homepage Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Homepage Text": {
+      "main": [
+        [
+          {
+            "node": "AI: Enrich & Score Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Enrich & Score Lead": {
+      "main": [
+        [
+          {
+            "node": "Parse & Guard AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Guard AI Output": {
+      "main": [
+        [
+          {
+            "node": "Save Enriched Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond: Lead Enriched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Enriched Lead": {
+      "main": [
+        [
+          {
+            "node": "Hot Lead? (Score 8+)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hot Lead? (Score 8+)": {
+      "main": [
+        [
+          {
+            "node": "Send Hot Lead Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Standard Lead - No Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

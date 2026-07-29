@@ -1,0 +1,669 @@
+{
+  "name": "AI Lead Catcher - Qualify, Book & Log Inbound Leads",
+  "nodes": [
+    {
+      "id": "f1e2d3c4-0001-4a00-8000-000000000001",
+      "name": "START HERE",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -660,
+        -80
+      ],
+      "parameters": {
+        "content": "## START HERE - AI Lead Catcher (Flagship)\n\nTurns raw website enquiries into scored, booked, logged sales leads - automatically, in seconds.\n\n**Flow:** Webhook -> AI qualification -> calendar booking (hot/warm leads) -> Google Sheet log -> owner email -> instant reply to the lead.\n\n### Setup (about 10 minutes)\n1. **AI key** - open *AI Lead Qualifier* and attach a **Header Auth** credential named `Gemini API`. Header name: `Authorization`, value: `Bearer YOUR_KEY`. Works with Google Gemini (the default), OpenAI, OpenRouter, Groq or any OpenAI-compatible endpoint (swap URL + model in the node).\n2. **Google Calendar** - attach your Google Calendar OAuth2 credential to *Check Calendar Availability* and *Book Appointment*, and pick your calendar in both.\n3. **Google Sheets** - create a spreadsheet with a tab named `Leads`, add the header row listed on the sticky note to the right, then paste the spreadsheet ID into *Log Lead to Sheet*.\n4. **Gmail** - attach your Gmail OAuth2 credential to *Notify Owner* and replace `you@yourbusiness.com` with your address.\n5. **Business hours** - open *Pick Open Slot* and edit SLOT_MINUTES / DAY_START_HOUR / DAY_END_HOUR / DAYS_AHEAD at the top of the code. Set your instance timezone in workflow settings so slots match local time.\n6. **Test** - click *Execute workflow*, then POST to the Test webhook URL:\n`curl -X POST <test-url> -H \"Content-Type: application/json\" -d '{\"name\":\"Jane Doe\",\"email\":\"jane@acme.com\",\"message\":\"We need help automating client onboarding. Budget is around $5k, hoping to start this month.\"}'`\n7. **Go live** - activate the workflow and point your website form (or Typeform/Framer/Webflow webhook) at the Production URL.\n\n### Never lose a lead\nThe AI call, booking and sheet nodes are set to continue on failure: if any of them break, the lead is still logged and emailed to you instead of being dropped.",
+        "height": 780,
+        "width": 560
+      }
+    },
+    {
+      "id": "f1e2d3c4-0002-4a00-8000-000000000002",
+      "name": "Inbound Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-catcher",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "f1e2d3c4-0003-4a00-8000-000000000003",
+      "name": "Normalize Enquiry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Normalise whatever the form sends into a clean lead object.\n// Works with JSON bodies and standard form posts.\n// Extend the pick() lists below to match your form's field names.\nconst body = $json.body || $json;\nconst pick = (...keys) => {\n  for (const k of keys) {\n    const v = body[k];\n    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();\n  }\n  return '';\n};\n\nconst lead = {\n  lead_name: pick('name', 'full_name', 'fullName', 'first_name', 'Name') || 'Unknown',\n  lead_email: pick('email', 'email_address', 'emailAddress', 'Email'),\n  lead_phone: pick('phone', 'phone_number', 'tel', 'mobile', 'Phone'),\n  lead_company: pick('company', 'company_name', 'business', 'organisation', 'Company'),\n  lead_message: pick('message', 'enquiry', 'inquiry', 'details', 'project', 'description', 'Message'),\n  lead_budget: pick('budget', 'budget_range', 'Budget'),\n  lead_source: pick('source', 'utm_source', 'referrer') || 'website form',\n  received_at: new Date().toISOString()\n};\n\n// Minimum bar to process: a real-looking email address.\nlead.valid = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(lead.lead_email);\n\nreturn [{ json: lead }];"
+      }
+    },
+    {
+      "id": "f1e2d3c4-0004-4a00-8000-000000000004",
+      "name": "Valid Enquiry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1e2d3c4-c001-4a00-8000-0000000000c1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f1e2d3c4-0005-4a00-8000-000000000005",
+      "name": "Reject Bad Payload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        520
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"ok\": false,\n  \"error\": \"A valid email address is required.\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "f1e2d3c4-0006-4a00-8000-000000000006",
+      "name": "AI Lead Qualifier",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gemini-2.5-flash',\n  temperature: 0.2,\n  response_format: { type: 'json_object' },\n  messages: [\n    {\n      role: 'system',\n      content: `You are the inbound lead qualification engine for a professional service business. You read raw website enquiries and score them like a seasoned sales development rep.\n\nRULES\n- Use ONLY the information in the enquiry. Never invent a budget, company detail or intention that is not stated or strongly implied.\n- Vendor cold pitches, link-building or SEO spam, recruiters and job applications are NOT leads: tier cold, score below 20, intent none.\n- budget_signal: stated only if a number or range appears in the enquiry. implied if company size, project scope or urgency suggests real spend. Otherwise unknown.\n- intent: ready = wants to start or book a call now. researching = genuine interest, still comparing options. none = no buying intent.\n- Scoring: start from clarity of need, add for buying intent, stated budget and decision-maker signals, subtract for vagueness. hot is 70 or above, warm is 40 to 69, cold is below 40.\n- reply_draft: 2 to 3 sentences, warm and professional, no pricing promises, written in the same language as the enquiry.\n- Output raw JSON only: no markdown fences, no commentary, exactly the keys shown below.\n\nOUTPUT FORMAT\n{\n  \"score\": 0,\n  \"tier\": \"hot | warm | cold\",\n  \"budget_signal\": \"stated | implied | unknown\",\n  \"intent\": \"ready | researching | none\",\n  \"fit_reason\": \"one sentence on why this is or is not a fit\",\n  \"summary\": \"what the lead wants, max 2 sentences\",\n  \"reply_draft\": \"short friendly reply the owner could send\"\n}`\n    },\n    {\n      role: 'user',\n      content: `Name: ${$json.lead_name}\nCompany: ${$json.lead_company || 'not given'}\nEmail: ${$json.lead_email}\nPhone: ${$json.lead_phone || 'not given'}\nStated budget: ${$json.lead_budget || 'not stated'}\nSource: ${$json.lead_source}\n\nEnquiry message:\n${$json.lead_message || '(no message provided)'}`\n    }\n  ]\n}) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "f1e2d3c4-0007-4a00-8000-000000000007",
+      "name": "AI Setup Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        580,
+        0
+      ],
+      "parameters": {
+        "content": "### AI Qualifier credential\nCreate a **Header Auth** credential named `Gemini API`:\n- Name: `Authorization`\n- Value: `Bearer YOUR_API_KEY`\n\nAny OpenAI-compatible provider works - for OpenRouter, Groq or a local model, change the URL and `model` inside this node.\n\nThe system prompt inside `jsonBody` is the brain of this workflow: tune the scoring rules and reply tone to your business. If the API call fails, the lead still gets logged and emailed - it just lands as cold with a \"review manually\" note.",
+        "height": 280,
+        "width": 400
+      }
+    },
+    {
+      "id": "f1e2d3c4-0008-4a00-8000-000000000008",
+      "name": "Parse AI Verdict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Safely parse the model's JSON verdict. If anything is off, fall back to a\n// conservative \"review manually\" verdict so the lead is never lost.\nconst src = $('Normalize Enquiry').first().json;\nlet raw = '';\ntry { raw = $json.choices[0].message.content || ''; } catch (e) { raw = ''; }\n\nlet verdict = {\n  score: 0,\n  tier: 'cold',\n  budget_signal: 'unknown',\n  intent: 'none',\n  fit_reason: 'AI response missing or unparseable - review this lead manually.',\n  summary: (src.lead_message || '').slice(0, 200),\n  reply_draft: ''\n};\n\ntry {\n  const cleaned = raw.replace(/```json|```/gi, '').trim();\n  const parsed = JSON.parse(cleaned);\n  if (parsed && typeof parsed === 'object') verdict = { ...verdict, ...parsed };\n} catch (e) {\n  // keep the conservative fallback\n}\n\nverdict.score = Math.max(0, Math.min(100, Math.round(Number(verdict.score) || 0)));\nif (!['hot', 'warm', 'cold'].includes(verdict.tier)) {\n  verdict.tier = verdict.score >= 70 ? 'hot' : verdict.score >= 40 ? 'warm' : 'cold';\n}\n\nreturn [{ json: { ...src, ...verdict, qualified: verdict.tier === 'hot' || verdict.tier === 'warm' } }];"
+      }
+    },
+    {
+      "id": "f1e2d3c4-0009-4a00-8000-000000000009",
+      "name": "Hot or Warm Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1e2d3c4-c002-4a00-8000-0000000000c2",
+              "leftValue": "={{ $json.qualified }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f1e2d3c4-0010-4a00-8000-000000000010",
+      "name": "Check Calendar Availability",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1340,
+        140
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "Primary calendar"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $now.plus({ days: 1 }).startOf('day').toISO() }}",
+        "timeMax": "={{ $now.plus({ days: 7 }).endOf('day').toISO() }}",
+        "options": {
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      }
+    },
+    {
+      "id": "f1e2d3c4-0011-4a00-8000-000000000011",
+      "name": "Booking Engine Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -160
+      ],
+      "parameters": {
+        "content": "### Booking engine\n**Check Calendar Availability** + **Book Appointment** need a Google Calendar OAuth2 credential (select your calendar in both nodes).\n\n**Pick Open Slot** books the first free weekday slot inside business hours: edit SLOT_MINUTES, DAY_START_HOUR, DAY_END_HOUR and DAYS_AHEAD at the top of its code. Existing events are respected, weekends are skipped.\n\nThe lead is added as an attendee, so Google emails them the calendar invite automatically. If the calendar is fully booked or the API fails, the lead is flagged NEEDS MANUAL BOOKING instead of being dropped.",
+        "height": 280,
+        "width": 640
+      }
+    },
+    {
+      "id": "f1e2d3c4-0012-4a00-8000-000000000012",
+      "name": "Pick Open Slot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        140
+      ],
+      "parameters": {
+        "jsCode": "// ---- Edit these to match your business ----\nconst SLOT_MINUTES = 30;   // meeting length\nconst DAY_START_HOUR = 9;  // first bookable hour (24h clock, instance timezone)\nconst DAY_END_HOUR = 17;   // no meeting may end after this hour\nconst DAYS_AHEAD = 5;      // how many days forward to search\n// -------------------------------------------\n\n// Collect busy windows from the calendar events we just fetched.\nconst busy = [];\nfor (const item of $input.all()) {\n  const ev = item.json || {};\n  if (!ev.start) continue;\n  const s = new Date(ev.start.dateTime || ev.start.date);\n  const e = new Date(ev.end && (ev.end.dateTime || ev.end.date));\n  if (!isNaN(s) && !isNaN(e)) busy.push([s.getTime(), e.getTime()]);\n}\n\nconst now = new Date();\nlet slot = null;\nfor (let d = 1; d <= DAYS_AHEAD && !slot; d++) {\n  const day = new Date(now);\n  day.setDate(day.getDate() + d);\n  const dow = day.getDay();\n  if (dow === 0 || dow === 6) continue; // skip weekends\n  const dayEnd = new Date(day);\n  dayEnd.setHours(DAY_END_HOUR, 0, 0, 0);\n  for (let h = DAY_START_HOUR; h < DAY_END_HOUR && !slot; h++) {\n    for (const m of [0, 30]) {\n      const start = new Date(day);\n      start.setHours(h, m, 0, 0);\n      const end = new Date(start.getTime() + SLOT_MINUTES * 60000);\n      if (end > dayEnd) continue;\n      const clash = busy.some(([bs, be]) => start.getTime() < be && end.getTime() > bs);\n      if (!clash) { slot = { start, end }; break; }\n    }\n  }\n}\n\nconst lead = $('Parse AI Verdict').first().json;\nif (!slot) {\n  // Calendar is slammed - flag for manual booking; the lead still gets logged and emailed.\n  return [{ json: { ...lead, slot_found: false, slot_start: '', slot_end: '' } }];\n}\nreturn [{ json: { ...lead, slot_found: true, slot_start: slot.start.toISOString(), slot_end: slot.end.toISOString() } }];"
+      }
+    },
+    {
+      "id": "f1e2d3c4-0013-4a00-8000-000000000013",
+      "name": "Book Appointment",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1780,
+        140
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "Primary calendar"
+        },
+        "start": "={{ $json.slot_start }}",
+        "end": "={{ $json.slot_end }}",
+        "useDefaultReminders": true,
+        "additionalFields": {
+          "summary": "=Intro call - {{ $json.lead_name }} ({{ $json.tier }} lead, {{ $json.score }}/100)",
+          "description": "=Lead score: {{ $json.score }}/100 ({{ $json.tier }})\nBudget signal: {{ $json.budget_signal }} | Intent: {{ $json.intent }}\n\nAI summary: {{ $json.summary }}\nWhy: {{ $json.fit_reason }}\n\nOriginal enquiry:\n{{ $json.lead_message }}\n\nPhone: {{ $json.lead_phone || 'not given' }}\nCompany: {{ $json.lead_company || 'not given' }}\n\nBooked automatically by AI Lead Catcher.",
+          "attendees": [
+            "={{ $json.lead_email }}"
+          ],
+          "sendUpdates": "all"
+        }
+      }
+    },
+    {
+      "id": "f1e2d3c4-0014-4a00-8000-000000000014",
+      "name": "Build Lead Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Runs on BOTH paths: after a booking attempt (hot/warm) or straight from the cold branch.\nconst v = $('Parse AI Verdict').first().json; // always available on both paths\nlet booked = false;\nlet meetingStart = '';\nlet meetingLink = '';\ntry {\n  const ev = $('Book Appointment').first().json;\n  if (ev && ev.id && ev.start) {\n    booked = true;\n    meetingStart = ev.start.dateTime || ev.start.date || '';\n    meetingLink = ev.htmlLink || '';\n  }\n} catch (e) {\n  // Cold-lead path (booking node never ran) or booking failed - handled below.\n}\n\nconst booking_status = booked\n  ? 'Booked'\n  : (v.qualified ? 'NEEDS MANUAL BOOKING' : 'Not booked (cold lead)');\n\nreturn [{ json: { ...v, booked, booking_status, meeting_start: meetingStart, meeting_link: meetingLink } }];"
+      }
+    },
+    {
+      "id": "f1e2d3c4-0015-4a00-8000-000000000015",
+      "name": "Log Lead to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.received_at }}",
+            "Name": "={{ $json.lead_name }}",
+            "Email": "={{ $json.lead_email }}",
+            "Phone": "={{ $json.lead_phone }}",
+            "Company": "={{ $json.lead_company }}",
+            "Message": "={{ $json.lead_message }}",
+            "Source": "={{ $json.lead_source }}",
+            "Score": "={{ $json.score }}",
+            "Tier": "={{ $json.tier }}",
+            "Budget Signal": "={{ $json.budget_signal }}",
+            "Intent": "={{ $json.intent }}",
+            "AI Summary": "={{ $json.summary }}",
+            "Booking Status": "={{ $json.booking_status }}",
+            "Meeting Time": "={{ $json.meeting_start }}",
+            "Meeting Link": "={{ $json.meeting_link }}"
+          },
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Message",
+              "displayName": "Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Tier",
+              "displayName": "Tier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Budget Signal",
+              "displayName": "Budget Signal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Intent",
+              "displayName": "Intent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "AI Summary",
+              "displayName": "AI Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Booking Status",
+              "displayName": "Booking Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Meeting Time",
+              "displayName": "Meeting Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Meeting Link",
+              "displayName": "Meeting Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f1e2d3c4-0016-4a00-8000-000000000016",
+      "name": "Log + Notify Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "content": "### Log + notify\n**Log Lead to Sheet** - needs a Google Sheets OAuth2 credential. Create a spreadsheet with a tab named `Leads` and paste its document ID into the node. Row 1 headers (exact):\n`Timestamp, Name, Email, Phone, Company, Message, Source, Score, Tier, Budget Signal, Intent, AI Summary, Booking Status, Meeting Time, Meeting Link`\n\n**Notify Owner** - needs a Gmail OAuth2 credential. Replace `you@yourbusiness.com` with your address. The email includes the AI's suggested reply so you can answer hot leads in seconds.",
+        "height": 260,
+        "width": 520
+      }
+    },
+    {
+      "id": "f1e2d3c4-0017-4a00-8000-000000000017",
+      "name": "Notify Owner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2460,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "sendTo": "you@yourbusiness.com",
+        "subject": "=[{{ $('Build Lead Record').item.json.tier.toUpperCase() }} {{ $('Build Lead Record').item.json.score }}/100] {{ $('Build Lead Record').item.json.lead_name }} - {{ $('Build Lead Record').item.json.booking_status }}",
+        "emailType": "html",
+        "message": "=<h2>New {{ $('Build Lead Record').item.json.tier }} lead: {{ $('Build Lead Record').item.json.lead_name }} ({{ $('Build Lead Record').item.json.score }}/100)</h2><p><b>Email:</b> {{ $('Build Lead Record').item.json.lead_email }}<br/><b>Phone:</b> {{ $('Build Lead Record').item.json.lead_phone || 'not given' }}<br/><b>Company:</b> {{ $('Build Lead Record').item.json.lead_company || 'not given' }}<br/><b>Budget signal:</b> {{ $('Build Lead Record').item.json.budget_signal }} | <b>Intent:</b> {{ $('Build Lead Record').item.json.intent }}</p><p><b>AI summary:</b> {{ $('Build Lead Record').item.json.summary }}<br/><b>Why:</b> {{ $('Build Lead Record').item.json.fit_reason }}</p><p><b>Booking:</b> {{ $('Build Lead Record').item.json.booking_status }}<br/><b>Meeting time:</b> {{ $('Build Lead Record').item.json.meeting_start || '-' }}<br/><b>Event link:</b> {{ $('Build Lead Record').item.json.meeting_link || '-' }}</p><p><b>Suggested reply (from AI):</b><br/>{{ $('Build Lead Record').item.json.reply_draft || '-' }}</p><hr/><p><b>Original message:</b><br/>{{ $('Build Lead Record').item.json.lead_message || '(none)' }}</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    },
+    {
+      "id": "f1e2d3c4-0018-4a00-8000-000000000018",
+      "name": "Confirm to Lead",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build Lead Record').item.json.booked ? { ok: true, booked: true, message: 'Thanks ' + $('Build Lead Record').item.json.lead_name + ' - your enquiry is in and a calendar invite for ' + $('Build Lead Record').item.json.meeting_start + ' is on its way to your inbox.' } : { ok: true, booked: false, message: 'Thanks - your enquiry has been received. We will be in touch shortly.' }) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Inbound Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Enquiry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Enquiry": {
+      "main": [
+        [
+          {
+            "node": "Valid Enquiry?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Enquiry?": {
+      "main": [
+        [
+          {
+            "node": "AI Lead Qualifier",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Bad Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Lead Qualifier": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Verdict": {
+      "main": [
+        [
+          {
+            "node": "Hot or Warm Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hot or Warm Lead?": {
+      "main": [
+        [
+          {
+            "node": "Check Calendar Availability",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Calendar Availability": {
+      "main": [
+        [
+          {
+            "node": "Pick Open Slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Open Slot": {
+      "main": [
+        [
+          {
+            "node": "Book Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book Appointment": {
+      "main": [
+        [
+          {
+            "node": "Build Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Lead Record": {
+      "main": [
+        [
+          {
+            "node": "Log Lead to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Lead to Sheet": {
+      "main": [
+        [
+          {
+            "node": "Notify Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Owner": {
+      "main": [
+        [
+          {
+            "node": "Confirm to Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

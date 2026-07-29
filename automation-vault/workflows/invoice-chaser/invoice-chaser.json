@@ -1,0 +1,490 @@
+{
+  "name": "Invoice Chaser - AI Payment Reminders",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000013",
+      "name": "START HERE",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        -80
+      ],
+      "parameters": {
+        "content": "## START HERE - Invoice Chaser\n\n**Chases overdue invoices automatically: friendly at 3+ days, firm at 14+, final notice at 30+. Runs daily at 9 AM.**\n\n### Setup (about 10 minutes)\n1. Create a Google Sheet with a tab named `Invoices` and these EXACT headers in row 1:\n`Invoice ID | Client Name | Client Email | Amount | Currency | Due Date | Status | Last Reminder Stage | Last Chased Date | Chase Count`\n2. Open **Read Invoices** and **Update Chase Status**, replace `YOUR_SHEET_ID` with your Sheet ID (the long string in the sheet URL), and attach your **Google Sheets OAuth2** credential to both.\n3. Attach your **Gmail OAuth2** credential to **Send Reminder Email**.\n4. Create a **Header Auth** credential named `Gemini API`:\nName = `Authorization`, Value = `Bearer YOUR_OPENAI_KEY`.\nAttach it to **Write Reminder Email (AI)**.\n5. Open **Business Settings** and fill in your company name, sender name, and payment link.\n6. Test: add one row with Status `Unpaid` and a Due Date 5+ days in the past, then click **Execute workflow**.\n7. Confirm the email arrived and the sheet updated, then **Activate**.\n\n### Safe by design\nEach escalation tier is sent only ONCE per invoice. The sheet remembers the last stage sent, so clients are never spammed.",
+        "height": 720,
+        "width": 400
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -260,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Business Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -40,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bs-001",
+              "name": "business_name",
+              "value": "Your Company Name",
+              "type": "string"
+            },
+            {
+              "id": "bs-002",
+              "name": "sender_name",
+              "value": "Your Name",
+              "type": "string"
+            },
+            {
+              "id": "bs-003",
+              "name": "payment_link",
+              "value": "https://your-payment-link.example.com",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Read Invoices",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        180,
+        300
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Invoices"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Find Overdue Invoices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Keep only invoices that actually need chasing today.\nconst settings = $('Business Settings').first().json;\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nconst rows = $input.all();\nconst out = [];\n\nfor (const item of rows) {\n  const row = item.json;\n  const status = String(row['Status'] || '').trim().toLowerCase();\n  // Never chase settled or excluded invoices\n  if (['paid', 'void', 'draft', 'written off', 'do not chase'].includes(status)) continue;\n\n  const invoiceId = String(row['Invoice ID'] || '').trim();\n  const email = String(row['Client Email'] || '').trim();\n  const amount = String(row['Amount'] || '').trim();\n  const dueRaw = row['Due Date'];\n  // Skip malformed rows instead of crashing the whole run\n  if (!invoiceId || !email.includes('@') || !amount || !dueRaw) continue;\n\n  const due = new Date(dueRaw);\n  if (isNaN(due.getTime())) continue;\n  due.setHours(0, 0, 0, 0);\n\n  const daysOverdue = Math.floor((today.getTime() - due.getTime()) / 86400000);\n  if (daysOverdue < 3) continue; // not overdue enough yet\n\n  let stage = 'friendly';\n  if (daysOverdue >= 30) stage = 'final';\n  else if (daysOverdue >= 14) stage = 'firm';\n\n  // Each tier fires exactly once per invoice - the sheet remembers the last stage sent.\n  const lastStage = String(row['Last Reminder Stage'] || '').trim().toLowerCase();\n  if (lastStage === stage) continue;\n\n  out.push({\n    json: {\n      invoice_id: invoiceId,\n      client_name: String(row['Client Name'] || 'there').trim(),\n      client_email: email,\n      amount: amount,\n      currency: String(row['Currency'] || 'USD').trim(),\n      due_date: due.toISOString().slice(0, 10),\n      days_overdue: daysOverdue,\n      stage: stage,\n      next_chase_count: (parseInt(row['Chase Count'], 10) || 0) + 1,\n      today: new Date().toISOString().slice(0, 10),\n      business_name: settings.business_name || '',\n      sender_name: settings.sender_name || '',\n      payment_link: settings.payment_link || ''\n    }\n  });\n}\n\nif (out.length === 0) {\n  return [{ json: { nothing_to_chase: true, rows_checked: rows.length, message: 'No invoices need chasing today.' } }];\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000005",
+      "name": "Any Overdue?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        620,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ao-001",
+              "leftValue": "={{ $json.stage }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000006",
+      "name": "Nothing To Chase",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        860,
+        480
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000007",
+      "name": "Loop Invoices",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        860,
+        200
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000008",
+      "name": "All Reminders Sent",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        60
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000009",
+      "name": "Write Reminder Email (AI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gemini-2.5-flash', temperature: 0.4, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are an accounts receivable assistant who writes payment reminder emails on behalf of a business. You will receive one invoice as JSON with these fields: client_name, invoice_id, amount, currency, due_date, days_overdue, stage, business_name, sender_name, payment_link.\\n\\nTONE BY STAGE:\\n- friendly (3 or more days overdue): warm and light. Assume the invoice was simply overlooked. Zero pressure and one gentle call to action.\\n- firm (14 or more days overdue): professional and direct. State clearly that the invoice is overdue, restate the amount and the original due date, and ask for payment or a confirmed payment date this week.\\n- final (30 or more days overdue): formal final notice. State that this is the last reminder before the account is escalated, for example pausing further work or referring the balance to a collections process. Serious, never rude, never threatening.\\n\\nRULES:\\n1. Use ONLY the data provided. Never invent amounts, dates, discounts, late fees, or policies.\\n2. Always mention the invoice number, the amount with its currency, and the original due date.\\n3. If payment_link is a non-empty string, include it as the way to pay.\\n4. Keep the body under 160 words. Plain text only. No markdown, no bullet lists, no placeholders such as [Name].\\n5. Greet the client using client_name and sign off with sender_name and business_name.\\n6. Stay professional and human. No guilt trips, no sarcasm, no legal threats.\\n\\nOUTPUT FORMAT: reply with ONLY a valid JSON object and nothing else, exactly like this: {\"subject\": \"string\", \"body\": \"string\" }. Use \\\\n inside body for line breaks. No code fences.' }, { role: 'user', content: 'Write the ' + $json.stage + ' stage payment reminder for this invoice. Invoice data: ' + JSON.stringify({ client_name: $json.client_name, invoice_id: $json.invoice_id, amount: $json.amount, currency: $json.currency, due_date: $json.due_date, days_overdue: $json.days_overdue, business_name: $json.business_name, sender_name: $json.sender_name, payment_link: $json.payment_link }) } ] }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000010",
+      "name": "Parse AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Safely parse the AI response. If the call failed or returned bad JSON,\n// fall back to a clean built-in template so the reminder still goes out.\nconst invoice = $('Loop Invoices').first().json;\nconst resp = $input.first().json;\n\nlet raw = '';\nif (resp && resp.choices && resp.choices[0] && resp.choices[0].message) {\n  raw = String(resp.choices[0].message.content || '');\n}\n\nlet subject = '';\nlet body = '';\nlet aiOk = false;\n\nif (raw) {\n  let text = raw.trim();\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) { text = fence[1].trim(); }\n  try {\n    const parsed = JSON.parse(text);\n    if (parsed && parsed.subject && parsed.body) {\n      subject = String(parsed.subject).trim();\n      body = String(parsed.body).trim();\n      aiOk = true;\n    }\n  } catch (e) {\n    // fall through to the template below\n  }\n}\n\nif (!aiOk) {\n  const labels = { friendly: 'Friendly reminder', firm: 'Overdue notice', final: 'Final notice' };\n  subject = (labels[invoice.stage] || 'Payment reminder') + ' - invoice ' + invoice.invoice_id;\n  body = 'Hi ' + invoice.client_name + ',\\n\\n'\n    + 'Our records show invoice ' + invoice.invoice_id + ' for ' + invoice.currency + ' ' + invoice.amount\n    + ', due on ' + invoice.due_date + ', is still open (' + invoice.days_overdue + ' days past due).\\n\\n'\n    + 'Could you arrange payment at your earliest convenience?'\n    + (invoice.payment_link ? ' You can pay securely here: ' + invoice.payment_link : '')\n    + '\\n\\nThank you,\\n' + invoice.sender_name + '\\n' + invoice.business_name;\n}\n\nreturn [{ json: Object.assign({}, invoice, { email_subject: subject, email_body: body, ai_generated: aiOk }) }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000011",
+      "name": "Send Reminder Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.client_email }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "text",
+        "message": "={{ $json.email_body }}",
+        "options": {
+          "appendAttribution": false
+        },
+        "operation": "send"
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000012",
+      "name": "Update Chase Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Invoices"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Invoice ID": "={{ $('Parse AI Reply').first().json.invoice_id }}",
+            "Last Reminder Stage": "={{ $('Parse AI Reply').first().json.stage }}",
+            "Last Chased Date": "={{ $('Parse AI Reply').first().json.today }}",
+            "Chase Count": "={{ $('Parse AI Reply').first().json.next_chase_count }}"
+          },
+          "matchingColumns": [
+            "Invoice ID"
+          ],
+          "schema": [
+            {
+              "id": "Invoice ID",
+              "displayName": "Invoice ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Reminder Stage",
+              "displayName": "Last Reminder Stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Last Chased Date",
+              "displayName": "Last Chased Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Chase Count",
+              "displayName": "Chase Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000014",
+      "name": "Sheet Rules",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        120,
+        500
+      ],
+      "parameters": {
+        "content": "## Sheet rules\n- **Status**: rows marked `Paid`, `Void`, `Draft`, `Written off`, or `Do not chase` are never emailed. Anything else (e.g. `Unpaid`, `Sent`) is fair game.\n- **Due Date**: use `YYYY-MM-DD` format (e.g. `2026-07-01`).\n- Rows missing an Invoice ID, a valid email, an Amount, or a Due Date are skipped silently - bad data never crashes the run.\n- The workflow writes back `Last Reminder Stage`, `Last Chased Date`, and `Chase Count`, matching rows on `Invoice ID`.",
+        "height": 320,
+        "width": 440
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000015",
+      "name": "AI Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        500
+      ],
+      "parameters": {
+        "content": "## AI credential + prompt\nUses `gemini-2.5-flash` via the Gemini chat completions API.\n\n- **Credential**: create a Header Auth credential -> Name: `Authorization`, Value: `Bearer sk-...` and attach it to this node.\n- Works with ANY OpenAI-compatible provider: swap the URL for OpenRouter, Groq, Together, or a local server, and change the model name inside the JSON body.\n- The escalation tone (friendly / firm / final) lives in the system prompt inside this node - tune the wording to match your brand voice.\n- If the AI call fails or returns bad JSON, **Parse AI Reply** falls back to a built-in professional template, so reminders still go out.",
+        "height": 340,
+        "width": 460
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000016",
+      "name": "Loop Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1420,
+        40
+      ],
+      "parameters": {
+        "content": "## One invoice at a time\nInvoices are processed one by one: AI writes -> email sends -> sheet is updated -> next invoice. If a run is ever interrupted, invoices already marked in the sheet will NOT be double-chased on the next run.",
+        "height": 180,
+        "width": 460
+      }
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Business Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Business Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Invoices": {
+      "main": [
+        [
+          {
+            "node": "Find Overdue Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Overdue Invoices": {
+      "main": [
+        [
+          {
+            "node": "Any Overdue?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Overdue?": {
+      "main": [
+        [
+          {
+            "node": "Loop Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing To Chase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Invoices": {
+      "main": [
+        [
+          {
+            "node": "All Reminders Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write Reminder Email (AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Reminder Email (AI)": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reminder Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reminder Email": {
+      "main": [
+        [
+          {
+            "node": "Update Chase Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Chase Status": {
+      "main": [
+        [
+          {
+            "node": "Loop Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
