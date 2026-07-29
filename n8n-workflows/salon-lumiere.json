@@ -1,0 +1,178 @@
+{
+  "name": "AI Lead Catcher — Salon Demo (Lumière)",
+  "description": "White-label AI lead-catcher customized for Lumière Hair & Beauty salon: replies instantly to booking inquiries, answers service/price questions, qualifies, books appointments, logs every lead, and emails the salon.",
+  "nodes": [
+    {
+      "id": "94448c08-9588-4682-9937-c4e928f6135f",
+      "name": "Lead Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [240, 304],
+      "parameters": {
+        "public": true,
+        "initialMessages": "Hi, welcome to Lumiere Hair & Beauty! Tell me what you'd love to book and I'll find you a spot.",
+        "options": {}
+      },
+      "webhookId": "8c1fff6b-dc2d-437c-96e7-9c17224d02ee"
+    },
+    {
+      "id": "c528b0c3-c7b9-43af-a959-99227920e32d",
+      "name": "Lead Catcher Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [560, 304],
+      "parameters": {
+        "options": {
+          "systemMessage": "=You are the virtual receptionist for Lumiere Hair & Beauty, a busy hair salon. Clients message on Instagram and the website wanting to book, and salons lose bookings every day when no one replies fast enough. Your job is to reply instantly and warmly, answer questions about services and prices, and get people booked into a stylist's chair.\n\nCURRENT DATE & TIME: {{ $now.toFormat('cccc, LLLL d, yyyy, h:mm a') }} (ISO: {{ $now.toISO() }}). This is ALWAYS \"now\" and the current year is {{ $now.toFormat('yyyy') }}. When a client says a day like \"Saturday\" or \"next week\", resolve it relative to THIS date. When you check availability or book, only ever use dates from today onward in the current year, NEVER a past date or past year.\n\nABOUT LUMIERE:\n- Hours: Tuesday to Saturday, 9am to 7pm. Closed Sunday and Monday.\n- Services & prices: Women's cut & blow-dry $55 | Men's cut $35 | Kids' cut $25 | Balayage from $180 | Full colour from $120 | Keratin treatment $220 | Bridal or event styling from $150.\n- Stylists: Nadia (senior colourist, best for balayage and colour), Marco (cuts and styling), Yasmin (junior, great value). \"No preference\" is completely fine.\n\nYOUR GOALS, IN ORDER:\n1. Warmly greet the person and find out which service they want.\n2. Answer any price or service questions accurately using ONLY the list above.\n3. Naturally gather: their name, a phone number or email, the service they want, any stylist preference, and whether they are a new or returning client.\n4. Once you have a name AND a contact, call Check Availability for open times in the next few days (only during opening hours), then offer 2-3 concrete slots.\n5. When they confirm a time, call Book Appointment to add it to the calendar, then call Notify Salon by Email so the salon is instantly alerted.\n\nCRITICAL RELIABILITY RULES (never break these):\n- The MOMENT you have the client's name AND a phone number or email, immediately call Log Lead to save them. Log Lead upserts by contact info, so calling it again just UPDATES the same record, it never creates duplicates. Call Log Lead again whenever you learn more (service, stylist) and again once an appointment is booked (with the booked time). This guarantees no client is ever lost, even if the chat ends abruptly.\n- If Check Availability, Book Appointment, or Notify Salon by Email ever fails or is unavailable, do NOT tell the client there was a technical problem and do NOT apologise for a system error. Instead: still call Log Lead to capture everything, tell them the salon will personally confirm their exact appointment time very shortly, and keep the tone warm and confident. A captured client the salon follows up on is far better than a lost one.\n- Never invent services, prices, or stylists that are not listed above. When a price or service IS listed above, state it confidently and directly rather than deferring. If asked something you genuinely do not know, say the salon will follow up personally, then make sure you have their contact info and have logged them.\n- OUTPUT DISCIPLINE: Everything you write is shown directly to the client. Reply ONLY in the voice of the salon receptionist, and in the same language the client writes in. NEVER narrate your internal steps, plans, reasoning, or tool calls - do not write things like \"I will now check the calendar\" or \"I will update the lead\", and never mention tools, systems, logs, errors, or \"technical\" problems. Just speak warmly and naturally.\n\nTONE: warm, chic, and friendly, like a lovely front-desk person texting back within a minute, never a corporate bot. If someone is joking or off-topic, stay warm and lightly playful, then gently steer back to how you can help. Qualify before pushing to book, but stay conversational and never pushy."
+        }
+      }
+    },
+    {
+      "id": "0e9b82d9-f97e-42d9-a0f8-bdef095772df",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [400, 512],
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": { "maxOutputTokens": 2048, "temperature": 0.3 }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "f0240f6c-e26c-4d6f-a03d-5287f1a320b1",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [560, 512],
+      "parameters": { "contextWindowLength": 20 }
+    },
+    {
+      "id": "5f741235-8af4-42fd-9e50-8eae97e17c16",
+      "name": "Check Availability",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [704, 432],
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "timeMin": "={{ $fromAI('timeMin', 'Start of the date range to check for open appointment slots, ISO 8601') }}",
+        "timeMax": "={{ $fromAI('timeMax', 'End of the date range to check, ISO 8601') }}",
+        "options": { "outputFormat": "bookedSlots" }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "51d99f47-db92-4ed7-94cc-3c45ded5f2fb",
+      "name": "Book Appointment",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [912, 432],
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "start": "={{ $fromAI('start', 'Confirmed start date-time of the appointment, ISO 8601') }}",
+        "end": "={{ $fromAI('end', 'End date-time of the appointment, ISO 8601, usually 30-60 minutes after start depending on service') }}",
+        "additionalFields": {
+          "summary": "={{ $fromAI('summary', 'Event title, e.g. \"Balayage - Sarah (new client)\"') }}",
+          "description": "={{ $fromAI('description', \"Client's name, contact, service wanted, and stylist preference for the salon's reference\") }}",
+          "sendUpdates": "none"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "219c7b99-5f4e-4143-a6c3-85b54ce3816c",
+      "name": "Log Lead",
+      "type": "n8n-nodes-base.dataTableTool",
+      "typeVersion": 1.1,
+      "position": [704, 656],
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": { "__rl": true, "cachedResultName": "Lumiere Hair & Beauty — Leads", "mode": "id", "value": "wgsBIy2YsxZUscX1" },
+        "filters": {
+          "conditions": [
+            { "condition": "eq", "keyName": "contactInfo", "keyValue": "={{ $fromAI('contactInfo', 'Phone number or email the client gave') }}" }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "schema": [
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "leadName", "id": "leadName", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": true, "display": true, "displayName": "contactInfo", "id": "contactInfo", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "service", "id": "service", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "stylistPref", "id": "stylistPref", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "preferredTime", "id": "preferredTime", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "bookedSlot", "id": "bookedSlot", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "newOrReturning", "id": "newOrReturning", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "qualified", "id": "qualified", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "summary", "id": "summary", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "sessionId", "id": "sessionId", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "capturedAt", "id": "capturedAt", "required": false, "type": "string" }
+          ],
+          "value": {
+            "leadName": "={{ $fromAI('leadName', \"The client's name\") }}",
+            "contactInfo": "={{ $fromAI('contactInfo', 'Phone number or email the client gave') }}",
+            "service": "={{ $fromAI('service', 'Which service they want, e.g. balayage or cut and blow-dry') }}",
+            "stylistPref": "={{ $fromAI('stylistPref', 'Preferred stylist if any, otherwise no preference') }}",
+            "preferredTime": "={{ $fromAI('preferredTime', 'Times they said work for an appointment, before booking') }}",
+            "bookedSlot": "={{ $fromAI('bookedSlot', 'The exact appointment time booked, or the text not booked if none yet') }}",
+            "newOrReturning": "={{ $fromAI('newOrReturning', 'Whether they are a new or returning client') }}",
+            "qualified": "={{ $fromAI('qualified', 'yes or no - whether this is a real client ready to book') }}",
+            "summary": "={{ $fromAI('summary', 'One-sentence summary of the conversation and what they want') }}",
+            "sessionId": "={{ $('Lead Chat Trigger').item.json.sessionId }}",
+            "capturedAt": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "acecc525-614e-4636-9a39-b4cf71d7b439",
+      "name": "Notify Salon by Email",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [912, 656],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "lonron888@gmail.com",
+        "subject": "={{ $fromAI('subject', 'Short subject line, e.g. New booking at Lumiere') }}",
+        "message": "={{ $fromAI('message', 'Email body summarizing the client: name, contact, service, stylist preference, and the booked appointment time') }}",
+        "options": { "appendAttribution": false }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "webhookId": "4b66c2ef-01e0-4caf-a722-4171e956eb5d"
+    }
+  ],
+  "connections": {
+    "Lead Chat Trigger": { "main": [[{ "node": "Lead Catcher Agent", "type": "main", "index": 0 }]] },
+    "Gemini Chat Model": { "ai_languageModel": [[{ "node": "Lead Catcher Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "Conversation Memory": { "ai_memory": [[{ "node": "Lead Catcher Agent", "type": "ai_memory", "index": 0 }]] },
+    "Check Availability": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Book Appointment": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Log Lead": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Notify Salon by Email": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

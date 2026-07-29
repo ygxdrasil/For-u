@@ -1,0 +1,179 @@
+{
+  "name": "AI Lead Catcher — Real Estate Demo",
+  "description": "Chat-based AI that qualifies real estate leads for Sofia Reyes at Coastal Living Realty, checks calendar availability, books showings, logs every lead, and emails the agent when a showing is booked.",
+  "nodes": [
+    {
+      "id": "2ea2f9b1-9163-4dc7-9f15-b97dc72efff7",
+      "name": "Lead Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [240, 304],
+      "parameters": {
+        "public": true,
+        "initialMessages": "Hi! I can help with our listings and get you booked in for a showing. What are you looking for?",
+        "options": {}
+      },
+      "webhookId": "d5b26af6-99d3-4d28-90bb-585124c5f4bd"
+    },
+    {
+      "id": "a5e848e1-280b-4457-a1e1-6d38dcfbda30",
+      "name": "Lead Catcher Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [560, 304],
+      "parameters": {
+        "options": {
+          "systemMessage": "=You are the virtual assistant for Sofia Reyes, a solo real estate agent at Coastal Living Realty. Buyers and renters message the website and Instagram about listings, and agents lose deals every day because they reply too slowly. Your job is to reply instantly and warmly, answer questions, qualify the person, and get them booked for a showing.\n\nCURRENT DATE & TIME: {{ $now.toFormat('cccc, LLLL d, yyyy, h:mm a') }} (ISO: {{ $now.toISO() }}). This is ALWAYS \"now\" and the current year is {{ $now.toFormat('yyyy') }}. When someone says a day like \"Thursday\" or \"next week\", resolve it relative to THIS date. When you check availability or book a showing, only ever use dates from today onward in the current year, NEVER a past date or past year.\n\nABOUT SOFIA / COASTAL LIVING REALTY:\n- Sofia represents both buyers and sellers, and handles sales and rentals in the coastal area.\n- Current sample listings: 2-bed condo at Marina Heights $340,000 | 3-bed family home in Oakwood $520,000 | 4-bed coastal villa $1,200,000 | 2-bed rental near downtown $2,100/month.\n- Showings are typically 30 minutes and run 7 days a week between 9am and 6pm.\n\nYOUR GOALS, IN ORDER:\n1. Warmly greet the person and find out what they are looking for (a specific listing, an area, and whether buying or renting).\n2. Answer any listing or price questions accurately using ONLY the details above.\n3. Naturally gather: their name, a phone number or email, their budget range, and their timeline (how soon they want to move or buy).\n4. Once you have a name AND a contact, call Check Calendar Availability to see open showing times in the next 3-5 days, then offer 2-3 concrete time options.\n5. When they confirm a time, call Book Showing to add it to the calendar, then call Notify Agent by Email so Sofia is instantly alerted.\n\nCRITICAL RELIABILITY RULES (never break these):\n- The MOMENT you have the lead's name AND a phone number or email, immediately call Log Lead to save them. Log Lead upserts by contact info, so calling it again just UPDATES the same record, it never creates duplicates. Call Log Lead again whenever you learn more (budget, timeline) and again once a showing is booked (with the booked time). This guarantees no lead is ever lost, even if the chat ends abruptly.\n- If Check Calendar Availability, Book Showing, or Notify Agent by Email ever fails or is unavailable, do NOT tell the customer there was a technical problem and do NOT apologise for a system error. Instead: still call Log Lead to capture everything, tell them Sofia will personally confirm the exact showing time with them very shortly, and keep the tone warm and confident. A captured lead Sofia follows up on is far better than a lost one.\n- Never invent listings, prices, features, or availability beyond the details above. When a listing or price IS in the details above, state it confidently and directly (e.g. quote the price) rather than deferring to Sofia. If asked something you genuinely do not know, say Sofia will follow up personally with those details, then make sure you have their contact info and have logged them.\n- OUTPUT DISCIPLINE: Everything you write is shown directly to the customer. Reply ONLY in the voice of Sofia's assistant, and in the same language the customer writes in. NEVER narrate your internal steps, plans, reasoning, or tool calls - do not write things like \"I will now check the calendar\" or \"I will update the lead\", and never mention tools, systems, logs, errors, or \"technical\" problems. Just speak warmly and naturally.\n\nTONE: friendly, quick, and concise, like a helpful human assistant texting back within a minute, not a corporate bot. If someone is joking or off-topic, stay warm and lightly playful, then gently steer back to how you can help with real estate. Qualify before pushing to book, but stay conversational and never pushy."
+        }
+      }
+    },
+    {
+      "id": "5f491502-bfae-4b4f-b325-7f5a2d9c7091",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [400, 656],
+      "parameters": { "contextWindowLength": 20 }
+    },
+    {
+      "id": "78d88727-894e-439c-a0f0-3f267f73f53b",
+      "name": "Check Calendar Availability",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [704, 432],
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "timeMin": "={{ $fromAI('timeMin', 'Start of the date range to check for open showing slots, ISO 8601') }}",
+        "timeMax": "={{ $fromAI('timeMax', 'End of the date range to check, ISO 8601') }}",
+        "options": { "outputFormat": "bookedSlots" }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "49e9f5a5-b81c-4655-9436-9150c0c9b1bc",
+      "name": "Book Showing",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [912, 432],
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "start": "={{ $fromAI('start', 'Confirmed start date-time of the showing, ISO 8601') }}",
+        "end": "={{ $fromAI('end', 'End date-time of the showing, ISO 8601, usually 30-45 minutes after start') }}",
+        "additionalFields": {
+          "summary": "={{ $fromAI('summary', 'Event title, e.g. \"Showing: 123 Main St with Jane Doe\"') }}",
+          "description": "={{ $fromAI('description', \"Lead's name, phone or email, budget, and timeline for the agent's reference\") }}",
+          "sendUpdates": "none"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a754dd21-8ede-4561-8950-080c310aa710",
+      "name": "Log Lead",
+      "type": "n8n-nodes-base.dataTableTool",
+      "typeVersion": 1.1,
+      "position": [704, 656],
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": { "__rl": true, "cachedResultName": "AI Lead Catcher - Leads", "mode": "id", "value": "Ei86b6vpXQkfqiMA" },
+        "filters": {
+          "conditions": [
+            { "condition": "eq", "keyName": "contactInfo", "keyValue": "={{ $fromAI('contactInfo', 'Phone number or email the lead gave', 'string') }}" }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "schema": [
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "leadName", "id": "leadName", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": true, "display": true, "displayName": "contactInfo", "id": "contactInfo", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "listingInterest", "id": "listingInterest", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "budget", "id": "budget", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "timeline", "id": "timeline", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "preferredTime", "id": "preferredTime", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "bookedSlot", "id": "bookedSlot", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "qualified", "id": "qualified", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "summary", "id": "summary", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "sessionId", "id": "sessionId", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "capturedAt", "id": "capturedAt", "required": false, "type": "string" }
+          ],
+          "value": {
+            "bookedSlot": "={{ $fromAI('bookedSlot', 'The exact showing time booked, or the text not booked if none yet', 'string') }}",
+            "budget": "={{ $fromAI('budget', 'Their stated budget range', 'string') }}",
+            "capturedAt": "={{ $now.toISO() }}",
+            "contactInfo": "={{ $fromAI('contactInfo', 'Phone number or email the lead gave', 'string') }}",
+            "leadName": "={{ $fromAI('leadName', \"The lead's name\", 'string') }}",
+            "listingInterest": "={{ $fromAI('listingInterest', 'Which listing, property, or area they are interested in', 'string') }}",
+            "preferredTime": "={{ $fromAI('preferredTime', 'Times they said work for a showing, before booking', 'string') }}",
+            "qualified": "={{ $fromAI('qualified', 'yes or no - whether this is a real, ready buyer', 'string') }}",
+            "sessionId": "={{ $('Lead Chat Trigger').item.json.sessionId }}",
+            "summary": "={{ $fromAI('summary', 'One-sentence summary of the conversation and lead intent', 'string') }}",
+            "timeline": "={{ $fromAI('timeline', 'How soon they want to buy or move, e.g. within 3 months', 'string') }}"
+          }
+        },
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "e4e02520-f81b-421b-addf-764b3d0051b2",
+      "name": "Notify Agent by Email",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [912, 656],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "lonron888@gmail.com",
+        "subject": "={{ $fromAI('subject', 'Short urgent subject line, e.g. Hot lead booked a showing') }}",
+        "message": "={{ $fromAI('message', 'Email body summarizing the lead: name, contact, listing, budget, timeline, and the booked showing time') }}",
+        "options": { "appendAttribution": false }
+      },
+      "webhookId": "545c8a6c-c69a-4bda-b947-16bbadb80f3f",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6c8ee892-65cb-4940-ad7f-6ce6c21c9f53",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [400, 512],
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": { "maxOutputTokens": 2048, "temperature": 0.3 }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Lead Chat Trigger": { "main": [[{ "node": "Lead Catcher Agent", "type": "main", "index": 0 }]] },
+    "Conversation Memory": { "ai_memory": [[{ "node": "Lead Catcher Agent", "type": "ai_memory", "index": 0 }]] },
+    "Check Calendar Availability": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Book Showing": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Log Lead": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Notify Agent by Email": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Gemini Chat Model": { "ai_languageModel": [[{ "node": "Lead Catcher Agent", "type": "ai_languageModel", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  }
+}

@@ -1,0 +1,180 @@
+{
+  "name": "AI Lead Catcher — Dental Demo (BrightSmile)",
+  "description": "White-label AI lead-catcher customized for BrightSmile Dental Studio: replies instantly to patient inquiries, reassures anxious patients, prioritizes pain as urgent, qualifies, books appointments, logs every patient, and emails the clinic. Never gives clinical advice.",
+  "nodes": [
+    {
+      "id": "5d1df02e-3f19-4f14-a907-38dd3902d1d1",
+      "name": "Lead Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [240, 304],
+      "parameters": {
+        "public": true,
+        "initialMessages": "Hello and welcome to BrightSmile Dental Studio. How can we help you today? I can answer questions and get you booked in.",
+        "options": {}
+      },
+      "webhookId": "6651d726-89bb-4e05-b278-efeb7aa8ee82"
+    },
+    {
+      "id": "cdee5343-4d07-4e94-9b00-5d551b5ae2f6",
+      "name": "Lead Catcher Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [560, 304],
+      "parameters": {
+        "options": {
+          "systemMessage": "=You are the virtual receptionist for BrightSmile Dental Studio, a friendly dental clinic. People message the website and social media asking about appointments, prices, and pain, and clinics lose patients every day when no one replies fast enough. Your job is to reply instantly, reassure anxious patients, answer questions, and get them booked in.\n\nCURRENT DATE & TIME: {{ $now.toFormat('cccc, LLLL d, yyyy, h:mm a') }} (ISO: {{ $now.toISO() }}). This is ALWAYS \"now\" and the current year is {{ $now.toFormat('yyyy') }}. When a patient says \"tomorrow\" or \"next week\", resolve it relative to THIS date. Only ever use dates from today onward in the current year, NEVER a past date or past year.\n\nABOUT BRIGHTSMILE:\n- Hours: Monday to Friday, 8am to 5pm.\n- Services & prices: Check-up & clean $90 | Teeth whitening $350 | Filling from $150 | Invisalign consult FREE | Dental implant consult FREE | Emergency / toothache appointments available same or next day.\n- We welcome both new and existing patients and most major dental insurance.\n\nYOUR GOALS, IN ORDER:\n1. Warmly greet the patient and find out the reason for their visit. If they mention pain, be extra reassuring and treat it as urgent.\n2. Answer any price or service questions accurately using ONLY the list above.\n3. Naturally gather: their name, a phone number or email, the reason for visit, whether they are a new or existing patient, their insurance, and how urgent it is.\n4. Once you have a name AND a contact, call Check Availability for open times (prioritise the soonest slot if they are in pain), then offer 2-3 concrete options.\n5. When they confirm a time, call Book Appointment to add it to the calendar, then call Notify Clinic by Email so the clinic is instantly alerted (flag it URGENT if the patient is in pain).\n\nCRITICAL RELIABILITY RULES (never break these):\n- The MOMENT you have the patient's name AND a phone number or email, immediately call Log Lead to save them. Log Lead upserts by contact info, so calling it again just UPDATES the same record, it never creates duplicates. Call Log Lead again whenever you learn more (reason, insurance) and again once an appointment is booked (with the booked time). This guarantees no patient is ever lost, even if the chat ends abruptly.\n- If Check Availability, Book Appointment, or Notify Clinic by Email ever fails or is unavailable, do NOT tell the patient there was a technical problem and do NOT apologise for a system error. Instead: still call Log Lead to capture everything, tell them the clinic will personally confirm their exact appointment time very shortly (and sooner if they are in pain), and keep the tone warm and reassuring. A captured patient the clinic follows up on is far better than a lost one.\n- Never invent services, prices, or clinical advice that is not listed above. When a price or service IS listed above, state it confidently and directly rather than deferring. You are NOT a dentist: never diagnose, never recommend treatment or medication. For any clinical question, say the dentist will advise at the appointment, then make sure you have their contact info and have logged them.\n- OUTPUT DISCIPLINE: Everything you write is shown directly to the patient. Reply ONLY in the voice of the clinic receptionist, and in the same language the patient writes in. NEVER narrate your internal steps, plans, reasoning, or tool calls - do not write things like \"I will now check availability\" or \"I will update the lead\", and never mention tools, systems, logs, errors, or \"technical\" problems. Just speak warmly and naturally.\n\nTONE: warm, calm, and reassuring, like a caring front-desk person texting back within a minute, never a corporate bot. Many people are nervous about the dentist, so be gentle. If someone is joking or off-topic, stay kind and lightly good-humoured, then gently steer back to how you can help. Qualify before booking, but stay conversational and never pushy."
+        }
+      }
+    },
+    {
+      "id": "a1dc186d-f041-479b-a720-c03299045f1a",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [400, 512],
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": { "maxOutputTokens": 2048, "temperature": 0.3 }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "158a3eb8-450c-4b3a-85eb-2810edab3b71",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [560, 512],
+      "parameters": { "contextWindowLength": 20 }
+    },
+    {
+      "id": "281291f5-8197-4abf-90e9-991d181c4746",
+      "name": "Check Availability",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [704, 432],
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "timeMin": "={{ $fromAI('timeMin', 'Start of the date range to check for open appointment slots, ISO 8601') }}",
+        "timeMax": "={{ $fromAI('timeMax', 'End of the date range to check, ISO 8601') }}",
+        "options": { "outputFormat": "bookedSlots" }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "314dfe85-81e2-4c54-8ecc-8f64b447848a",
+      "name": "Book Appointment",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [912, 432],
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "start": "={{ $fromAI('start', 'Confirmed start date-time of the appointment, ISO 8601') }}",
+        "end": "={{ $fromAI('end', 'End date-time of the appointment, ISO 8601, usually 30-60 minutes after start') }}",
+        "additionalFields": {
+          "summary": "={{ $fromAI('summary', 'Event title, e.g. \"Check-up & clean - John Smith (new patient)\"') }}",
+          "description": "={{ $fromAI('description', \"Patient name, contact, reason for visit, new or existing patient, and insurance for the clinic's reference\") }}",
+          "sendUpdates": "none"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "bcdaec7e-9b90-4ebf-8ae5-8cad97ac2515",
+      "name": "Log Lead",
+      "type": "n8n-nodes-base.dataTableTool",
+      "typeVersion": 1.1,
+      "position": [704, 656],
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": { "__rl": true, "cachedResultName": "BrightSmile Dental Studio — Patients", "mode": "id", "value": "ZS7EViTCTrY8JABX" },
+        "filters": {
+          "conditions": [
+            { "condition": "eq", "keyName": "contactInfo", "keyValue": "={{ $fromAI('contactInfo', 'Phone number or email the patient gave') }}" }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "schema": [
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "leadName", "id": "leadName", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": true, "display": true, "displayName": "contactInfo", "id": "contactInfo", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "reasonForVisit", "id": "reasonForVisit", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "patientStatus", "id": "patientStatus", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "insurance", "id": "insurance", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "urgency", "id": "urgency", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "preferredTime", "id": "preferredTime", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "bookedSlot", "id": "bookedSlot", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "qualified", "id": "qualified", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "summary", "id": "summary", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "sessionId", "id": "sessionId", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "capturedAt", "id": "capturedAt", "required": false, "type": "string" }
+          ],
+          "value": {
+            "leadName": "={{ $fromAI('leadName', \"The patient's name\") }}",
+            "contactInfo": "={{ $fromAI('contactInfo', 'Phone number or email the patient gave') }}",
+            "reasonForVisit": "={{ $fromAI('reasonForVisit', 'Why they want to come in, e.g. routine check-up, tooth pain, whitening') }}",
+            "patientStatus": "={{ $fromAI('patientStatus', 'Whether they are a new or existing patient') }}",
+            "insurance": "={{ $fromAI('insurance', 'Their dental insurance provider, or none') }}",
+            "urgency": "={{ $fromAI('urgency', 'How urgent, e.g. routine, soon, emergency / in pain') }}",
+            "preferredTime": "={{ $fromAI('preferredTime', 'Times they said work for an appointment, before booking') }}",
+            "bookedSlot": "={{ $fromAI('bookedSlot', 'The exact appointment time booked, or the text not booked if none yet') }}",
+            "qualified": "={{ $fromAI('qualified', 'yes or no - whether this is a real patient ready to book') }}",
+            "summary": "={{ $fromAI('summary', 'One-sentence summary of the conversation and what they need') }}",
+            "sessionId": "={{ $('Lead Chat Trigger').item.json.sessionId }}",
+            "capturedAt": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6e0fa274-4ceb-4987-8183-28713d713e8e",
+      "name": "Notify Clinic by Email",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [912, 656],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "lonron888@gmail.com",
+        "subject": "={{ $fromAI('subject', 'Short subject line, e.g. New patient booking at BrightSmile (mark URGENT if in pain)') }}",
+        "message": "={{ $fromAI('message', 'Email body summarizing the patient: name, contact, reason for visit, new or existing, insurance, urgency, and the booked appointment time') }}",
+        "options": { "appendAttribution": false }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "webhookId": "d6862be4-86e2-4a83-b32c-c26962c23916"
+    }
+  ],
+  "connections": {
+    "Lead Chat Trigger": { "main": [[{ "node": "Lead Catcher Agent", "type": "main", "index": 0 }]] },
+    "Gemini Chat Model": { "ai_languageModel": [[{ "node": "Lead Catcher Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "Conversation Memory": { "ai_memory": [[{ "node": "Lead Catcher Agent", "type": "ai_memory", "index": 0 }]] },
+    "Check Availability": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Book Appointment": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Log Lead": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Notify Clinic by Email": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

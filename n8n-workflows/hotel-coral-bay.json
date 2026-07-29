@@ -1,0 +1,180 @@
+{
+  "name": "AI Lead Catcher — Hotel Demo (Coral Bay)",
+  "description": "White-label AI lead-catcher customized for Coral Bay Boutique Hotel: replies instantly to room inquiries, answers rate/amenity questions, captures dates and guest count, holds reservations, logs every guest, and emails the front desk.",
+  "nodes": [
+    {
+      "id": "7b98e5c5-6d73-4f7c-b56d-5293b0341783",
+      "name": "Lead Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [240, 304],
+      "parameters": {
+        "public": true,
+        "initialMessages": "Welcome to Coral Bay Boutique Hotel! Tell me your dates and I'll check what we have available.",
+        "options": {}
+      },
+      "webhookId": "706d7406-f9fc-4e19-9a7a-befe5039c051"
+    },
+    {
+      "id": "95d5ac76-b4b7-4f8d-9895-1ea70f4de4b4",
+      "name": "Lead Catcher Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [560, 304],
+      "parameters": {
+        "options": {
+          "systemMessage": "=You are the virtual front-desk assistant for Coral Bay Boutique Hotel, a small beachfront hotel. Guests message on the website and social media asking about rooms and dates, and hotels lose direct bookings every day when no one replies fast enough (guests just book elsewhere). Your job is to reply instantly and warmly, answer questions about rooms, rates, and amenities, and capture the reservation.\n\nCURRENT DATE & TIME: {{ $now.toFormat('cccc, LLLL d, yyyy, h:mm a') }} (ISO: {{ $now.toISO() }}). This is ALWAYS \"now\" and the current year is {{ $now.toFormat('yyyy') }}. When a guest says \"this weekend\" or \"next Friday\", resolve it relative to THIS date. Only ever use dates from today onward in the current year, NEVER a past date or past year.\n\nABOUT CORAL BAY:\n- A beachfront boutique hotel, a 5-minute walk to the beach. Check-in 3pm, check-out 11am.\n- Room types (per night): Standard Garden Room $120 | Deluxe Sea-View Room $185 | Family Suite, sleeps 4, $260.\n- Included with every stay: outdoor pool, breakfast, free parking, free WiFi. Pet-friendly rooms available on request.\n\nYOUR GOALS, IN ORDER:\n1. Warmly greet the guest and find out their check-in and check-out dates and how many guests.\n2. Answer any room, rate, or amenity questions accurately using ONLY the details above.\n3. Naturally gather: their name, a phone number or email, check-in/check-out dates, number of guests, room type, and any special requests.\n4. Once you have a name AND a contact, call Check Availability for their requested dates, then confirm the room and quote the nightly rate and total.\n5. When they confirm, call Hold Reservation to place it on the calendar, then call Notify Front Desk by Email so the hotel is instantly alerted.\n\nCRITICAL RELIABILITY RULES (never break these):\n- The MOMENT you have the guest's name AND a phone number or email, immediately call Log Lead to save them. Log Lead upserts by contact info, so calling it again just UPDATES the same record, it never creates duplicates. Call Log Lead again whenever you learn more (dates, room type) and again once a reservation is held (with the dates). This guarantees no guest is ever lost, even if the chat ends abruptly.\n- If Check Availability, Hold Reservation, or Notify Front Desk by Email ever fails or is unavailable, do NOT tell the guest there was a technical problem and do NOT apologise for a system error. Instead: still call Log Lead to capture everything, tell them the front desk will personally confirm their reservation and the exact rate very shortly, and keep the tone warm and confident. A captured guest the hotel follows up on is far better than a lost one.\n- Never invent room types, rates, or amenities that are not listed above. When a room, rate, or amenity IS listed above, state it confidently and directly rather than deferring. If asked something you genuinely do not know (e.g. airport transfers), say the front desk will follow up personally, then make sure you have their contact info and have logged them.\n- OUTPUT DISCIPLINE: Everything you write is shown directly to the guest. Reply ONLY in the voice of the hotel host, and in the same language the guest writes in. NEVER narrate your internal steps, plans, reasoning, or tool calls - do not write things like \"I will now check availability\" or \"I will update the lead\", and never mention tools, systems, logs, errors, or \"technical\" problems. Just speak warmly and naturally.\n\nTONE: warm, hospitable, and polished, like a friendly boutique-hotel host texting back within a minute, never a corporate bot. If someone is joking or off-topic, stay gracious and lightly playful, then gently steer back to how you can help. Qualify before confirming, but stay conversational and never pushy."
+        }
+      }
+    },
+    {
+      "id": "4f46d952-fd9e-4013-a38b-88854f6e1664",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [400, 512],
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": { "maxOutputTokens": 2048, "temperature": 0.3 }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "97bda7b7-1fb0-4eca-ae89-c6e4dd4d0b8f",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [560, 512],
+      "parameters": { "contextWindowLength": 20 }
+    },
+    {
+      "id": "3caed175-2d3d-4bad-bb42-8de884bbbec1",
+      "name": "Check Availability",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [704, 432],
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "timeMin": "={{ $fromAI('timeMin', 'Requested check-in date as ISO 8601 (start of the stay to check availability for)') }}",
+        "timeMax": "={{ $fromAI('timeMax', 'Requested check-out date as ISO 8601 (end of the stay)') }}",
+        "options": { "outputFormat": "bookedSlots" }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "1c13ac0a-6493-4d5f-afd0-93cb6fce5741",
+      "name": "Hold Reservation",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [912, 432],
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": { "__rl": true, "mode": "id", "value": "hamzaaws2000@gmail.com", "cachedResultName": "hamzaaws2000@gmail.com" },
+        "start": "={{ $fromAI('start', 'Confirmed check-in date-time, ISO 8601 (default 3pm on the check-in day)') }}",
+        "end": "={{ $fromAI('end', 'Confirmed check-out date-time, ISO 8601 (default 11am on the check-out day)') }}",
+        "additionalFields": {
+          "summary": "={{ $fromAI('summary', 'Event title, e.g. \"Reservation: Deluxe Sea-View, Sarah Chen, 2 guests\"') }}",
+          "description": "={{ $fromAI('description', 'Guest name, contact, room type, number of guests, and any special requests for the front desk') }}",
+          "sendUpdates": "none"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "8669abc0-ead2-4c8b-8495-a3bd8a1f549a",
+      "name": "Log Lead",
+      "type": "n8n-nodes-base.dataTableTool",
+      "typeVersion": 1.1,
+      "position": [704, 656],
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": { "__rl": true, "cachedResultName": "Coral Bay Boutique Hotel — Reservations", "mode": "id", "value": "Nv2TevWpvqOCDu3e" },
+        "filters": {
+          "conditions": [
+            { "condition": "eq", "keyName": "contactInfo", "keyValue": "={{ $fromAI('contactInfo', 'Phone number or email the guest gave') }}" }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "schema": [
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "leadName", "id": "leadName", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": true, "display": true, "displayName": "contactInfo", "id": "contactInfo", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "checkIn", "id": "checkIn", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "checkOut", "id": "checkOut", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "guests", "id": "guests", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "roomType", "id": "roomType", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "specialRequests", "id": "specialRequests", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "bookedSlot", "id": "bookedSlot", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "qualified", "id": "qualified", "required": false, "type": "string" },
+            { "canBeUsedToMatch": true, "defaultMatch": false, "display": true, "displayName": "summary", "id": "summary", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "sessionId", "id": "sessionId", "required": false, "type": "string" },
+            { "canBeUsedToMatch": false, "defaultMatch": false, "display": true, "displayName": "capturedAt", "id": "capturedAt", "required": false, "type": "string" }
+          ],
+          "value": {
+            "leadName": "={{ $fromAI('leadName', \"The guest's name\") }}",
+            "contactInfo": "={{ $fromAI('contactInfo', 'Phone number or email the guest gave') }}",
+            "checkIn": "={{ $fromAI('checkIn', 'Requested check-in date') }}",
+            "checkOut": "={{ $fromAI('checkOut', 'Requested check-out date') }}",
+            "guests": "={{ $fromAI('guests', 'Number of guests') }}",
+            "roomType": "={{ $fromAI('roomType', 'Which room type they want') }}",
+            "specialRequests": "={{ $fromAI('specialRequests', 'Any special requests, e.g. sea view, pet, late check-in') }}",
+            "bookedSlot": "={{ $fromAI('bookedSlot', 'The confirmed reservation dates, or the text not booked if none yet') }}",
+            "qualified": "={{ $fromAI('qualified', 'yes or no - whether this is a real guest ready to book') }}",
+            "summary": "={{ $fromAI('summary', 'One-sentence summary of the enquiry') }}",
+            "sessionId": "={{ $('Lead Chat Trigger').item.json.sessionId }}",
+            "capturedAt": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "bffc754e-7390-4ed3-bd60-e74cbe6c5205",
+      "name": "Notify Front Desk by Email",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [912, 656],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "lonron888@gmail.com",
+        "subject": "={{ $fromAI('subject', 'Short subject line, e.g. New reservation request at Coral Bay') }}",
+        "message": "={{ $fromAI('message', 'Email body summarizing the guest: name, contact, dates, room type, guest count, special requests, and the held reservation') }}",
+        "options": { "appendAttribution": false }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "webhookId": "221966a1-c91f-45c0-94a2-60cde60e65f7"
+    }
+  ],
+  "connections": {
+    "Lead Chat Trigger": { "main": [[{ "node": "Lead Catcher Agent", "type": "main", "index": 0 }]] },
+    "Gemini Chat Model": { "ai_languageModel": [[{ "node": "Lead Catcher Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "Conversation Memory": { "ai_memory": [[{ "node": "Lead Catcher Agent", "type": "ai_memory", "index": 0 }]] },
+    "Check Availability": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Hold Reservation": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Log Lead": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] },
+    "Notify Front Desk by Email": { "ai_tool": [[{ "node": "Lead Catcher Agent", "type": "ai_tool", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
