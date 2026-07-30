@@ -175,6 +175,43 @@ export function monteCarlo(
 }
 
 // ---------------------------------------------------------------------------
+// Expectancy significance
+// ---------------------------------------------------------------------------
+
+export interface ExpectancyCI {
+  point: number;
+  lo: number;
+  hi: number;
+  /** True if the 95% CI excludes zero — the edge is distinguishable from none. */
+  significant: boolean;
+}
+
+/**
+ * Bootstrap a confidence interval on mean R per trade.
+ *
+ * REPLACES the binomial win-rate test, which asked "is win rate != 50%?" — the
+ * wrong question. Breakeven win rate is 1/(1+R), so a 3:1 system breaks even at
+ * 25%, not 50%. A 23% win rate can be excellent or terrible depending on payoff;
+ * only expectancy answers it. Testing win rate against 50% was measuring nothing.
+ */
+export function bootstrapExpectancy(tradeRs: number[], opts: { iterations?: number; seed?: number } = {}): ExpectancyCI {
+  const iterations = opts.iterations ?? 10000;
+  if (tradeRs.length < 2) return { point: NaN, lo: NaN, hi: NaN, significant: false };
+  const rand = mulberry32(opts.seed ?? 99);
+  const means: number[] = [];
+  for (let it = 0; it < iterations; it++) {
+    let sum = 0;
+    for (let k = 0; k < tradeRs.length; k++) sum += tradeRs[Math.floor(rand() * tradeRs.length)];
+    means.push(sum / tradeRs.length);
+  }
+  means.sort((a, b) => a - b);
+  const lo = quantile(means, 0.025);
+  const hi = quantile(means, 0.975);
+  const point = tradeRs.reduce((a, b) => a + b, 0) / tradeRs.length;
+  return { point, lo, hi, significant: lo > 0 || hi < 0 };
+}
+
+// ---------------------------------------------------------------------------
 // Parameter sensitivity
 // ---------------------------------------------------------------------------
 
