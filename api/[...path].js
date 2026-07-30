@@ -385,6 +385,11 @@ async function bridgeToken() {
   await store2.write({ ...current, token: token2 });
   return token2;
 }
+async function rollBridgeToken() {
+  const token2 = randomBytes2(24).toString("base64url");
+  await store2.update((current) => ({ ...current, token: token2 }));
+  return token2;
+}
 async function tokenMatches(offered) {
   const real = await bridgeToken();
   const left = Buffer.from(offered);
@@ -5940,6 +5945,12 @@ function createApi() {
     "/bridge-status",
     guard(async (_req, res) => {
       res.json({ token: await bridgeToken(), ...await bridgeStatus() });
+    })
+  );
+  api.post(
+    "/bridge-roll",
+    guard(async (_req, res) => {
+      res.json({ token: await rollBridgeToken() });
     })
   );
   api.get(

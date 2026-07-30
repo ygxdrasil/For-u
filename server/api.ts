@@ -15,7 +15,7 @@ import {
   pauseAfterFailure,
   requireAuth,
 } from './auth';
-import {bridgeStatus, bridgeToken, claim, report} from './bridge';
+import {bridgeStatus, bridgeToken, claim, report, rollBridgeToken} from './bridge';
 import {monthlyCap, spend} from './budget';
 import {config, isConfigured} from './config';
 import {keyStatus, loadKeys, setKey} from './keys';
@@ -683,6 +683,13 @@ export function createApi(): Express {
     '/bridge-status',
     guard(async (_req, res) => {
       res.json({token: await bridgeToken(), ...(await bridgeStatus())});
+    }),
+  );
+
+  api.post(
+    '/bridge-roll',
+    guard(async (_req, res) => {
+      res.json({token: await rollBridgeToken()});
     }),
   );
 

@@ -2464,6 +2464,28 @@ try {
   );
   ok('the relay refuses a missing or wrong token, and says nothing else');
 
+  // Both doors have to be replaceable. A credential you cannot change is one
+  // you have to be perfect about, and nobody is — it gets read over a
+  // shoulder, pasted into the wrong window, left in a screenshot.
+  const bridgeBefore = (await (await call('/bridge-status')).json()) as {token: string};
+  const bridgeRolled = await call('/bridge-roll', {method: 'POST'});
+  assert.equal(bridgeRolled.status, 200);
+  const bridgeAfter = (await (await call('/bridge-status')).json()) as {token: string};
+  assert.notEqual(bridgeAfter.token, bridgeBefore.token, 'rolling must change it');
+
+  const staleLaptop = await call('/bridge', {
+    method: 'POST',
+    body: JSON.stringify({token: bridgeBefore.token, state: null}),
+  });
+  assert.equal(staleLaptop.status, 401, 'the old token must stop working at once');
+
+  const freshLaptop = await call('/bridge', {
+    method: 'POST',
+    body: JSON.stringify({token: bridgeAfter.token, state: null}),
+  });
+  assert.equal(freshLaptop.status, 200, 'and the new one must work');
+  ok('the laptop token can be replaced, and the old one dies immediately');
+
   // The token itself is behind the password. Anyone who could read it without
   // signing in would not need to guess at the door it opens.
   assert.equal(

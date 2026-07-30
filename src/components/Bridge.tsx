@@ -1,4 +1,4 @@
-import {Check, Copy, Download, Laptop} from 'lucide-react';
+import {Check, Copy, Download, Laptop, RefreshCw} from 'lucide-react';
 import {useEffect, useState} from 'react';
 
 /**
@@ -31,6 +31,7 @@ export function Bridge() {
   const [status, setStatus] = useState<Status | null>(null);
   const [copied, setCopied] = useState(false);
   const [shown, setShown] = useState(false);
+  const [rolled, setRolled] = useState(false);
 
   useEffect(() => {
     const load = () =>
@@ -43,6 +44,17 @@ export function Bridge() {
     const timer = window.setInterval(load, 20_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const roll = async () => {
+    const response = await fetch('/api/bridge-roll', {method: 'POST'});
+    if (!response.ok) return;
+    const body = (await response.json()) as {token: string};
+    // Shown straight away, because the next thing to do is carry it to the
+    // laptop — and the laptop is offline from this moment until you do.
+    setStatus((was) => (was ? {...was, token: body.token} : was));
+    setShown(true);
+    setRolled(true);
+  };
 
   if (!status) return null;
 
@@ -125,9 +137,19 @@ export function Bridge() {
         </p>
       )}
 
+      <button
+        type="button"
+        onClick={() => void roll()}
+        className="flex items-center gap-1.5 text-[0.6rem] text-mist/40 transition hover:text-rose-300">
+        <RefreshCw size={10} />
+        {rolled ? 'Replaced — run the new command on the laptop' : 'Replace the token'}
+      </button>
+
       <p className="text-[0.6rem] leading-relaxed text-mist/40">
         The token in that command is how the laptop proves it is yours. It can
-        wake the console and put it to sleep, and nothing else.
+        wake the console and put it to sleep, and nothing else. Replacing it
+        stops the laptop until you run the new command there — which is what to
+        do if it has been read over your shoulder or left in a screenshot.
       </p>
     </div>
   );

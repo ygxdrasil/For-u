@@ -73,6 +73,21 @@ export async function bridgeToken(): Promise<string> {
   return token;
 }
 
+/**
+ * Replaces the token, which stops the laptop dead until it is given the new one.
+ *
+ * The phone's token had this from the start and this one did not, which was an
+ * oversight rather than a decision. A credential you cannot change is one you
+ * have to be perfect about, and nobody is: it gets read aloud over a shoulder,
+ * pasted into the wrong window, left in a screenshot. The answer is to make
+ * replacing it a two-second job rather than to hope.
+ */
+export async function rollBridgeToken(): Promise<string> {
+  const token = randomBytes(24).toString('base64url');
+  await store.update((current) => ({...current, token}));
+  return token;
+}
+
 /** Constant-time, because this is the only thing standing in front of it. */
 async function tokenMatches(offered: string): Promise<boolean> {
   const real = await bridgeToken();
