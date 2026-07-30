@@ -36,6 +36,21 @@ export interface GenerateRequest {
    * present and untouched.
    */
   think?: number;
+  /**
+   * When to stop starting new rounds of tool calls, as an epoch millisecond.
+   *
+   * Not a cancellation — anything already running is left to finish. It stops
+   * her *beginning* work she has no time to report on, and sends her straight
+   * to the closing pass so the person waiting gets an answer about what she
+   * did manage.
+   *
+   * This exists because the hosting kills the request at sixty seconds and
+   * returns nothing at all. Eight rounds of a tool that talks to a light —
+   * which now paces its commands and reads them back, so several seconds each
+   * — passes that comfortably, and the failure is total: no reply, no
+   * explanation, and the lights half-changed.
+   */
+  deadline?: number;
   /** Ask the provider to return JSON matching this shape. */
   json?: object;
   /** Disable model-side deliberation where supported, for latency. */

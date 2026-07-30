@@ -188,8 +188,14 @@ export async function findScene(said: string): Promise<Scene | null> {
 
   for (const scene of scenes) {
     for (const alias of scene.say) {
-      if (needle === alias || needle.includes(alias)) {
-        if (!best || alias.length > best.length) best = {scene, length: alias.length};
+      // Whole words only. Plain containment made "day" match inside "today"
+      // and "birthday", so "what's on today" could put the room into daylight
+      // at eleven at night — and the shorter the alias, the more places it
+      // hides. Aliases are all plain words, so escaping is a precaution
+      // rather than a need; it costs nothing and outlives the assumption.
+      const word = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+      if (word.test(needle) && (!best || alias.length > best.length)) {
+        best = {scene, length: alias.length};
       }
     }
   }

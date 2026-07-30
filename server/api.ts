@@ -48,6 +48,7 @@ import {liveWatches} from './watch';
 import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {forgetAvailable} from './available';
+import {forgetLights} from './lights';
 import {trimTrailingSilence} from '../shared/trim';
 import {research} from './research';
 import {takeTurn} from './turn';
@@ -408,6 +409,11 @@ export function createApi(): Express {
       // Pasting a key is how a tool comes into existence for her, so the
       // cached picture of what is connected has to go with it.
       forgetAvailable();
+      // And so does the device list it fetched. A new Govee key is usually a
+      // different Govee account, and a minute of answering about the previous
+      // account's lights — none of which respond — looks exactly like the key
+      // not working.
+      if (name === 'govee') forgetLights();
       // Never echoed back — the status says whether one is set, not what it is.
       res.json(await keyStatus());
     }),

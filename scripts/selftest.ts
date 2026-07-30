@@ -556,6 +556,52 @@ try {
   );
   ok(`a task that runs past ${rounds.length - 1} steps still ends in an answer`);
 
+  /*
+   * Running out of *time* rather than out of steps.
+   *
+   * The hosting kills the request at sixty seconds and returns nothing at all
+   * — no reply, no reason. Tools that talk to a light now take seconds each,
+   * because they pace their commands and read them back, so eight rounds of
+   * them passes that comfortably. She has to stop reaching for things while
+   * there is still time to say what she managed.
+   */
+  const roundsRun: {tools: boolean}[] = [];
+  const dawdler = new GeminiProvider('unused', 'gemini-2.5-flash');
+  (dawdler as unknown as {client: unknown}).client = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    models: {
+      generateContentStream: async (params: any) => {
+        const hasTools = Boolean(params.config?.tools);
+        roundsRun.push({tools: hasTools});
+        return (async function* () {
+          yield hasTools
+            ? {candidates: [{content: {parts: [{functionCall: {name: 'list_reminders', args: {}}}]}}]}
+            : {text: 'Here is as far as I got.'};
+        })();
+      },
+    },
+  };
+
+  let hurried = '';
+  for await (const piece of dawdler.stream({
+    system: 's',
+    turns: [{role: 'user', text: 'do a great many slow things'}],
+    tools: declarations(),
+    // Already past, so the second round is the one that must be refused.
+    deadline: Date.now() - 1,
+    onToolCall: async () => 'done',
+  })) {
+    hurried += piece;
+  }
+
+  assert.equal(hurried, 'Here is as far as I got.', 'she must still answer');
+  assert.equal(
+    roundsRun.filter((round) => round.tools).length,
+    1,
+    'one round of tools ran; the deadline must refuse the rest rather than all of them',
+  );
+  ok('running out of time ends in an answer about what she managed, not silence');
+
   // ---- keys pasted in rather than set in the environment ------------------
   const keysBefore = (await (await call('/keys')).json()) as {gemini: {pasted: boolean}};
   assert.equal(keysBefore.gemini.pasted, false, 'nothing pasted yet');
@@ -2200,6 +2246,10 @@ try {
 
     // The safety net, for every other reason a bulb ignores an instruction:
     // one it accepted and threw away must be noticed and sent again.
+    // Lit, because a light that is off cannot confirm a colour and is
+    // deliberately not asked to — so this is the only state in which the
+    // re-send is reachable at all.
+    bulb.powerSwitch = 1;
     dropNext = true;
     const forced = await runTool({name: 'colour_lights', args: {colour: 'blue'}});
     assert.ok(forced.ok, 'a swallowed command should still end in success');
@@ -2279,6 +2329,32 @@ try {
     ghost = false;
     forgetLights();
 
+    /*
+     * A dark light has nothing to say about its colour.
+     *
+     * Most models report brightness and colour as zero while powered down,
+     * which matches nothing anyone asked for. Verifying it anyway meant every
+     * command sent to a dark room did its work, disagreed with itself,
+     * re-sent everything, waited, disagreed again, and finished by doubting a
+     * command it had carried out perfectly — three seconds to manufacture an
+     * uncertainty.
+     */
+    bulb.powerSwitch = 0;
+    bulb.brightness = 0;
+    bulb.colorRgb = 0;
+    const inTheDark = arrivals.length;
+    const dimmed2 = await runTool({name: 'dim_lights', args: {percent: 40}});
+    assert.ok(dimmed2.ok);
+    assert.doesNotMatch(dimmed2.result, /would not confirm/i, 'no manufactured doubt');
+    assert.match(dimmed2.result, /switched off/i, 'but she is told nothing will show');
+    assert.equal(
+      arrivals.length - inTheDark,
+      1,
+      'and it must not be re-sent chasing a confirmation a dark light cannot give',
+    );
+    ok('a command to a dark light is not re-sent chasing an impossible confirmation');
+    bulb.powerSwitch = 1;
+
     // ---- the named settings ---------------------------------------------
     // Kelvin is the axis because it is the language the research uses and
     // because "warmer" and "cooler" then mean something you can slide along.
@@ -2308,7 +2384,17 @@ try {
       const found = await findScene(spoken);
       assert.equal(found?.id, wanted, `"${spoken}" should mean ${wanted}`);
     }
-    ok('the settings answer to the words people actually say');
+
+    // Whole words only. Plain containment made "day" match inside "today", so
+    // asking what was on could have put the room into daylight at midnight.
+    for (const innocent of ['today', 'birthday', 'workshop', 'relaxation']) {
+      assert.equal(
+        await findScene(innocent),
+        null,
+        `"${innocent}" must not match a setting hiding inside it`,
+      );
+    }
+    ok('the settings answer to the words people actually say, and only those');
 
     const asked = await runTool({name: 'set_scene', args: {scene: 'sleep mode'}});
     assert.ok(asked.ok, `sleep mode should apply: ${asked.result}`);

@@ -205,6 +205,18 @@ function close(a: number, b: number, by: number): boolean {
 }
 
 function took(state: LightState, capability: Capability): boolean | null {
+  /*
+   * A light that is off has nothing to say about its colour or brightness.
+   *
+   * Most models report both as zero while powered down, which matches nothing
+   * that was ever asked for. Left alone that means every "dim the lights" sent
+   * to a dark room does its work, disagrees with itself, re-sends everything,
+   * waits, disagrees again, and finishes by telling her it could not be
+   * confirmed — three seconds spent to produce a doubt about a command that
+   * was carried out perfectly.
+   */
+  if (state.on === false && capability.instance !== 'powerSwitch') return null;
+
   switch (capability.instance) {
     case 'powerSwitch':
       return state.on === null ? null : state.on === (capability.value === 1);

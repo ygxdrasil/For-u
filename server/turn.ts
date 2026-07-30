@@ -54,6 +54,17 @@ export interface TurnResult {
   deliberation: Deliberation;
 }
 
+/**
+ * How long she may go on starting new actions before she has to answer.
+ *
+ * The hosting cuts the request off at sixty seconds and returns nothing —
+ * not a timeout message, nothing — so this is the point at which she stops
+ * reaching for anything else and writes up what she has. Fifteen seconds of
+ * headroom is enough for a long reply to stream out and be recorded even if
+ * the last tool ran right up to the line.
+ */
+const TOOLS_UNTIL_MS = 45_000;
+
 export const NO_KEY_MESSAGE =
   'No Gemini API key is configured, so I have no voice to think with. ' +
   'Add GEMINI_API_KEY and restart me.';
@@ -73,6 +84,7 @@ export async function takeTurn({
 }: TurnRequest): Promise<TurnResult> {
   const acted: {name: string; summary: string}[] = [];
   const deliberation = effortFor(text);
+  const startedAt = Date.now();
 
   if (!isConfigured()) {
     return {reply: '', message: null, error: NO_KEY_MESSAGE, acted, deliberation};
@@ -148,6 +160,12 @@ export async function takeTurn({
       // and her considered one.
       think: deliberation.think,
       temperature: deliberation.temperature,
+      // Enough left to write the answer, speak it, and record it after the
+      // last tool comes back. The hosting stops the whole request dead at
+      // sixty seconds and returns nothing — no reply and no reason — so the
+      // margin is deliberately generous. An answer about three of four things
+      // beats silence about all four.
+      deadline: startedAt + TOOLS_UNTIL_MS,
       // Room for the reply. Deliberation is added on top of this by the
       // provider — on Gemini the two share one ceiling, and a caller who does
       // not know that raises the thinking budget and gets back an empty string.

@@ -741,6 +741,10 @@ var GeminiProvider = class {
         parts: [{ text: turn.text }]
       }));
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+        if (round > 0 && request.deadline && Date.now() > request.deadline) {
+          console.error("[grace] out of time for more tools; answering with what she has");
+          break;
+        }
         const response2 = await this.client.models.generateContentStream({
           ...this.params(request),
           contents: history
@@ -3485,6 +3489,9 @@ async function call3(path3, body) {
 }
 var known = null;
 var KNOWN_FOR_MS = 6e4;
+function forgetLights() {
+  known = null;
+}
 async function lights() {
   if (known && Date.now() - known.at < KNOWN_FOR_MS) return known.lights;
   const { data } = await call3(
@@ -3549,6 +3556,7 @@ function close(a, b, by) {
   return Math.abs(a - b) <= by;
 }
 function took(state, capability) {
+  if (state.on === false && capability.instance !== "powerSwitch") return null;
   switch (capability.instance) {
     case "powerSwitch":
       return state.on === null ? null : state.on === (capability.value === 1);
@@ -3825,8 +3833,9 @@ async function findScene(said2) {
   let best = null;
   for (const scene of scenes) {
     for (const alias of scene.say) {
-      if (needle === alias || needle.includes(alias)) {
-        if (!best || alias.length > best.length) best = { scene, length: alias.length };
+      const word = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+      if (word.test(needle) && (!best || alias.length > best.length)) {
+        best = { scene, length: alias.length };
       }
     }
   }
@@ -5270,6 +5279,7 @@ ${description}`;
 }
 
 // server/turn.ts
+var TOOLS_UNTIL_MS = 45e3;
 var NO_KEY_MESSAGE = "No Gemini API key is configured, so I have no voice to think with. Add GEMINI_API_KEY and restart me.";
 async function takeTurn({
   text,
@@ -5279,6 +5289,7 @@ async function takeTurn({
 }) {
   const acted = [];
   const deliberation = effortFor(text);
+  const startedAt = Date.now();
   if (!isConfigured()) {
     return { reply: "", message: null, error: NO_KEY_MESSAGE, acted, deliberation };
   }
@@ -5328,6 +5339,12 @@ async function takeTurn({
       // and her considered one.
       think: deliberation.think,
       temperature: deliberation.temperature,
+      // Enough left to write the answer, speak it, and record it after the
+      // last tool comes back. The hosting stops the whole request dead at
+      // sixty seconds and returns nothing — no reply and no reason — so the
+      // margin is deliberately generous. An answer about three of four things
+      // beats silence about all four.
+      deadline: startedAt + TOOLS_UNTIL_MS,
       // Room for the reply. Deliberation is added on top of this by the
       // provider — on Gemini the two share one ceiling, and a caller who does
       // not know that raises the thinking budget and gets back an empty string.
@@ -5735,6 +5752,7 @@ function createApi() {
       }
       await setKey(name, String(req.body?.value ?? ""));
       forgetAvailable();
+      if (name === "govee") forgetLights();
       res.json(await keyStatus());
     })
   );

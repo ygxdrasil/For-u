@@ -140,6 +140,14 @@ export class GeminiProvider implements LlmProvider {
       }));
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+        // Out of time to start anything else. Everything already done still
+        // counts and is about to be reported; what is refused is only the
+        // next round, which there is no time to act on and describe.
+        if (round > 0 && request.deadline && Date.now() > request.deadline) {
+          console.error('[grace] out of time for more tools; answering with what she has');
+          break;
+        }
+
         const response = await this.client.models.generateContentStream({
           ...this.params(request),
           contents: history,
