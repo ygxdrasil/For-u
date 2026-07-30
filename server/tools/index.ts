@@ -251,6 +251,10 @@ const NEEDS: Record<string, keyof Available> = {
   colour_lights: 'lights',
   list_lights: 'lights',
   check_lights: 'lights',
+  set_scene: 'lights',
+  adjust_scene: 'lights',
+  restore_scene: 'lights',
+  list_scenes: 'lights',
 };
 
 export interface Available {

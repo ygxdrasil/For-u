@@ -239,8 +239,8 @@ function took(state: LightState, capability: Capability): boolean | null {
  * failed. Some models do not report every capability, and turning "I could not
  * check" into "it did not work" would be its own kind of lying.
  */
-async function control(light: Light, capability: Capability): Promise<LightState> {
-  const send = async () => {
+async function apply(light: Light, capabilities: Capability[]): Promise<LightState> {
+  const send = async (capability: Capability) => {
     await pace(light.device);
     await call('/device/control', {
       requestId: randomUUID(),
@@ -248,19 +248,21 @@ async function control(light: Light, capability: Capability): Promise<LightState
     });
   };
 
-  await send();
+  for (const capability of capabilities) await send(capability);
   await sleep(CONFIRM_AFTER_MS);
 
   let state = await stateOf(light).catch(() => UNKNOWN);
-  if (took(state, capability) !== false) return state;
+  const missed = capabilities.filter((one) => took(state, one) === false);
+  if (missed.length === 0) return state;
 
-  // It was accepted and discarded. Now that we know, say it again — this time
-  // with the pacing gap in front of it, which is what it wanted all along.
-  await send();
+  // Accepted and discarded. Now that we know, say it again — this time with
+  // the pacing gap in front of it, which is what it wanted all along.
+  for (const capability of missed) await send(capability);
   await sleep(CONFIRM_AFTER_MS);
 
   state = await stateOf(light).catch(() => UNKNOWN);
-  if (took(state, capability) === false) {
+  const stubborn = capabilities.filter((one) => took(state, one) === false);
+  if (stubborn.length > 0) {
     throw new LightError(
       `${light.name} took the instruction and did not act on it, twice. ` +
         (state.online === false
@@ -270,6 +272,47 @@ async function control(light: Light, capability: Capability): Promise<LightState
   }
 
   return state;
+}
+
+const control = (light: Light, capability: Capability) => apply(light, [capability]);
+
+/**
+ * A whole scene at one light: on, coloured, dimmed.
+ *
+ * Sent as three instructions because Govee takes one capability per request,
+ * but verified as one — a single read at the end, and only the parts that
+ * failed are repeated. Verifying each in turn would mean three reads and three
+ * settling pauses, which is five seconds of standing in the dark waiting for
+ * a light to come on.
+ *
+ * Brightness goes last on purpose: on several models setting a colour resets
+ * the level, so a scene applied the other way round is the right colour at the
+ * wrong brightness — and brightness is the half that matters most at night.
+ */
+export async function applyScene(
+  said: string | undefined,
+  rgb: [number, number, number],
+  brightness: number,
+): Promise<string[]> {
+  const chosen = await pick(said);
+  const level = Math.max(1, Math.min(100, Math.round(brightness)));
+  const packed = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
+
+  await Promise.all(
+    chosen.map((light) =>
+      apply(light, [
+        {type: 'devices.capabilities.on_off', instance: 'powerSwitch', value: 1},
+        {
+          type: 'devices.capabilities.color_setting',
+          instance: 'colorRgb',
+          value: packed,
+        },
+        {type: 'devices.capabilities.range', instance: 'brightness', value: level},
+      ]),
+    ),
+  );
+
+  return chosen.map((light) => light.name);
 }
 
 export async function setPower(said: string | undefined, on: boolean): Promise<string[]> {

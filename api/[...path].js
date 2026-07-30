@@ -1184,8 +1184,8 @@ async function clearConversation() {
 }
 async function compactIfNeeded(force = false) {
   const log = await (await logOf()).read();
-  const store20 = await metaOf();
-  const current = await store20.read();
+  const store21 = await metaOf();
+  const current = await store21.read();
   const unsummarised = log.length - current.summarizedThrough;
   if (!force && unsummarised <= config.summarizeAfter) return false;
   const keep = force ? 6 : config.verbatimTurns;
@@ -1217,7 +1217,7 @@ ${transcript}`;
       fast: true
     });
     if (!summary.trim()) return false;
-    await store20.write({ summary: summary.trim(), summarizedThrough: foldUpTo });
+    await store21.write({ summary: summary.trim(), summarizedThrough: foldUpTo });
     return true;
   } catch (error) {
     console.error("[grace] could not compact memory:", error.message);
@@ -3567,27 +3567,49 @@ function took(state, capability) {
     }
   }
 }
-async function control(light, capability) {
-  const send2 = async () => {
+async function apply(light, capabilities) {
+  const send2 = async (capability) => {
     await pace(light.device);
     await call3("/device/control", {
       requestId: randomUUID11(),
       payload: { sku: light.sku, device: light.device, capability }
     });
   };
-  await send2();
+  for (const capability of capabilities) await send2(capability);
   await sleep(CONFIRM_AFTER_MS);
   let state = await stateOf(light).catch(() => UNKNOWN);
-  if (took(state, capability) !== false) return state;
-  await send2();
+  const missed = capabilities.filter((one) => took(state, one) === false);
+  if (missed.length === 0) return state;
+  for (const capability of missed) await send2(capability);
   await sleep(CONFIRM_AFTER_MS);
   state = await stateOf(light).catch(() => UNKNOWN);
-  if (took(state, capability) === false) {
+  const stubborn = capabilities.filter((one) => took(state, one) === false);
+  if (stubborn.length > 0) {
     throw new LightError(
       `${light.name} took the instruction and did not act on it, twice. ` + (state.online === false ? "It is showing as offline." : "It may be off the network or mid-update.")
     );
   }
   return state;
+}
+var control = (light, capability) => apply(light, [capability]);
+async function applyScene(said2, rgb, brightness) {
+  const chosen = await pick(said2);
+  const level = Math.max(1, Math.min(100, Math.round(brightness)));
+  const packed = rgb[0] << 16 | rgb[1] << 8 | rgb[2];
+  await Promise.all(
+    chosen.map(
+      (light) => apply(light, [
+        { type: "devices.capabilities.on_off", instance: "powerSwitch", value: 1 },
+        {
+          type: "devices.capabilities.color_setting",
+          instance: "colorRgb",
+          value: packed
+        },
+        { type: "devices.capabilities.range", instance: "brightness", value: level }
+      ])
+    )
+  );
+  return chosen.map((light) => light.name);
 }
 async function setPower(said2, on) {
   const chosen = await pick(said2);
@@ -3693,7 +3715,166 @@ function lightsConfigured() {
   return Boolean(goveeKey());
 }
 
+// server/scenes.ts
+var KELVIN_RANGE = { low: 1e3, high: 6500 };
+var DEFAULTS = [
+  {
+    id: "morning",
+    say: ["morning", "wake up", "wake", "good morning"],
+    kelvin: 5e3,
+    brightness: 100,
+    why: "Bright and blue-rich on waking anchors the body clock to the day. Real daylight does this far better \u2014 treat this as a stand-in until you get to a window."
+  },
+  {
+    id: "day",
+    say: ["day", "midday", "daytime", "afternoon"],
+    kelvin: 5500,
+    brightness: 100,
+    why: "Daytime wants as much light as you can comfortably take. Brightness is doing the work here; the colour is a distant second."
+  },
+  {
+    id: "work",
+    say: ["work", "working", "focus", "concentrate", "study"],
+    kelvin: 6e3,
+    brightness: 100,
+    why: "Blue-enriched white around 6000K measurably speeds up sustained attention and cuts sleepiness. It does little for deeper reasoning \u2014 it keeps you awake, it does not make you cleverer."
+  },
+  {
+    id: "energise",
+    say: ["energise", "energize", "boost", "wake me up", "slump"],
+    kelvin: 6500,
+    brightness: 100,
+    why: "The coolest and brightest setting, for the afternoon dip. Fine before about four in the afternoon and a bad idea after it."
+  },
+  {
+    id: "reading",
+    say: ["reading", "read"],
+    kelvin: 3200,
+    brightness: 70,
+    why: "Enough light to read comfortably without the short wavelengths of a work setting. Eye strain comes from too little light far more often than from the wrong colour."
+  },
+  {
+    id: "evening",
+    say: ["evening", "sunset", "dinner"],
+    kelvin: 2200,
+    brightness: 35,
+    why: "From about three hours before bed the target is under 10 melanopic lux at the eye. Dim is what gets you there; amber helps."
+  },
+  {
+    id: "relax",
+    say: ["relax", "relaxing", "chill", "unwind", "calm"],
+    kelvin: 2400,
+    brightness: 30,
+    why: "Low and warm. Nothing about a particular hue is relaxing in itself \u2014 it is the dimness the body reads as evening."
+  },
+  {
+    id: "wind down",
+    say: ["wind down", "winding down", "bedtime", "bed time", "getting ready for bed"],
+    kelvin: 1800,
+    brightness: 15,
+    why: "The last hour. Deep amber with almost no blue, dim enough to leave melatonin alone."
+  },
+  {
+    id: "film",
+    say: ["film", "movie", "movies", "cinema", "tv"],
+    kelvin: 2e3,
+    brightness: 12,
+    why: "Dim warm bias light behind the screen. Easier on the eyes than a bright screen in a dark room, and late enough at night that it should not be blue."
+  },
+  {
+    id: "sleep",
+    say: ["sleep", "sleeping", "night", "goodnight", "good night", "lights down"],
+    kelvin: 1200,
+    brightness: 1,
+    why: "As close to darkness as a light gets, and red, which has the least power of any visible colour to suppress melatonin. The bedroom target is under 1 melanopic lux."
+  },
+  {
+    id: "night light",
+    say: ["night light", "nightlight", "getting up", "bathroom"],
+    kelvin: 1200,
+    brightness: 3,
+    why: "Enough red light to cross a room at three in the morning without waking your body clock up. White light at this hour undoes hours of sleep pressure."
+  }
+];
+var SCENE_NAMES = DEFAULTS.map((scene) => scene.id);
+var store16 = new Document("scenes", () => ({ changes: {} }));
+var clamp = (value, low, high) => Math.max(low, Math.min(high, Math.round(value)));
+async function allScenes() {
+  const { changes } = await store16.read();
+  return DEFAULTS.map((scene) => {
+    const change = changes[scene.id];
+    if (!change) return scene;
+    return {
+      ...scene,
+      kelvin: change.kelvin ?? scene.kelvin,
+      brightness: change.brightness ?? scene.brightness
+    };
+  });
+}
+async function findScene(said2) {
+  const needle = said2.toLowerCase().replace(/\b(mode|scene|setting|lighting|please|activate|set|to|the)\b/g, " ").replace(/\s+/g, " ").trim();
+  if (!needle) return null;
+  const scenes = await allScenes();
+  let best = null;
+  for (const scene of scenes) {
+    for (const alias of scene.say) {
+      if (needle === alias || needle.includes(alias)) {
+        if (!best || alias.length > best.length) best = { scene, length: alias.length };
+      }
+    }
+  }
+  return best?.scene ?? null;
+}
+var STEP = {
+  little: { brightness: 8, kelvin: 250 },
+  lot: { brightness: 20, kelvin: 700 }
+};
+async function tuneScene(id, change) {
+  const before = (await allScenes()).find((scene) => scene.id === id);
+  if (!before) throw new Error(`no scene called ${id}`);
+  const step = change.much ? STEP.lot : STEP.little;
+  let { kelvin, brightness } = before;
+  if (change.nudge === "dimmer") brightness -= step.brightness;
+  if (change.nudge === "brighter") brightness += step.brightness;
+  if (change.nudge === "warmer") kelvin -= step.kelvin;
+  if (change.nudge === "cooler") kelvin += step.kelvin;
+  if (change.brightness !== void 0) brightness = change.brightness;
+  if (change.kelvin !== void 0) kelvin = change.kelvin;
+  const tuned = {
+    kelvin: clamp(kelvin, KELVIN_RANGE.low, KELVIN_RANGE.high),
+    brightness: clamp(brightness, 1, 100)
+  };
+  await store16.update((current) => ({
+    changes: { ...current.changes, [id]: tuned }
+  }));
+  return { ...before, ...tuned };
+}
+async function restoreScene(id) {
+  await store16.update((current) => {
+    const changes = { ...current.changes };
+    delete changes[id];
+    return { changes };
+  });
+  const scene = DEFAULTS.find((one) => one.id === id);
+  if (!scene) throw new Error(`no scene called ${id}`);
+  return scene;
+}
+function kelvinToRgb(kelvin) {
+  const temp = clamp(kelvin, 1e3, 4e4) / 100;
+  const bound = (value) => clamp(value, 0, 255);
+  const red = temp <= 66 ? 255 : bound(329.698727446 * (temp - 60) ** -0.1332047592);
+  const green = temp <= 66 ? bound(99.4708025861 * Math.log(temp) - 161.1195681661) : bound(288.1221695283 * (temp - 60) ** -0.0755148492);
+  const blue = temp >= 66 ? 255 : temp <= 19 ? 0 : bound(138.5177312231 * Math.log(temp - 10) - 305.0447927307);
+  return [red, green, blue];
+}
+
 // server/tools/lights.ts
+var NUDGES = ["dimmer", "brighter", "warmer", "cooler"];
+var DEFAULT_NAMES = SCENE_NAMES.join(", ");
+async function sceneList() {
+  const scenes = await allScenes();
+  return `Settings: ${scenes.map((scene) => `${scene.id} (${scene.kelvin}K, ${scene.brightness}%)`).join("; ")}.`;
+}
 function said(names) {
   if (names.length === 1) return names[0];
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
@@ -3771,6 +3952,85 @@ var lightTools = [
     })
   },
   {
+    name: "set_scene",
+    description: `Put the lights into one of the named settings: ${DEFAULT_NAMES}. Use it whenever the user names one \u2014 "sleep mode", "activate work mode", "put it in evening", "movie time" \u2014 and also whenever what they describe plainly is one of them ("I'm going to bed", "time to focus"). Each one sets a colour and a brightness together, chosen from the research on light and the body clock. Prefer this over setting a colour and a brightness separately.`,
+    category: "home",
+    parameters: {
+      scene: { type: "string", description: "The setting they named, as they said it." },
+      which: { type: "string", description: "Which light. Leave out for all." }
+    },
+    required: ["scene"],
+    run: (args) => guarded(async () => {
+      const scene = await findScene(String(args.scene));
+      if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
+      const names = await applyScene(
+        args.which ? String(args.which) : void 0,
+        kelvinToRgb(scene.kelvin),
+        scene.brightness
+      );
+      return `${said(names)} in ${scene.id} \u2014 ${scene.kelvin}K at ${scene.brightness}%. Say it in a few words. If they ask why it is set this way: ${scene.why}`;
+    })
+  },
+  {
+    name: "adjust_scene",
+    description: 'Change what one of the named settings means, and keep the change. Use it for "make sleep mode a bit dimmer", "work mode is too blue", "warmer evening". It saves the new values and shows them immediately, so the next time they ask for that setting they get the new one. Use nudge for "a bit"/"a lot" changes and the exact numbers only when they give you one.',
+    category: "home",
+    parameters: {
+      scene: { type: "string", description: "Which setting to change." },
+      nudge: {
+        type: "string",
+        description: "One of: dimmer, brighter, warmer, cooler."
+      },
+      much: {
+        type: "boolean",
+        description: 'True for "a lot"/"much", false or omitted for "a bit".'
+      },
+      brightness: { type: "number", description: "An exact brightness, 1 to 100." },
+      kelvin: {
+        type: "number",
+        description: "An exact colour temperature, 1000 (deep red) to 6500 (cool daylight)."
+      }
+    },
+    required: ["scene"],
+    run: (args) => guarded(async () => {
+      const scene = await findScene(String(args.scene));
+      if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
+      const nudge = args.nudge ? String(args.nudge).toLowerCase() : void 0;
+      if (nudge && !NUDGES.includes(nudge)) {
+        return `A nudge is one of: ${NUDGES.join(", ")}.`;
+      }
+      const tuned = await tuneScene(scene.id, {
+        ...nudge ? { nudge } : {},
+        ...args.much !== void 0 ? { much: Boolean(args.much) } : {},
+        ...args.brightness !== void 0 ? { brightness: Number(args.brightness) } : {},
+        ...args.kelvin !== void 0 ? { kelvin: Number(args.kelvin) } : {}
+      });
+      const names = await applyScene(void 0, kelvinToRgb(tuned.kelvin), tuned.brightness);
+      return `${scene.id} is now ${tuned.kelvin}K at ${tuned.brightness}%, and ${said(names)} ${names.length === 1 ? "is" : "are"} showing it. Saved for next time.`;
+    })
+  },
+  {
+    name: "restore_scene",
+    description: 'Put one of the named settings back to how it started, undoing any adjustments. Use it for "put sleep mode back", "reset work mode".',
+    category: "home",
+    parameters: { scene: { type: "string", description: "Which setting." } },
+    required: ["scene"],
+    run: (args) => guarded(async () => {
+      const scene = await findScene(String(args.scene));
+      if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
+      const back = await restoreScene(scene.id);
+      return `${back.id} is back to ${back.kelvin}K at ${back.brightness}%.`;
+    })
+  },
+  {
+    name: "list_scenes",
+    description: "List the named light settings and what each one is currently set to. Use it when the user asks what settings there are, or names one you do not recognise.",
+    category: "research",
+    parameters: {},
+    required: [],
+    run: () => guarded(sceneList)
+  },
+  {
     name: "check_lights",
     description: "Read what the lights are actually doing right now \u2014 on or off, how bright, what colour, whether they are reachable. Use it whenever the user asks about the state of the lights, when they say something did not happen, and before answering any question about the room that you would otherwise be guessing at. Never assume a light is as you last left it; people use switches and apps too.",
     category: "research",
@@ -3808,7 +4068,7 @@ var lightTools = [
 
 // server/workspaces.ts
 import { randomUUID as randomUUID12 } from "node:crypto";
-var DEFAULTS = [
+var DEFAULTS2 = [
   {
     id: "grace",
     name: "Grace",
@@ -3848,10 +4108,10 @@ var DEFAULTS = [
     blurb: "The console, and what you have been playing."
   }
 ];
-var store16 = new Document("workspaces", () => DEFAULTS);
+var store17 = new Document("workspaces", () => DEFAULTS2);
 async function workspaces() {
-  const saved = await store16.read();
-  const missing = DEFAULTS.filter((one) => !saved.some((other) => other.id === one.id));
+  const saved = await store17.read();
+  const missing = DEFAULTS2.filter((one) => !saved.some((other) => other.id === one.id));
   return [...saved, ...missing].filter((one) => !one.hidden);
 }
 async function findWorkspace(said2) {
@@ -3871,7 +4131,7 @@ async function saveWorkspace(patch) {
     blurb: patch.blurb?.slice(0, 80),
     brief: patch.brief?.slice(0, 200)
   };
-  await store16.update((current) => {
+  await store17.update((current) => {
     const rest = current.filter((one) => one.id !== clean.id);
     const at = current.findIndex((one) => one.id === clean.id);
     if (at < 0) return [...current, clean];
@@ -3882,9 +4142,9 @@ async function saveWorkspace(patch) {
   return workspaces();
 }
 async function hideWorkspace(id) {
-  await store16.update((current) => {
+  await store17.update((current) => {
     const known2 = current.some((one) => one.id === id);
-    const base = known2 ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
+    const base = known2 ? current : [...current, ...DEFAULTS2.filter((one) => one.id === id)];
     return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
   });
   return workspaces();
@@ -4543,7 +4803,11 @@ var NEEDS = {
   dim_lights: "lights",
   colour_lights: "lights",
   list_lights: "lights",
-  check_lights: "lights"
+  check_lights: "lights",
+  set_scene: "lights",
+  adjust_scene: "lights",
+  restore_scene: "lights",
+  list_scenes: "lights"
 };
 function declarations(have) {
   const usable = have ? TOOLS.filter((tool) => {
@@ -4799,6 +5063,10 @@ Know rather than assume. You do not remember the state of a room \u2014 people f
 
 Each command now confirms itself against the light before it comes back to you, so a success really is one. What it cannot tell you is whether they liked it.
 
+There are named settings \u2014 sleep, wind down, evening, relax, film, reading, work, energise, morning, day, night light \u2014 each a colour and a brightness together, set from the research on light and the body clock. set_scene applies one, list_scenes says what they are, adjust_scene changes what one means and keeps the change ("make sleep mode a bit dimmer"), restore_scene puts it back. Reach for a scene rather than a colour and a brightness separately whenever what they said matches one, including when they describe it rather than name it \u2014 "I'm going to bed" is wind down, "time to focus" is work.
+
+Two things about that light are worth knowing and worth saying if it comes up. Brightness matters more than colour: dim is what the body reads as evening, and an amber light at full brightness is not a sleep aid. And no strip can deliver the daytime dose \u2014 that needs a window. Do not oversell what a light in a room can do for someone's sleep, and never imply it is medical advice.
+
 Act rather than ask. A light is the most undoable thing in the house \u2014 if you get it wrong they say one sentence and it is right again \u2014 so "shall I turn them off?" is the wrong shape every single time. Read the room: going to bed is off, settling down is warm and dim, working is bright, and you can pick a colour from a mood without being given one.
 
 If a name they said matches no light, say which lights there are rather than doing it to all of them. Turning on every light in the house because a word was misheard is how someone stops talking to you at night.`;
@@ -4920,7 +5188,7 @@ ${summary}` : null;
 }
 
 // server/style.ts
-var store17 = new Document("style", () => ({
+var store18 = new Document("style", () => ({
   description: null,
   samples: 0,
   builtAt: null
@@ -4928,14 +5196,14 @@ var store17 = new Document("style", () => ({
 var STALE_MS2 = 7 * 24 * 60 * 60 * 1e3;
 var SAMPLES = 8;
 async function writingStyle() {
-  return (await store17.read()).description;
+  return (await store18.read()).description;
 }
 function fresh(style) {
   if (!style.description || !style.builtAt) return false;
   return Date.now() - new Date(style.builtAt).getTime() < STALE_MS2;
 }
 async function learnWritingStyle(force = false) {
-  const current = await store17.read();
+  const current = await store18.read();
   if (!force && fresh(current)) return false;
   const sent = await recentMail("in:sent", SAMPLES).catch(() => []);
   if (sent.length < 3) return false;
@@ -4959,7 +5227,7 @@ ${body}`).join("\n\n")
     fast: true
   }).catch(() => "");
   if (!description.trim()) return false;
-  await store17.write({
+  await store18.write({
     description: description.trim(),
     samples: bodies.length,
     builtAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -5105,25 +5373,25 @@ async function takeTurn({
 
 // server/relay.ts
 import { randomBytes as randomBytes3, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
-var store18 = new Document("relay", () => ({
+var store19 = new Document("relay", () => ({
   token: null,
   usedAt: null,
   turns: 0
 }));
 async function relayToken() {
-  const current = await store18.read();
+  const current = await store19.read();
   if (current.token) return current.token;
   const token2 = randomBytes3(24).toString("base64url");
-  await store18.write({ ...current, token: token2 });
+  await store19.write({ ...current, token: token2 });
   return token2;
 }
 async function rollRelayToken() {
   const token2 = randomBytes3(24).toString("base64url");
-  await store18.update((current) => ({ ...current, token: token2 }));
+  await store19.update((current) => ({ ...current, token: token2 }));
   return token2;
 }
 async function relayStatus() {
-  const { usedAt, turns } = await store18.read();
+  const { usedAt, turns } = await store19.read();
   return { usedAt, turns };
 }
 async function relayAllows(offered) {
@@ -5135,7 +5403,7 @@ async function relayAllows(offered) {
   return timingSafeEqual4(left, right);
 }
 async function noteRelayUse() {
-  await store18.update((current) => ({
+  await store19.update((current) => ({
     ...current,
     usedAt: (/* @__PURE__ */ new Date()).toISOString(),
     turns: current.turns + 1
@@ -5157,9 +5425,9 @@ var BANDS = 24;
 
 // server/voiceguard.ts
 var EMPTY = { enrolment: null, on: false, strictness: "normal" };
-var store19 = new Document("voiceguard", () => EMPTY);
+var store20 = new Document("voiceguard", () => EMPTY);
 function voiceGuard() {
-  return store19.read();
+  return store20.read();
 }
 function isEnrolment(value) {
   if (!value || typeof value !== "object") return false;
@@ -5173,16 +5441,16 @@ function isEnrolment(value) {
   ));
 }
 async function enrol(enrolment) {
-  const current = await store19.read();
+  const current = await store20.read();
   const next = {
     ...current,
     enrolment: { ...enrolment, at: (/* @__PURE__ */ new Date()).toISOString() }
   };
-  await store19.write(next);
+  await store20.write(next);
   return next;
 }
 async function setGuard(patch) {
-  const current = await store19.read();
+  const current = await store20.read();
   const next = {
     ...current,
     ...patch.strictness ? { strictness: patch.strictness } : {},
@@ -5190,11 +5458,11 @@ async function setGuard(patch) {
     // turning it on without a print is quietly a no.
     ...patch.on !== void 0 ? { on: patch.on && Boolean(current.enrolment) } : {}
   };
-  await store19.write(next);
+  await store20.write(next);
   return next;
 }
 async function forgetVoice() {
-  await store19.write(EMPTY);
+  await store20.write(EMPTY);
   return EMPTY;
 }
 

@@ -48,6 +48,7 @@ import {logKey, metaKey} from '../server/chats';
 import {forSpeaking, relayUrl} from '../server/relay';
 import {THINKING, effortFor} from '../shared/effort';
 import {forgetLights} from '../server/lights';
+import {allScenes, findScene, kelvinToRgb} from '../server/scenes';
 import {setKey} from '../server/keys';
 import {Document} from '../server/store/index';
 import {voiceChecks} from './voicecheck';
@@ -2201,6 +2202,68 @@ try {
     assert.match(seen.result, /20%/, 'and its real brightness reported');
     assert.match(seen.result, /blue/, 'and its real colour, in a word she can say');
     ok('she can read the room back from the lights themselves');
+
+    // ---- the named settings ---------------------------------------------
+    // Kelvin is the axis because it is the language the research uses and
+    // because "warmer" and "cooler" then mean something you can slide along.
+    // The behaviour that matters is at the bottom of the range: a bedroom
+    // setting must contain no blue at all, or it is not a bedroom setting.
+    const [, , night] = kelvinToRgb(1200);
+    assert.equal(night, 0, '1200K must have no blue in it whatsoever');
+    assert.ok(kelvinToRgb(1200)[0] > 200, 'and must still be a real, red light');
+    assert.ok(
+      kelvinToRgb(6000)[2] > kelvinToRgb(3000)[2],
+      'and cooler must actually mean more blue',
+    );
+    ok('colour temperature converts to something a bedroom can use at midnight');
+
+    // The phrase people actually say. "Mode" carries nothing and is dropped;
+    // the longest alias wins, so "night light" is not swallowed by "night".
+    for (const [spoken, wanted] of [
+      ['sleep mode', 'sleep'],
+      ['activate sleep mode', 'sleep'],
+      ['put it in sleep mode please', 'sleep'],
+      ['goodnight', 'sleep'],
+      ['night light', 'night light'],
+      ['work mode', 'work'],
+      ['movie time', 'film'],
+      ['wind down', 'wind down'],
+    ] as const) {
+      const found = await findScene(spoken);
+      assert.equal(found?.id, wanted, `"${spoken}" should mean ${wanted}`);
+    }
+    ok('the settings answer to the words people actually say');
+
+    const asked = await runTool({name: 'set_scene', args: {scene: 'sleep mode'}});
+    assert.ok(asked.ok, `sleep mode should apply: ${asked.result}`);
+    assert.equal(bulb.powerSwitch, 1, 'a scene turns the light on');
+    assert.equal(bulb.brightness, 1, 'and sets its brightness');
+    assert.equal(bulb.colorRgb & 0xff, 0, 'and leaves no blue in a bedroom at night');
+    ok('a named setting lands as colour and brightness together');
+
+    // "Make sleep mode a bit dimmer" has to survive until tomorrow night or it
+    // was not worth saying.
+    const already = (await allScenes()).find((one) => one.id === 'sleep')!;
+    await runTool({
+      name: 'adjust_scene',
+      args: {scene: 'sleep', nudge: 'brighter', much: true},
+    });
+    const after = (await allScenes()).find((one) => one.id === 'sleep')!;
+    assert.ok(after.brightness > already.brightness, 'brighter must mean brighter');
+    assert.equal(bulb.brightness, after.brightness, 'and must be shown, not just stored');
+
+    const reapplied = await runTool({name: 'set_scene', args: {scene: 'sleep'}});
+    assert.ok(reapplied.ok);
+    assert.equal(bulb.brightness, after.brightness, 'the change must stick for next time');
+    ok('an adjustment shows immediately and is still there next time');
+
+    await runTool({name: 'restore_scene', args: {scene: 'sleep'}});
+    assert.equal(
+      (await allScenes()).find((one) => one.id === 'sleep')!.brightness,
+      already.brightness,
+      'restoring must put the researched value back',
+    );
+    ok('a setting can be put back to where it started');
 
     // A colour set on a light that is off is a complete success and a visible
     // nothing — which is the exact thing that made her look like a liar.

@@ -1,4 +1,5 @@
 import {
+  applyScene,
   COLOURS,
   LightError,
   lights,
@@ -8,7 +9,32 @@ import {
   setPower,
   survey,
 } from '../lights';
+import {
+  allScenes,
+  findScene,
+  kelvinToRgb,
+  type Nudge,
+  restoreScene,
+  SCENE_NAMES,
+  tuneScene,
+} from '../scenes';
 import type {Tool} from './types';
+
+const NUDGES: Nudge[] = ['dimmer', 'brighter', 'warmer', 'cooler'];
+
+/**
+ * The names in the tool description, so what she is offered and what exists
+ * cannot drift apart. Built from the scenes themselves rather than typed out
+ * twice — the second copy is always the one that goes stale.
+ */
+const DEFAULT_NAMES = SCENE_NAMES.join(', ');
+
+async function sceneList(): Promise<string> {
+  const scenes = await allScenes();
+  return `Settings: ${scenes
+    .map((scene) => `${scene.id} (${scene.kelvin}K, ${scene.brightness}%)`)
+    .join('; ')}.`;
+}
 
 /**
  * The lights, as things she can be told to do.
@@ -126,6 +152,113 @@ export const lightTools: Tool[] = [
         );
         return `${said(names)} now ${colour}.${unlit(dark)}`;
       }),
+  },
+  {
+    name: 'set_scene',
+    description:
+      'Put the lights into one of the named settings: ' +
+      `${DEFAULT_NAMES}. Use it whenever the user names one — "sleep mode", ` +
+      '"activate work mode", "put it in evening", "movie time" — and also ' +
+      'whenever what they describe plainly is one of them ("I\'m going to ' +
+      'bed", "time to focus"). Each one sets a colour and a brightness ' +
+      'together, chosen from the research on light and the body clock. ' +
+      'Prefer this over setting a colour and a brightness separately.',
+    category: 'home',
+    parameters: {
+      scene: {type: 'string', description: 'The setting they named, as they said it.'},
+      which: {type: 'string', description: 'Which light. Leave out for all.'},
+    },
+    required: ['scene'],
+    run: (args) =>
+      guarded(async () => {
+        const scene = await findScene(String(args.scene));
+        if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
+
+        const names = await applyScene(
+          args.which ? String(args.which) : undefined,
+          kelvinToRgb(scene.kelvin),
+          scene.brightness,
+        );
+        return `${said(names)} in ${scene.id} — ${scene.kelvin}K at ${scene.brightness}%. Say it in a few words. If they ask why it is set this way: ${scene.why}`;
+      }),
+  },
+  {
+    name: 'adjust_scene',
+    description:
+      'Change what one of the named settings means, and keep the change. Use ' +
+      'it for "make sleep mode a bit dimmer", "work mode is too blue", ' +
+      '"warmer evening". It saves the new values and shows them immediately, ' +
+      'so the next time they ask for that setting they get the new one. Use ' +
+      'nudge for "a bit"/"a lot" changes and the exact numbers only when they ' +
+      'give you one.',
+    category: 'home',
+    parameters: {
+      scene: {type: 'string', description: 'Which setting to change.'},
+      nudge: {
+        type: 'string',
+        description: 'One of: dimmer, brighter, warmer, cooler.',
+      },
+      much: {
+        type: 'boolean',
+        description: 'True for "a lot"/"much", false or omitted for "a bit".',
+      },
+      brightness: {type: 'number', description: 'An exact brightness, 1 to 100.'},
+      kelvin: {
+        type: 'number',
+        description:
+          'An exact colour temperature, 1000 (deep red) to 6500 (cool daylight).',
+      },
+    },
+    required: ['scene'],
+    run: (args) =>
+      guarded(async () => {
+        const scene = await findScene(String(args.scene));
+        if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
+
+        const nudge = args.nudge ? String(args.nudge).toLowerCase() : undefined;
+        if (nudge && !NUDGES.includes(nudge as Nudge)) {
+          return `A nudge is one of: ${NUDGES.join(', ')}.`;
+        }
+
+        const tuned = await tuneScene(scene.id, {
+          ...(nudge ? {nudge: nudge as Nudge} : {}),
+          ...(args.much !== undefined ? {much: Boolean(args.much)} : {}),
+          ...(args.brightness !== undefined ? {brightness: Number(args.brightness)} : {}),
+          ...(args.kelvin !== undefined ? {kelvin: Number(args.kelvin)} : {}),
+        });
+
+        // Shown as well as saved: a change to a light you cannot see is a
+        // change you cannot judge, and they will only ask again.
+        const names = await applyScene(undefined, kelvinToRgb(tuned.kelvin), tuned.brightness);
+        return `${scene.id} is now ${tuned.kelvin}K at ${tuned.brightness}%, and ${said(names)} ${names.length === 1 ? 'is' : 'are'} showing it. Saved for next time.`;
+      }),
+  },
+  {
+    name: 'restore_scene',
+    description:
+      'Put one of the named settings back to how it started, undoing any ' +
+      'adjustments. Use it for "put sleep mode back", "reset work mode".',
+    category: 'home',
+    parameters: {scene: {type: 'string', description: 'Which setting.'}},
+    required: ['scene'],
+    run: (args) =>
+      guarded(async () => {
+        const scene = await findScene(String(args.scene));
+        if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
+        const back = await restoreScene(scene.id);
+        return `${back.id} is back to ${back.kelvin}K at ${back.brightness}%.`;
+      }),
+  },
+  {
+    name: 'list_scenes',
+    description:
+      'List the named light settings and what each one is currently set to. ' +
+      'Use it when the user asks what settings there are, or names one you ' +
+      'do not recognise.',
+    category: 'research',
+    parameters: {},
+    required: [],
+    run: () => guarded(sceneList),
   },
   {
     name: 'check_lights',
