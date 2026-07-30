@@ -302,19 +302,35 @@ function lockScreen() {
 async function settle(want, command) {
   let lastDetail = '';
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  /*
+   * Twice, not three times, and not for long.
+   *
+   * The retry was added for a documented bug where a second standby lands
+   * after the first is swallowed. That turned out not to be what happens
+   * here: playactor sends its request, exits zero, prints nothing at all, and
+   * the console is entirely unmoved — in both directions, on a console that
+   * sleeps and wakes perfectly from its own controller.
+   *
+   * playactor's last release was February 2022 and PS5 firmware has moved
+   * several times since; there is no maintained alternative, and the most
+   * recently published PlayStation integration on npm still depends on that
+   * same version. So the likeliest reading is an old client speaking a
+   * protocol that has moved on, and no number of attempts fixes that. One
+   * retry stays because it is nearly free and costs nothing to be wrong
+   * about. Waiting forty-five seconds to reach the same conclusion does not.
+   */
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     const ran = await playactor(command);
     if (!ran.ok) lastDetail = ran.detail;
 
-    // Ten seconds of asking. A console takes a moment to act on either
-    // instruction, and waking is much slower than sleeping.
-    const until = Date.now() + (command === 'wake' ? 25_000 : 10_000);
+    // A console takes a moment to act; waking is much slower than sleeping.
+    const until = Date.now() + (command === 'wake' ? 18_000 : 8000);
     while (Date.now() < until) {
       const state = await discover();
       if (state.found && state.status === want) {
         return {
           ok: true,
-          detail: attempt === 1 ? '' : `it took ${attempt} attempts`,
+          detail: attempt === 1 ? '' : 'it took two attempts',
         };
       }
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -324,8 +340,10 @@ async function settle(want, command) {
   return {
     ok: false,
     detail:
-      `the console did not go to ${want.toLowerCase()} after three attempts` +
-      (lastDetail ? ` (${lastDetail})` : ''),
+      lastDetail ||
+      `the console ignored it. The tool that speaks to PlayStations was last ` +
+        `updated in 2022 and appears not to work with current PS5 firmware — ` +
+        `this is very likely not something the user can fix by changing a setting`,
   };
 }
 

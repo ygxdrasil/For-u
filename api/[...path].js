@@ -3045,7 +3045,7 @@ async function send(action, verb, arg) {
     return `The laptop took the instruction to ${verb} but has not reported back yet. Say that it is on its way rather than that it is done.`;
   }
   if (!finished.ok) {
-    return `That did not work: ${finished.detail || "the laptop gave no reason"}.`;
+    return `That did not work: ${finished.detail || "the laptop gave no reason"}. Say so plainly and do not offer to try again \u2014 it has already been tried twice and checked against the console both times.`;
   }
   const done = {
     wake: `The console is on${finished.detail ? ` \u2014 ${finished.detail}` : ""}.`,

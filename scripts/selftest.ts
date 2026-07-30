@@ -1704,8 +1704,8 @@ try {
   );
   assert.match(
     bridgeProgram,
-    /attempt <= 3/,
-    'and must send it again, because twice-or-thrice is the documented remedy',
+    /attempt <= 2/,
+    'and must send it again once, since a single drop is cheap to be wrong about',
   );
   ok('waking and sleeping are verified against the console, not against an exit code');
   ok('an instruction reaches the laptop once, and she reports back what happened');

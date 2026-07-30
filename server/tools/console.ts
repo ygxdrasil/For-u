@@ -63,7 +63,11 @@ async function send(action: BridgeAction, verb: string, arg?: string): Promise<s
   }
 
   if (!finished.ok) {
-    return `That did not work: ${finished.detail || 'the laptop gave no reason'}.`;
+    return (
+      `That did not work: ${finished.detail || 'the laptop gave no reason'}. ` +
+      `Say so plainly and do not offer to try again — it has already been ` +
+      `tried twice and checked against the console both times.`
+    );
   }
 
   // Past tense now, and it is earned: the laptop watched the console change
