@@ -16,7 +16,26 @@ export interface GenerateRequest {
   signal?: AbortSignal;
   /** Lower for extraction work, higher for conversation. */
   temperature?: number;
+  /**
+   * Room for the reply itself, in tokens — not counting deliberation.
+   *
+   * Worth being exact about, because Gemini is not: on the 2.5 models the
+   * thinking tokens are spent out of `maxOutputTokens`, so a ceiling of 2048
+   * with a thinking budget of 4096 does not produce a well-considered short
+   * answer. It produces no answer at all — she thinks until the ceiling and
+   * stops, and what comes back is empty. The provider adds `think` on top of
+   * this number so a caller can raise either one without the other quietly
+   * cancelling it out.
+   */
   maxOutputTokens?: number;
+  /**
+   * Deliberation tokens allowed before answering. See shared/effort.ts.
+   *
+   * Overrides `fast`. Zero is only safe with no tool attached — deciding to
+   * use a tool is itself deliberation, so a budget of nothing leaves the tool
+   * present and untouched.
+   */
+  think?: number;
   /** Ask the provider to return JSON matching this shape. */
   json?: object;
   /** Disable model-side deliberation where supported, for latency. */

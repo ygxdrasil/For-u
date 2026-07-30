@@ -1,3 +1,4 @@
+import {type Deliberation, effortFor} from '../shared/effort';
 import type {Choice, InputMode, Message} from '../shared/types';
 import {getPolicies} from './actions';
 import {available} from './available';
@@ -49,6 +50,8 @@ export interface TurnResult {
   error: string | null;
   /** Every tool she used, in order, as the user would be told about it. */
   acted: {name: string; summary: string}[];
+  /** How hard she was allowed to think, and why. */
+  deliberation: Deliberation;
 }
 
 export const NO_KEY_MESSAGE =
@@ -69,9 +72,10 @@ export async function takeTurn({
   hooks = {},
 }: TurnRequest): Promise<TurnResult> {
   const acted: {name: string; summary: string}[] = [];
+  const deliberation = effortFor(text);
 
   if (!isConfigured()) {
-    return {reply: '', message: null, error: NO_KEY_MESSAGE, acted};
+    return {reply: '', message: null, error: NO_KEY_MESSAGE, acted, deliberation};
   }
 
   /*
@@ -137,11 +141,16 @@ export async function takeTurn({
       system,
       turns,
       ...(signal ? {signal} : {}),
-      temperature: 0.7,
-      fast: true,
-      // Output tokens cost eight times input. Room for a genuinely long answer
-      // when asked for one; a stop before a runaway reply can spend a day's
-      // budget in one go.
+      // How hard to think about this particular sentence, rather than one
+      // figure for everything anyone ever says to her. A light switch gets a
+      // glance; a question about why something happened gets sixteen times
+      // the deliberation, which is the difference between her first thought
+      // and her considered one.
+      think: deliberation.think,
+      temperature: deliberation.temperature,
+      // Room for the reply. Deliberation is added on top of this by the
+      // provider — on Gemini the two share one ceiling, and a caller who does
+      // not know that raises the thinking budget and gets back an empty string.
       maxOutputTokens: 2048,
       onGrounded: () => {
         if (!grounded) {
@@ -192,6 +201,7 @@ export async function takeTurn({
       message,
       error: `I couldn't finish that thought — ${detail}`,
       acted,
+      deliberation,
     };
   }
 
@@ -201,8 +211,15 @@ export async function takeTurn({
       message: null,
       error: 'I drew a blank there. Try me again.',
       acted,
+      deliberation,
     };
   }
 
-  return {reply, message: await record('grace', reply, via), error: null, acted};
+  return {
+    reply,
+    message: await record('grace', reply, via),
+    error: null,
+    acted,
+    deliberation,
+  };
 }

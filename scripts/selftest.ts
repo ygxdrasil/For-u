@@ -46,6 +46,7 @@ import {heardName, isPhantom, toldToSleep} from '../shared/wake';
 import {parseCommand, suggest} from '../shared/commands';
 import {logKey, metaKey} from '../server/chats';
 import {forSpeaking, relayUrl} from '../server/relay';
+import {THINKING, effortFor} from '../shared/effort';
 import {Document} from '../server/store/index';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
@@ -437,6 +438,120 @@ try {
     'without a tool, deliberation should still be off for speed',
   );
   ok('deliberation stays on whenever a tool is attached');
+
+  // ---- how hard she thinks, per sentence ---------------------------------
+  // One flat budget for everything meant a question worth thinking about got
+  // exactly as much thought as a light switch. These are the sentences the
+  // split has to get right; the cost of a wrong call is a slower or shallower
+  // answer, never an incorrect one.
+  for (const [said, wanted] of [
+    ['turn the lights off', 'reflex'],
+    ['lights on', 'reflex'],
+    ['set a timer for ten minutes', 'reflex'],
+    ['goodnight', 'reflex'],
+    ['what time is my meeting', 'ordinary'],
+    ['who did I say was coming on Thursday', 'ordinary'],
+    ['thanks', 'ordinary'],
+    ['why did the lights not come on last night', 'hard'],
+    ['should I take the earlier train or the later one', 'hard'],
+    ['what is the difference between the two invoices', 'hard'],
+    ['explain what happened with the deployment', 'hard'],
+    ['is it worth switching the whole thing over, and what would break', 'hard'],
+  ] as const) {
+    const {effort, because} = effortFor(said);
+    assert.equal(effort, wanted, `"${said}" should be ${wanted}, got ${effort} (${because})`);
+  }
+  assert.ok(
+    THINKING.hard > THINKING.ordinary && THINKING.ordinary > THINKING.reflex,
+    'the levels must actually be levels',
+  );
+  ok('deliberation is spent per sentence, not flat across every one');
+
+  /*
+   * The trap that makes all of the above backfire.
+   *
+   * On Gemini's 2.5 models thinking is spent out of maxOutputTokens, so a
+   * ceiling of 2048 with a 4096-token thinking budget does not produce a
+   * well-considered short answer — it produces an empty string, from a
+   * request that reads as entirely sensible. The caller's number has to mean
+   * room for the reply, with deliberation added on top.
+   */
+  const considered = provider.params({
+    system: 's',
+    turns: [{role: 'user', text: 'why did that happen?'}],
+    think: THINKING.hard,
+    maxOutputTokens: 2048,
+    tools: declarations(),
+  });
+  assert.equal(
+    considered.config.maxOutputTokens,
+    2048 + THINKING.hard,
+    'thinking must not be taken out of the room left for the answer',
+  );
+  assert.equal(considered.config.thinkingConfig?.thinkingBudget, THINKING.hard);
+  ok('thinking is added to the output ceiling rather than eating the reply');
+
+  // The floor from the bug above still holds, whatever a caller asks for.
+  assert.equal(
+    provider.params({system: 's', turns: [], think: 0, tools: declarations()}).config
+      .thinkingConfig?.thinkingBudget,
+    THINKING.reflex,
+    'a tool in hand means she must be allowed enough thought to reach for it',
+  );
+  ok('no caller can think its way past the tool-calling floor');
+
+  /*
+   * Running out of steps used to look exactly like finishing.
+   *
+   * The tool loop simply returned when it hit its ceiling, so a genuinely
+   * involved task — read the mail, check the diary, set the lights, then say
+   * something about all three — ended in an empty reply. Every bit of the work
+   * had happened. She just never got a turn in which to mention it, and the
+   * layer above turned that silence into "I drew a blank there."
+   *
+   * Driven through a stand-in for Gemini itself, because this lives inside the
+   * provider's loop and nothing above it can see the difference.
+   */
+  const rounds: {tools: boolean}[] = [];
+  const relentless = new GeminiProvider('unused', 'gemini-2.5-flash');
+  (relentless as unknown as {client: unknown}).client = {
+    models: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      generateContentStream: async (params: any) => {
+        const hasTools = Boolean(params.config?.tools);
+        rounds.push({tools: hasTools});
+        return (async function* () {
+          yield hasTools
+            ? // A model that never stops asking for one more thing.
+              {candidates: [{content: {parts: [{functionCall: {name: 'list_reminders', args: {}}}]}}]}
+            : {text: 'Here is what I found.'};
+        })();
+      },
+    },
+  };
+
+  let closingReply = '';
+  for await (const piece of relentless.stream({
+    system: 's',
+    turns: [{role: 'user', text: 'do the whole involved thing'}],
+    tools: declarations(),
+    onToolCall: async () => 'done',
+  })) {
+    closingReply += piece;
+  }
+
+  assert.equal(
+    closingReply,
+    'Here is what I found.',
+    'exhausting the tool rounds must still produce an answer, not silence',
+  );
+  assert.ok(rounds.length > 5, `she should get more than five goes, got ${rounds.length}`);
+  assert.equal(
+    rounds.filter((round) => !round.tools).length,
+    1,
+    'exactly one closing pass, with the tools taken away so she has to speak',
+  );
+  ok(`a task that runs past ${rounds.length - 1} steps still ends in an answer`);
 
   // ---- keys pasted in rather than set in the environment ------------------
   const keysBefore = (await (await call('/keys')).json()) as {gemini: {pasted: boolean}};

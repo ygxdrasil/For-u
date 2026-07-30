@@ -1,6 +1,7 @@
 import {GoogleGenAI} from '@google/genai';
 import type {Content, GenerateContentConfig} from '@google/genai';
 import * as budget from '../budget';
+import {THINKING} from '../../shared/effort';
 import {config} from '../config';
 import {chosenVoice} from '../keys';
 import type {
@@ -27,10 +28,18 @@ Return only the words spoken, with ordinary punctuation. No preamble, no quotes,
 /**
  * How many times she may act before answering.
  *
- * High enough for "add that, and what else is on my list", low enough that a
- * model stuck in a loop stops rather than running until the request times out.
+ * Five was set when she had four tools and a round was almost always "look
+ * something up, then answer". She has a great many more now, and the tasks
+ * worth having her do are the ones that take several steps: check the diary,
+ * then the mail it refers to, then the lights, then say something about all
+ * three. Five rounds turned those into half an answer with no explanation,
+ * because running out of rounds looks exactly like finishing.
+ *
+ * Eight, then — still a stop rather than a licence. This is not a budget, it
+ * is a backstop against a model that has begun looping, and a loop is obvious
+ * long before eight.
  */
-const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_ROUNDS = 8;
 
 /**
  * Bills a response against the monthly cap.
@@ -186,6 +195,38 @@ export class GeminiProvider implements LlmProvider {
         history.push({role: 'user', parts: results});
       }
 
+      /*
+       * Out of rounds, and she has not answered yet.
+       *
+       * The loop used to simply return here, which meant a genuinely involved
+       * task — the kind worth having an assistant for — ended in nothing at
+       * all. Not an error and not a partial answer: an empty reply, indistinct
+       * from her having decided to say nothing, and the layer above turned it
+       * into "I drew a blank there." All the work was done. The mail had been
+       * read, the diary checked, the lights set. She just never got a turn in
+       * which to mention it.
+       *
+       * So the last word is taken away from the tools and given back to her:
+       * one more pass with nothing to call, which leaves her no option but to
+       * say what she found.
+       */
+      const {config: settings} = this.params({...request, tools: [], search: false});
+      const closing = await this.client.models.generateContentStream({
+        model: this.model,
+        contents: history,
+        config: settings,
+      });
+
+      let closingUsage: Usage | undefined;
+      for await (const chunk of closing) {
+        if (chunk.usageMetadata) closingUsage = chunk.usageMetadata;
+        if (chunk.text) {
+          spoken = true;
+          yield chunk.text;
+        }
+      }
+      meter(this.model, closingUsage);
+
       return;
     } catch (error) {
       // The daily allowance for grounded prompts is smaller than the one for
@@ -299,8 +340,22 @@ export class GeminiProvider implements LlmProvider {
       abortSignal: request.signal,
     };
 
+    /*
+     * Deliberation is paid for out of the output ceiling.
+     *
+     * On the 2.5 models the thinking tokens are spent against
+     * maxOutputTokens, which makes the two settings quietly hostile to each
+     * other: raise the thinking budget past the ceiling and she thinks until
+     * she runs out and returns nothing whatsoever. Not an error, not a short
+     * answer — an empty string, from a request that looks entirely reasonable.
+     *
+     * So the caller's number means what it says — room for the reply — and
+     * whatever thinking was asked for is added on top of it here, once, where
+     * the relationship between the two is visible.
+     */
+    const think = request.think;
     if (request.maxOutputTokens) {
-      config.maxOutputTokens = request.maxOutputTokens;
+      config.maxOutputTokens = request.maxOutputTokens + (think ?? 0);
     }
 
     if (request.json) {
@@ -316,21 +371,30 @@ export class GeminiProvider implements LlmProvider {
       config.tools = [{googleSearch: {}}];
     }
 
-    // Conversation should feel immediate; deliberation costs a beat of silence
-    // that is far more noticeable when the reply is spoken aloud.
-    //
-    // Zero is only safe with no tool attached. Deciding to search *is*
-    // deliberation, so zeroing the budget leaves the tool present and unused:
-    // she answers from memory and then says, quite correctly, that she cannot
-    // reach the web. But the default is dynamic, which on a plain "what's on
-    // today" spends thousands of tokens working out that the answer is the
-    // diary — seconds of silence for a decision that was never in doubt.
-    //
-    // A small budget is the middle: enough to pick a tool, not enough to
-    // ruminate. It is the single largest thing between her and answering
-    // quickly, now that she always has tools in hand.
-    if (request.fast) {
-      config.thinkingConfig = {thinkingBudget: config.tools ? 256 : 0};
+    /*
+     * How long she is allowed to think before speaking.
+     *
+     * Left to itself the default is dynamic, which on a plain "what's on
+     * today" spends thousands of tokens working out that the answer is the
+     * diary — seconds of silence for a decision that was never in doubt. So
+     * it is always set, one way or the other.
+     *
+     * `think` is the considered figure, worked out per sentence in
+     * shared/effort.ts. `fast` is the older blunt instrument and stays for the
+     * background jobs that use it — extraction, summarising, style — where
+     * there is nothing to deliberate about and nobody waiting.
+     *
+     * The floor exists because zero is only safe with no tool attached.
+     * Deciding to use a tool *is* deliberation, so a budget of nothing leaves
+     * the tool present and untouched: she answers from memory and then says,
+     * quite correctly, that she cannot reach the web.
+     */
+    if (think !== undefined) {
+      config.thinkingConfig = {
+        thinkingBudget: config.tools ? Math.max(THINKING.reflex, think) : think,
+      };
+    } else if (request.fast) {
+      config.thinkingConfig = {thinkingBudget: config.tools ? THINKING.reflex : 0};
     }
 
     return {
