@@ -1,4 +1,13 @@
-import {COLOURS, LightError, lights, setBrightness, setColour, setPower} from '../lights';
+import {
+  COLOURS,
+  LightError,
+  lights,
+  nameOfColour,
+  setBrightness,
+  setColour,
+  setPower,
+  survey,
+} from '../lights';
 import type {Tool} from './types';
 
 /**
@@ -21,6 +30,19 @@ function said(names: string[]): string {
   if (names.length === 1) return names[0];
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
   return `all ${names.length} of them`;
+}
+
+/**
+ * The change landed and nobody can see it.
+ *
+ * A colour set on a light that is switched off is a complete success and a
+ * visible nothing, which is indistinguishable from the failure this whole
+ * change exists to stop. She is told, and left to decide — offering to switch
+ * them on is right for "make it red" and quite wrong for "sleep mode".
+ */
+function unlit(dark: string[]): string {
+  if (dark.length === 0) return '';
+  return ` ${said(dark)} ${dark.length === 1 ? 'is' : 'are'} switched off, so nothing shows yet — mention it, and offer to turn ${dark.length === 1 ? 'it' : 'them'} on.`;
 }
 
 async function guarded(work: () => Promise<string>): Promise<string> {
@@ -76,11 +98,12 @@ export const lightTools: Tool[] = [
       guarded(async () => {
         const percent = Number(args.percent);
         if (!Number.isFinite(percent)) return 'That was not a brightness.';
-        const names = await setBrightness(
+        const {lights: names, dark} = await setBrightness(
           args.which ? String(args.which) : undefined,
           percent,
         );
-        return `${said(names)} at ${Math.max(1, Math.min(100, Math.round(percent)))}%.`;
+        const level = Math.max(1, Math.min(100, Math.round(percent)));
+        return `${said(names)} at ${level}%.${unlit(dark)}`;
       }),
   },
   {
@@ -97,11 +120,45 @@ export const lightTools: Tool[] = [
     required: ['colour'],
     run: (args) =>
       guarded(async () => {
-        const {lights: names, colour} = await setColour(
+        const {lights: names, colour, dark} = await setColour(
           args.which ? String(args.which) : undefined,
           String(args.colour),
         );
-        return `${said(names)} now ${colour}.`;
+        return `${said(names)} now ${colour}.${unlit(dark)}`;
+      }),
+  },
+  {
+    name: 'check_lights',
+    description:
+      'Read what the lights are actually doing right now — on or off, how ' +
+      'bright, what colour, whether they are reachable. Use it whenever the ' +
+      'user asks about the state of the lights, when they say something did ' +
+      'not happen, and before answering any question about the room that you ' +
+      'would otherwise be guessing at. Never assume a light is as you last ' +
+      'left it; people use switches and apps too.',
+    category: 'research',
+    parameters: {
+      which: {type: 'string', description: 'Which light. Leave out for all.'},
+    },
+    required: [],
+    run: (args) =>
+      guarded(async () => {
+        const found = await survey(args.which ? String(args.which) : undefined);
+        if (found.length === 0) return 'No lights on the account.';
+
+        return found
+          .map(({name, state}) => {
+            if (state.online === false) return `${name}: offline, not reachable.`;
+            if (state.on === null) return `${name}: not reporting its state.`;
+            if (!state.on) return `${name}: off.`;
+
+            const parts = [
+              state.brightness === null ? null : `${state.brightness}%`,
+              state.colour === null ? null : nameOfColour(state.colour),
+            ].filter(Boolean);
+            return `${name}: on${parts.length ? `, ${parts.join(', ')}` : ''}.`;
+          })
+          .join(' ');
       }),
   },
   {

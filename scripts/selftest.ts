@@ -47,6 +47,8 @@ import {parseCommand, suggest} from '../shared/commands';
 import {logKey, metaKey} from '../server/chats';
 import {forSpeaking, relayUrl} from '../server/relay';
 import {THINKING, effortFor} from '../shared/effort';
+import {forgetLights} from '../server/lights';
+import {setKey} from '../server/keys';
 import {Document} from '../server/store/index';
 import {voiceChecks} from './voicecheck';
 import {pulse} from '../server/pulse';
@@ -2077,6 +2079,144 @@ try {
     `no gap between summary and window (${replayed.length} unsummarised of ` +
       `${total} total, all replayed)`,
   );
+
+  // ---- the lights, and telling the truth about them ----------------------
+  /*
+   * She said she had done it and the room did not change.
+   *
+   * Govee accepts a second command to the same device within about a second,
+   * answers 200, and drops it. Ask for something that is two changes — dimmer
+   * and warmer — and she calls two tools back to back a few milliseconds
+   * apart, so one of them never reaches the bulb. There is no error anywhere,
+   * which is why she reported it as done, entirely sincerely.
+   *
+   * A stand-in for Govee that behaves exactly that way, so the bug is
+   * reproduced rather than described.
+   */
+  const realFetch = globalThis.fetch;
+  const arrivals: {at: number; capability?: string}[] = [];
+  /** What the pretend bulb is actually set to, as opposed to what it accepted. */
+  const bulb = {powerSwitch: 0, brightness: 100, colorRgb: 0xffffff};
+  let dropped = 0;
+  let lastAcceptedAt = 0;
+  /** Forces the swallow-it-silently behaviour, to prove the recovery works. */
+  let dropNext = false;
+
+  const asGovee = async (url: string, init?: {body?: string}) => {
+    const body = init?.body ? (JSON.parse(init.body) as Record<string, any>) : null;
+    const json = (payload: unknown) =>
+      new Response(JSON.stringify({code: 200, msg: 'success', ...(payload as object)}), {
+        status: 200,
+        headers: {'Content-Type': 'application/json'},
+      });
+
+    if (url.endsWith('/user/devices')) {
+      return json({data: [{sku: 'H6199', device: 'AA:BB', deviceName: 'Strip'}]});
+    }
+
+    if (url.endsWith('/device/control')) {
+      const capability = body?.payload?.capability;
+      const now = Date.now();
+      arrivals.push({at: now, capability: capability?.instance});
+
+      // The whole defect, in three lines: too soon after the last one, so it
+      // is accepted and thrown away. Success is reported either way.
+      if (dropNext || now - lastAcceptedAt < 800) {
+        dropNext = false;
+        dropped += 1;
+        return json({});
+      }
+      lastAcceptedAt = now;
+      bulb[capability.instance as keyof typeof bulb] = capability.value;
+      return json({});
+    }
+
+    if (url.endsWith('/device/state')) {
+      return json({
+        payload: {
+          capabilities: [
+            {instance: 'online', state: {value: true}},
+            {instance: 'powerSwitch', state: {value: bulb.powerSwitch}},
+            {instance: 'brightness', state: {value: bulb.brightness}},
+            {instance: 'colorRgb', state: {value: bulb.colorRgb}},
+          ],
+        },
+      });
+    }
+
+    throw new Error(`unexpected Govee call: ${url}`);
+  };
+
+  globalThis.fetch = ((url: string, init?: {body?: string}) =>
+    String(url).includes('openapi.api.govee.com')
+      ? asGovee(String(url), init)
+      : realFetch(url as never, init as never)) as typeof fetch;
+
+  await setKey('govee', 'pretend-key');
+  forgetLights();
+
+  try {
+    // Two changes in one breath, exactly as she issues them: no gap at all.
+    const dimmed = await runTool({name: 'dim_lights', args: {percent: 20}});
+    const warmed = await runTool({name: 'colour_lights', args: {colour: 'warm'}});
+
+    assert.ok(dimmed.ok && warmed.ok, 'both commands should report success');
+
+    // The point: reported success and real state now agree. Before the fix the
+    // second of these was 100 and 0xffffff — untouched, and reported as done.
+    assert.equal(bulb.brightness, 20, 'the brightness must really be set');
+    assert.equal(bulb.colorRgb, (255 << 16) | (180 << 8) | 110, 'and so must the colour');
+
+    // Not dropped at all, because they were spaced out rather than fired
+    // together. Prevention is the fix; the retry below is the safety net.
+    const gaps = arrivals
+      .slice(1)
+      .map((one, at) => one.at - arrivals[at]!.at);
+    assert.ok(
+      gaps.every((gap) => gap >= 800),
+      `commands to one device must be spaced out, got gaps ${gaps.join(', ')}ms`,
+    );
+    assert.equal(dropped, 0, 'and so none of them should have been swallowed');
+    ok(`two changes in one breath both land, spaced ${Math.min(...gaps)}ms apart`);
+
+    // The safety net, for every other reason a bulb ignores an instruction:
+    // one it accepted and threw away must be noticed and sent again.
+    dropNext = true;
+    const forced = await runTool({name: 'colour_lights', args: {colour: 'blue'}});
+    assert.ok(forced.ok, 'a swallowed command should still end in success');
+    assert.equal(dropped, 1, 'the stand-in must really have swallowed one');
+    assert.equal(
+      bulb.colorRgb,
+      (0 << 16) | (90 << 8) | 255,
+      'a swallowed command must be noticed and sent again, not reported as done',
+    );
+    ok('a command the light accepts and ignores is caught by reading it back');
+
+    // And she can now ask rather than assume. Switched on by hand here, the
+    // way a person does, which is exactly the case she cannot remember her way
+    // out of and has to look.
+    bulb.powerSwitch = 1;
+    const seen = await runTool({name: 'check_lights', args: {}});
+    assert.match(seen.result, /Strip/, 'the light should be named');
+    assert.match(seen.result, /20%/, 'and its real brightness reported');
+    assert.match(seen.result, /blue/, 'and its real colour, in a word she can say');
+    ok('she can read the room back from the lights themselves');
+
+    // A colour set on a light that is off is a complete success and a visible
+    // nothing — which is the exact thing that made her look like a liar.
+    bulb.powerSwitch = 0;
+    const invisible = await runTool({name: 'colour_lights', args: {colour: 'red'}});
+    assert.match(
+      invisible.result,
+      /switched off/i,
+      'she must be told when a change cannot be seen',
+    );
+    ok('a change nobody can see is reported as such, not as done');
+  } finally {
+    globalThis.fetch = realFetch;
+    await setKey('govee', '');
+    forgetLights();
+  }
 
   // ---- reaching her from outside the browser -----------------------------
   // The door Siri knocks on. It is on the open internet with a token in front

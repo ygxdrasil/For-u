@@ -1104,13 +1104,13 @@ async function remember(entries) {
   for (const entry of entries) {
     const key = normalise(entry.text);
     if (!key) continue;
-    const known = byKey.get(key);
-    if (known) {
+    const known2 = byKey.get(key);
+    if (known2) {
       byKey.set(key, {
-        ...known,
-        timesSeen: (known.timesSeen ?? 1) + 1,
+        ...known2,
+        timesSeen: (known2.timesSeen ?? 1) + 1,
         lastSeenAt: now,
-        source: entry.source === "stated" ? "stated" : known.source,
+        source: entry.source === "stated" ? "stated" : known2.source,
         supersededAt: void 0
       });
       reinforced = true;
@@ -1290,8 +1290,8 @@ function worthLearningFrom(userText, sweep = false) {
 }
 async function learnFrom(userText, graceText) {
   if (!config.learnFromConversation) return [];
-  const known = (await getProfile()).entries.filter((entry) => !entry.supersededAt).slice(-60);
-  const knownList = known.length > 0 ? known.map((entry) => `- ${entry.text}`).join("\n") : "(nothing recorded yet)";
+  const known2 = (await getProfile()).entries.filter((entry) => !entry.supersededAt).slice(-60);
+  const knownList = known2.length > 0 ? known2.map((entry) => `- ${entry.text}`).join("\n") : "(nothing recorded yet)";
   try {
     const raw = await getProvider().complete({
       system: SYSTEM,
@@ -2255,10 +2255,10 @@ async function rerunFailedChecks(repoSaid) {
   let repo = said2;
   if (!said2.includes("/")) {
     const view = await githubView();
-    const known = [...view.prs, ...view.reviewsWanted, ...view.issues].map(
+    const known2 = [...view.prs, ...view.reviewsWanted, ...view.issues].map(
       (item) => item.repo
     );
-    const hit = known.find(
+    const hit = known2.find(
       (full) => full.toLowerCase().endsWith(`/${said2.toLowerCase()}`)
     );
     if (!hit) {
@@ -3483,15 +3483,20 @@ async function call3(path3, body) {
   }
   return parsed;
 }
+var known = null;
+var KNOWN_FOR_MS = 6e4;
 async function lights() {
+  if (known && Date.now() - known.at < KNOWN_FOR_MS) return known.lights;
   const { data } = await call3(
     "/user/devices"
   );
-  return (data ?? []).map((one) => ({
+  const found = (data ?? []).map((one) => ({
     sku: one.sku,
     device: one.device,
     name: one.deviceName
   }));
+  known = { at: Date.now(), lights: found };
+  return found;
 }
 async function pick(said2) {
   const all = await lights();
@@ -3508,11 +3513,81 @@ async function pick(said2) {
   }
   return found;
 }
-async function control(light, capability) {
-  await call3("/device/control", {
+var UNKNOWN = { on: null, brightness: null, colour: null, online: null };
+async function stateOf(light) {
+  const reported = await call3("/device/state", {
     requestId: randomUUID11(),
-    payload: { sku: light.sku, device: light.device, capability }
+    payload: { sku: light.sku, device: light.device }
   });
+  const found = /* @__PURE__ */ new Map();
+  for (const one of reported.payload?.capabilities ?? []) {
+    if (one.instance) found.set(one.instance, one.state?.value);
+  }
+  const number = (name) => {
+    const raw = found.get(name);
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  };
+  const power = number("powerSwitch");
+  const online = found.get("online");
+  return {
+    on: power === null ? null : power === 1,
+    brightness: number("brightness"),
+    colour: number("colorRgb"),
+    online: typeof online === "boolean" ? online : null
+  };
+}
+var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var SETTLE_MS = 900;
+var commandedAt = /* @__PURE__ */ new Map();
+async function pace(device) {
+  const since = Date.now() - (commandedAt.get(device) ?? 0);
+  if (since < SETTLE_MS) await sleep(SETTLE_MS - since);
+  commandedAt.set(device, Date.now());
+}
+var CONFIRM_AFTER_MS = 500;
+function close(a, b, by) {
+  return Math.abs(a - b) <= by;
+}
+function took(state, capability) {
+  switch (capability.instance) {
+    case "powerSwitch":
+      return state.on === null ? null : state.on === (capability.value === 1);
+    case "brightness":
+      return state.brightness === null ? null : close(state.brightness, capability.value, 3);
+    case "colorRgb": {
+      if (state.colour === null) return null;
+      const channels = (packed) => [
+        packed >> 16 & 255,
+        packed >> 8 & 255,
+        packed & 255
+      ];
+      const got = channels(state.colour);
+      const wanted = channels(capability.value);
+      return got.every((value, at) => close(value, wanted[at], 8));
+    }
+  }
+}
+async function control(light, capability) {
+  const send2 = async () => {
+    await pace(light.device);
+    await call3("/device/control", {
+      requestId: randomUUID11(),
+      payload: { sku: light.sku, device: light.device, capability }
+    });
+  };
+  await send2();
+  await sleep(CONFIRM_AFTER_MS);
+  let state = await stateOf(light).catch(() => UNKNOWN);
+  if (took(state, capability) !== false) return state;
+  await send2();
+  await sleep(CONFIRM_AFTER_MS);
+  state = await stateOf(light).catch(() => UNKNOWN);
+  if (took(state, capability) === false) {
+    throw new LightError(
+      `${light.name} took the instruction and did not act on it, twice. ` + (state.online === false ? "It is showing as offline." : "It may be off the network or mid-update.")
+    );
+  }
+  return state;
 }
 async function setPower(said2, on) {
   const chosen = await pick(said2);
@@ -3530,7 +3605,7 @@ async function setPower(said2, on) {
 async function setBrightness(said2, percent) {
   const level = Math.max(1, Math.min(100, Math.round(percent)));
   const chosen = await pick(said2);
-  await Promise.all(
+  const states = await Promise.all(
     chosen.map(
       (light) => control(light, {
         type: "devices.capabilities.range",
@@ -3539,7 +3614,10 @@ async function setBrightness(said2, percent) {
       })
     )
   );
-  return chosen.map((light) => light.name);
+  return {
+    lights: chosen.map((light) => light.name),
+    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name)
+  };
 }
 var COLOURS = {
   red: [255, 0, 0],
@@ -3571,7 +3649,7 @@ async function setColour(said2, colour) {
   }
   const chosen = await pick(said2);
   const packed = rgb[0] << 16 | rgb[1] << 8 | rgb[2];
-  await Promise.all(
+  const states = await Promise.all(
     chosen.map(
       (light) => control(light, {
         type: "devices.capabilities.color_setting",
@@ -3580,7 +3658,36 @@ async function setColour(said2, colour) {
       })
     )
   );
-  return { lights: chosen.map((light) => light.name), colour: wanted };
+  return {
+    lights: chosen.map((light) => light.name),
+    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name),
+    colour: wanted
+  };
+}
+function nameOfColour(packed) {
+  const channels = [packed >> 16 & 255, packed >> 8 & 255, packed & 255];
+  let nearest = "something";
+  let best = Infinity;
+  for (const [name, rgb] of Object.entries(COLOURS)) {
+    const distance = rgb.reduce(
+      (total, value, at) => total + (value - channels[at]) ** 2,
+      0
+    );
+    if (distance < best) {
+      best = distance;
+      nearest = name;
+    }
+  }
+  return nearest;
+}
+async function survey(said2) {
+  const chosen = await pick(said2);
+  return Promise.all(
+    chosen.map(async (light) => ({
+      name: light.name,
+      state: await stateOf(light).catch(() => UNKNOWN)
+    }))
+  );
 }
 function lightsConfigured() {
   return Boolean(goveeKey());
@@ -3591,6 +3698,10 @@ function said(names) {
   if (names.length === 1) return names[0];
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
   return `all ${names.length} of them`;
+}
+function unlit(dark) {
+  if (dark.length === 0) return "";
+  return ` ${said(dark)} ${dark.length === 1 ? "is" : "are"} switched off, so nothing shows yet \u2014 mention it, and offer to turn ${dark.length === 1 ? "it" : "them"} on.`;
 }
 async function guarded(work) {
   try {
@@ -3634,11 +3745,12 @@ var lightTools = [
     run: (args) => guarded(async () => {
       const percent = Number(args.percent);
       if (!Number.isFinite(percent)) return "That was not a brightness.";
-      const names = await setBrightness(
+      const { lights: names, dark } = await setBrightness(
         args.which ? String(args.which) : void 0,
         percent
       );
-      return `${said(names)} at ${Math.max(1, Math.min(100, Math.round(percent)))}%.`;
+      const level = Math.max(1, Math.min(100, Math.round(percent)));
+      return `${said(names)} at ${level}%.${unlit(dark)}`;
     })
   },
   {
@@ -3651,11 +3763,34 @@ var lightTools = [
     },
     required: ["colour"],
     run: (args) => guarded(async () => {
-      const { lights: names, colour } = await setColour(
+      const { lights: names, colour, dark } = await setColour(
         args.which ? String(args.which) : void 0,
         String(args.colour)
       );
-      return `${said(names)} now ${colour}.`;
+      return `${said(names)} now ${colour}.${unlit(dark)}`;
+    })
+  },
+  {
+    name: "check_lights",
+    description: "Read what the lights are actually doing right now \u2014 on or off, how bright, what colour, whether they are reachable. Use it whenever the user asks about the state of the lights, when they say something did not happen, and before answering any question about the room that you would otherwise be guessing at. Never assume a light is as you last left it; people use switches and apps too.",
+    category: "research",
+    parameters: {
+      which: { type: "string", description: "Which light. Leave out for all." }
+    },
+    required: [],
+    run: (args) => guarded(async () => {
+      const found = await survey(args.which ? String(args.which) : void 0);
+      if (found.length === 0) return "No lights on the account.";
+      return found.map(({ name, state }) => {
+        if (state.online === false) return `${name}: offline, not reachable.`;
+        if (state.on === null) return `${name}: not reporting its state.`;
+        if (!state.on) return `${name}: off.`;
+        const parts = [
+          state.brightness === null ? null : `${state.brightness}%`,
+          state.colour === null ? null : nameOfColour(state.colour)
+        ].filter(Boolean);
+        return `${name}: on${parts.length ? `, ${parts.join(", ")}` : ""}.`;
+      }).join(" ");
     })
   },
   {
@@ -3748,8 +3883,8 @@ async function saveWorkspace(patch) {
 }
 async function hideWorkspace(id) {
   await store16.update((current) => {
-    const known = current.some((one) => one.id === id);
-    const base = known ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
+    const known2 = current.some((one) => one.id === id);
+    const base = known2 ? current : [...current, ...DEFAULTS.filter((one) => one.id === id)];
     return base.map((one) => one.id === id ? { ...one, hidden: true } : one);
   });
   return workspaces();
@@ -3951,17 +4086,17 @@ var recallTools = [
       const needles = terms(about);
       if (needles.length === 0) return "That is too vague to search for.";
       const [log, profile2] = await Promise.all([getMessages(), getProfile()]);
-      const known = profile2.entries.filter((entry) => !entry.supersededAt && score(entry.text, needles) > 0).map((entry) => `- ${entry.text}`);
+      const known2 = profile2.entries.filter((entry) => !entry.supersededAt && score(entry.text, needles) > 0).map((entry) => `- ${entry.text}`);
       const hits = log.map((message, index) => ({ message, index, hits: score(message.text, needles) })).filter((row) => row.hits > 0).sort(
         (left, right) => right.hits === left.hits ? right.index - left.index : right.hits - left.hits
       ).slice(0, 6).sort((left, right) => left.index - right.index);
-      if (known.length === 0 && hits.length === 0) {
+      if (known2.length === 0 && hits.length === 0) {
         return `Nothing in the record mentions ${about}.`;
       }
       const lines = [];
-      if (known.length > 0) {
+      if (known2.length > 0) {
         lines.push(`What you already know about this:
-${known.join("\n")}`);
+${known2.join("\n")}`);
       }
       if (hits.length > 0) {
         lines.push("From earlier conversations:");
@@ -4407,7 +4542,8 @@ var NEEDS = {
   set_lights: "lights",
   dim_lights: "lights",
   colour_lights: "lights",
-  list_lights: "lights"
+  list_lights: "lights",
+  check_lights: "lights"
 };
 function declarations(have) {
   const usable = have ? TOOLS.filter((tool) => {
@@ -4657,7 +4793,11 @@ They keep the app in rooms \u2014 Grace, Home, Work, Play, and any they have mad
 Both only work while they are looking at you. A browser cannot be reached when nobody is on the page, so if they ask you to open something and then leave, say so rather than pretending.
 
 You never sign in to any website as the user.`;
-var LIGHTS_NOTE = `Their lights are yours to work. set_lights turns them on and off, dim_lights sets brightness, colour_lights sets colour, list_lights tells you what exists and what each one is called. Leave the name out and you mean all of them, which is what "lights off" means.
+var LIGHTS_NOTE = `Their lights are yours to work. set_lights turns them on and off, dim_lights sets brightness, colour_lights sets colour, check_lights reads back what they are actually doing right now, list_lights tells you what exists and what each one is called. Leave the name out and you mean all of them, which is what "lights off" means.
+
+Know rather than assume. You do not remember the state of a room \u2014 people flick switches, use the app, and unplug things, so what you set an hour ago tells you nothing about now. Any question about how the lights are, use check_lights and answer from what it says. If they tell you something did not happen, check before you argue or apologise: you will often find it did, or find the light is offline, and either is worth more than a guess.
+
+Each command now confirms itself against the light before it comes back to you, so a success really is one. What it cannot tell you is whether they liked it.
 
 Act rather than ask. A light is the most undoable thing in the house \u2014 if you get it wrong they say one sentence and it is right again \u2014 so "shall I turn them off?" is the wrong shape every single time. Read the room: going to bed is off, settling down is warm and dim, working is bright, and you can pick a colour from a mood without being given one.
 
@@ -5108,10 +5248,10 @@ var contextCache = null;
 async function listeningContext() {
   if (contextCache && contextCache.until > Date.now()) return contextCache.text;
   const [profile2, turns] = await Promise.all([getProfile(), recentTurns()]);
-  const known = profile2.entries.filter((entry) => !entry.supersededAt).slice(-40).map((entry) => entry.text).join("; ");
+  const known2 = profile2.entries.filter((entry) => !entry.supersededAt).slice(-40).map((entry) => entry.text).join("; ");
   const recent = turns.slice(-4).map((turn) => `${turn.role === "assistant" ? "Grace" : "They"}: ${turn.text}`).join("\n");
   const text = [
-    known && `Things known about the speaker: ${known}`,
+    known2 && `Things known about the speaker: ${known2}`,
     recent && `The conversation so far:
 ${recent}`
   ].filter(Boolean).join("\n\n").slice(0, 4e3);

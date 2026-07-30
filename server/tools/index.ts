@@ -250,6 +250,7 @@ const NEEDS: Record<string, keyof Available> = {
   dim_lights: 'lights',
   colour_lights: 'lights',
   list_lights: 'lights',
+  check_lights: 'lights',
 };
 
 export interface Available {

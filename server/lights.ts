@@ -67,15 +67,34 @@ export interface Light {
   name: string;
 }
 
+/**
+ * The device list, briefly remembered.
+ *
+ * It is fetched before every single command, and it changes about twice a
+ * year. Holding it for a minute takes a whole round trip out of "lights off"
+ * and leaves plenty of room to notice a light that was added or renamed.
+ */
+let known: {at: number; lights: Light[]} | null = null;
+const KNOWN_FOR_MS = 60_000;
+
+export function forgetLights(): void {
+  known = null;
+}
+
 export async function lights(): Promise<Light[]> {
+  if (known && Date.now() - known.at < KNOWN_FOR_MS) return known.lights;
+
   const {data} = await call<{data?: {sku: string; device: string; deviceName: string}[]}>(
     '/user/devices',
   );
-  return (data ?? []).map((one) => ({
+  const found = (data ?? []).map((one) => ({
     sku: one.sku,
     device: one.device,
     name: one.deviceName,
   }));
+
+  known = {at: Date.now(), lights: found};
+  return found;
 }
 
 /**
@@ -110,11 +129,147 @@ type Capability =
   | {type: 'devices.capabilities.range'; instance: 'brightness'; value: number}
   | {type: 'devices.capabilities.color_setting'; instance: 'colorRgb'; value: number};
 
-async function control(light: Light, capability: Capability): Promise<void> {
-  await call('/device/control', {
+export interface LightState {
+  /** null wherever the device did not report — never guessed at. */
+  on: boolean | null;
+  brightness: number | null;
+  /** Packed rgb, the same integer the control call takes. */
+  colour: number | null;
+  online: boolean | null;
+}
+
+const UNKNOWN: LightState = {on: null, brightness: null, colour: null, online: null};
+
+/** What the light says about itself, which is the only account worth having. */
+export async function stateOf(light: Light): Promise<LightState> {
+  interface Reported {
+    payload?: {capabilities?: {instance?: string; state?: {value?: unknown}}[]};
+  }
+
+  const reported = await call<Reported>('/device/state', {
     requestId: randomUUID(),
-    payload: {sku: light.sku, device: light.device, capability},
+    payload: {sku: light.sku, device: light.device},
   });
+
+  const found = new Map<string, unknown>();
+  for (const one of reported.payload?.capabilities ?? []) {
+    if (one.instance) found.set(one.instance, one.state?.value);
+  }
+
+  const number = (name: string): number | null => {
+    const raw = found.get(name);
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+  };
+
+  const power = number('powerSwitch');
+  const online = found.get('online');
+
+  return {
+    on: power === null ? null : power === 1,
+    brightness: number('brightness'),
+    colour: number('colorRgb'),
+    online: typeof online === 'boolean' ? online : null,
+  };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Govee accepts a second command to the same device instantly, and drops it.
+ *
+ * This is the whole of "she said she turned it red and nothing happened, and
+ * then it worked the second time". Ask for something that is two changes —
+ * dimmer *and* warmer — and she calls two tools, which run back to back a few
+ * milliseconds apart. Govee answers 200 to both. One of them never reaches the
+ * bulb. Nothing anywhere is an error, so she reports both as done, entirely
+ * sincerely, and the room does not change.
+ *
+ * Roughly a second between commands to the same device is what it wants. The
+ * gap is per-device, so two different lights still change together.
+ */
+const SETTLE_MS = 900;
+const commandedAt = new Map<string, number>();
+
+async function pace(device: string): Promise<void> {
+  const since = Date.now() - (commandedAt.get(device) ?? 0);
+  if (since < SETTLE_MS) await sleep(SETTLE_MS - since);
+  commandedAt.set(device, Date.now());
+}
+
+/** Long enough for the cloud to have heard back from the bulb. */
+const CONFIRM_AFTER_MS = 500;
+
+/** A bulb rounds; a colour is not wrong because a channel is off by four. */
+function close(a: number, b: number, by: number): boolean {
+  return Math.abs(a - b) <= by;
+}
+
+function took(state: LightState, capability: Capability): boolean | null {
+  switch (capability.instance) {
+    case 'powerSwitch':
+      return state.on === null ? null : state.on === (capability.value === 1);
+    case 'brightness':
+      return state.brightness === null
+        ? null
+        : close(state.brightness, capability.value, 3);
+    case 'colorRgb': {
+      if (state.colour === null) return null;
+      const channels = (packed: number) => [
+        (packed >> 16) & 255,
+        (packed >> 8) & 255,
+        packed & 255,
+      ];
+      const got = channels(state.colour);
+      const wanted = channels(capability.value);
+      return got.every((value, at) => close(value, wanted[at]!, 8));
+    }
+  }
+}
+
+/**
+ * Tell one light to do one thing, and then look to see whether it did.
+ *
+ * The verification is the point. Every failure mode here — the dropped second
+ * command, a bulb that has fallen off the wifi, a strip mid-firmware-update —
+ * looks identical from the sending side: a 200 and a cheerful body. Without
+ * reading the state back there is no difference between "done" and "accepted
+ * and discarded", and she was reporting the second as the first.
+ *
+ * A state read that does not mention the thing we changed is *unknown*, not
+ * failed. Some models do not report every capability, and turning "I could not
+ * check" into "it did not work" would be its own kind of lying.
+ */
+async function control(light: Light, capability: Capability): Promise<LightState> {
+  const send = async () => {
+    await pace(light.device);
+    await call('/device/control', {
+      requestId: randomUUID(),
+      payload: {sku: light.sku, device: light.device, capability},
+    });
+  };
+
+  await send();
+  await sleep(CONFIRM_AFTER_MS);
+
+  let state = await stateOf(light).catch(() => UNKNOWN);
+  if (took(state, capability) !== false) return state;
+
+  // It was accepted and discarded. Now that we know, say it again — this time
+  // with the pacing gap in front of it, which is what it wanted all along.
+  await send();
+  await sleep(CONFIRM_AFTER_MS);
+
+  state = await stateOf(light).catch(() => UNKNOWN);
+  if (took(state, capability) === false) {
+    throw new LightError(
+      `${light.name} took the instruction and did not act on it, twice. ` +
+        (state.online === false
+          ? 'It is showing as offline.'
+          : 'It may be off the network or mid-update.'),
+    );
+  }
+
+  return state;
 }
 
 export async function setPower(said: string | undefined, on: boolean): Promise<string[]> {
@@ -131,13 +286,28 @@ export async function setPower(said: string | undefined, on: boolean): Promise<s
   return chosen.map((light) => light.name);
 }
 
+/**
+ * A change that landed, and the lights it will not be visible on.
+ *
+ * Setting a colour on a light that is switched off succeeds completely and
+ * changes nothing anybody can see. Reporting that as done is true and useless.
+ * She is told which ones are dark so she can say so — and not told to switch
+ * them on, because "make it red" and "sleep mode" want opposite things from a
+ * light that is currently off, and guessing between them is how an assistant
+ * ends up putting the lights on at bedtime.
+ */
+export interface Applied {
+  lights: string[];
+  dark: string[];
+}
+
 export async function setBrightness(
   said: string | undefined,
   percent: number,
-): Promise<string[]> {
+): Promise<Applied> {
   const level = Math.max(1, Math.min(100, Math.round(percent)));
   const chosen = await pick(said);
-  await Promise.all(
+  const states = await Promise.all(
     chosen.map((light) =>
       control(light, {
         type: 'devices.capabilities.range',
@@ -146,7 +316,10 @@ export async function setBrightness(
       }),
     ),
   );
-  return chosen.map((light) => light.name);
+  return {
+    lights: chosen.map((light) => light.name),
+    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name),
+  };
 }
 
 /**
@@ -181,7 +354,7 @@ export const COLOURS: Record<string, [number, number, number]> = {
 export async function setColour(
   said: string | undefined,
   colour: string,
-): Promise<{lights: string[]; colour: string}> {
+): Promise<Applied & {colour: string}> {
   const wanted = colour.toLowerCase().trim();
   const rgb = COLOURS[wanted];
   if (!rgb) {
@@ -194,7 +367,7 @@ export async function setColour(
   // Govee wants the three channels packed into one integer, which is what a
   // hex colour has always been.
   const packed = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
-  await Promise.all(
+  const states = await Promise.all(
     chosen.map((light) =>
       control(light, {
         type: 'devices.capabilities.color_setting',
@@ -203,7 +376,43 @@ export async function setColour(
       }),
     ),
   );
-  return {lights: chosen.map((light) => light.name), colour: wanted};
+  return {
+    lights: chosen.map((light) => light.name),
+    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name),
+    colour: wanted,
+  };
+}
+
+/** The nearest colour she has a word for, so state can be said rather than shown. */
+export function nameOfColour(packed: number): string {
+  const channels = [(packed >> 16) & 255, (packed >> 8) & 255, packed & 255];
+  let nearest = 'something';
+  let best = Infinity;
+
+  for (const [name, rgb] of Object.entries(COLOURS)) {
+    const distance = rgb.reduce(
+      (total, value, at) => total + (value - channels[at]!) ** 2,
+      0,
+    );
+    if (distance < best) {
+      best = distance;
+      nearest = name;
+    }
+  }
+  return nearest;
+}
+
+/** Everything she can currently say about the lights, read from the lights. */
+export async function survey(said?: string): Promise<
+  {name: string; state: LightState}[]
+> {
+  const chosen = await pick(said);
+  return Promise.all(
+    chosen.map(async (light) => ({
+      name: light.name,
+      state: await stateOf(light).catch(() => UNKNOWN),
+    })),
+  );
 }
 
 export function lightsConfigured(): boolean {
