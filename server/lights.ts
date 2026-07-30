@@ -208,12 +208,20 @@ function took(state: LightState, capability: Capability): boolean | null {
   switch (capability.instance) {
     case 'powerSwitch':
       return state.on === null ? null : state.on === (capability.value === 1);
-    case 'brightness':
-      return state.brightness === null
-        ? null
-        : close(state.brightness, capability.value, 3);
+
+    case 'brightness': {
+      if (state.brightness === null) return null;
+      // Not every model reports brightness on the scale it accepts it. A strip
+      // answering 0–255 to a command given in 0–100 is not a strip that
+      // ignored you; it is one being read wrong, and calling that a failure is
+      // how a working light gets reported as broken.
+      if (state.brightness > 100) return null;
+      // Widened, because several models round to steps of five.
+      return close(state.brightness, capability.value, 6);
+    }
+
     case 'colorRgb': {
-      if (state.colour === null) return null;
+      if (state.colour === null || state.colour === 0) return null;
       const channels = (packed: number) => [
         (packed >> 16) & 255,
         (packed >> 8) & 255,
@@ -221,7 +229,11 @@ function took(state: LightState, capability: Capability): boolean | null {
       ];
       const got = channels(state.colour);
       const wanted = channels(capability.value);
-      return got.every((value, at) => close(value, wanted[at]!, 8));
+      // Generous on purpose. A multi-segment strip reports one segment, a
+      // strip in a white mode reports its own idea of the colour, and the
+      // read-back is quantised on top of that. It is a strong hint and a
+      // terrible verdict.
+      return got.every((value, at) => close(value, wanted[at]!, 24));
     }
   }
 }
@@ -239,7 +251,22 @@ function took(state: LightState, capability: Capability): boolean | null {
  * failed. Some models do not report every capability, and turning "I could not
  * check" into "it did not work" would be its own kind of lying.
  */
-async function apply(light: Light, capabilities: Capability[]): Promise<LightState> {
+export interface Landed {
+  name: string;
+  state: LightState;
+  /** Which parts the light would not confirm — never proof that they failed. */
+  unconfirmed: string[];
+  /** Set only when the instruction genuinely could not be delivered. */
+  failed: string | null;
+}
+
+const PLAINLY: Record<string, string> = {
+  powerSwitch: 'switching',
+  brightness: 'brightness',
+  colorRgb: 'colour',
+};
+
+async function apply(light: Light, capabilities: Capability[]): Promise<Landed> {
   const send = async (capability: Capability) => {
     await pace(light.device);
     await call('/device/control', {
@@ -248,30 +275,54 @@ async function apply(light: Light, capabilities: Capability[]): Promise<LightSta
     });
   };
 
-  for (const capability of capabilities) await send(capability);
-  await sleep(CONFIRM_AFTER_MS);
+  try {
+    for (const capability of capabilities) await send(capability);
+    await sleep(CONFIRM_AFTER_MS);
 
-  let state = await stateOf(light).catch(() => UNKNOWN);
-  const missed = capabilities.filter((one) => took(state, one) === false);
-  if (missed.length === 0) return state;
+    let state = await stateOf(light).catch(() => UNKNOWN);
+    const missed = capabilities.filter((one) => took(state, one) === false);
 
-  // Accepted and discarded. Now that we know, say it again — this time with
-  // the pacing gap in front of it, which is what it wanted all along.
-  for (const capability of missed) await send(capability);
-  await sleep(CONFIRM_AFTER_MS);
+    if (missed.length > 0) {
+      // Accepted and discarded. Now that we know, say it again — this time
+      // with the pacing gap in front of it, which is what it wanted.
+      for (const capability of missed) await send(capability);
+      await sleep(CONFIRM_AFTER_MS);
+      state = await stateOf(light).catch(() => UNKNOWN);
+    }
 
-  state = await stateOf(light).catch(() => UNKNOWN);
-  const stubborn = capabilities.filter((one) => took(state, one) === false);
-  if (stubborn.length > 0) {
-    throw new LightError(
-      `${light.name} took the instruction and did not act on it, twice. ` +
-        (state.online === false
-          ? 'It is showing as offline.'
-          : 'It may be off the network or mid-update.'),
-    );
+    /*
+     * What is left over is *unconfirmed*, and that is all it is.
+     *
+     * This used to throw — "took the instruction and did not act on it,
+     * twice" — and that sentence was wrong often enough to matter. A strip
+     * whose colour read-back lags, or reports one segment of several, or
+     * answers on a different scale, changes perfectly and reads back as
+     * disobedient. She then told someone standing in a room that had visibly
+     * just changed colour that their light was not working, which is worse
+     * than the silence this verification was added to fix: it teaches you to
+     * stop believing her, and she is usually right.
+     *
+     * So the read-back keeps the job it is good at — noticing a dropped
+     * command in time to send it again — and loses the one it is bad at,
+     * which is passing verdicts. Uncertainty is reported as uncertainty.
+     */
+    return {
+      name: light.name,
+      state,
+      unconfirmed: capabilities
+        .filter((one) => took(state, one) === false)
+        .map((one) => PLAINLY[one.instance] ?? one.instance),
+      failed: null,
+    };
+  } catch (error) {
+    // A refusal, a timeout, a revoked key: this one really did not happen.
+    return {
+      name: light.name,
+      state: UNKNOWN,
+      unconfirmed: [],
+      failed: error instanceof LightError ? error.message : (error as Error).message,
+    };
   }
-
-  return state;
 }
 
 const control = (light: Light, capability: Capability) => apply(light, [capability]);
@@ -293,12 +344,12 @@ export async function applyScene(
   said: string | undefined,
   rgb: [number, number, number],
   brightness: number,
-): Promise<string[]> {
+): Promise<Landed[]> {
   const chosen = await pick(said);
   const level = Math.max(1, Math.min(100, Math.round(brightness)));
   const packed = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
 
-  await Promise.all(
+  return Promise.all(
     chosen.map((light) =>
       apply(light, [
         {type: 'devices.capabilities.on_off', instance: 'powerSwitch', value: 1},
@@ -311,13 +362,14 @@ export async function applyScene(
       ]),
     ),
   );
-
-  return chosen.map((light) => light.name);
 }
 
-export async function setPower(said: string | undefined, on: boolean): Promise<string[]> {
+export async function setPower(
+  said: string | undefined,
+  on: boolean,
+): Promise<Landed[]> {
   const chosen = await pick(said);
-  await Promise.all(
+  return Promise.all(
     chosen.map((light) =>
       control(light, {
         type: 'devices.capabilities.on_off',
@@ -326,31 +378,15 @@ export async function setPower(said: string | undefined, on: boolean): Promise<s
       }),
     ),
   );
-  return chosen.map((light) => light.name);
-}
-
-/**
- * A change that landed, and the lights it will not be visible on.
- *
- * Setting a colour on a light that is switched off succeeds completely and
- * changes nothing anybody can see. Reporting that as done is true and useless.
- * She is told which ones are dark so she can say so — and not told to switch
- * them on, because "make it red" and "sleep mode" want opposite things from a
- * light that is currently off, and guessing between them is how an assistant
- * ends up putting the lights on at bedtime.
- */
-export interface Applied {
-  lights: string[];
-  dark: string[];
 }
 
 export async function setBrightness(
   said: string | undefined,
   percent: number,
-): Promise<Applied> {
+): Promise<Landed[]> {
   const level = Math.max(1, Math.min(100, Math.round(percent)));
   const chosen = await pick(said);
-  const states = await Promise.all(
+  return Promise.all(
     chosen.map((light) =>
       control(light, {
         type: 'devices.capabilities.range',
@@ -359,10 +395,6 @@ export async function setBrightness(
       }),
     ),
   );
-  return {
-    lights: chosen.map((light) => light.name),
-    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name),
-  };
 }
 
 /**
@@ -397,7 +429,7 @@ export const COLOURS: Record<string, [number, number, number]> = {
 export async function setColour(
   said: string | undefined,
   colour: string,
-): Promise<Applied & {colour: string}> {
+): Promise<{landed: Landed[]; colour: string}> {
   const wanted = colour.toLowerCase().trim();
   const rgb = COLOURS[wanted];
   if (!rgb) {
@@ -410,7 +442,7 @@ export async function setColour(
   // Govee wants the three channels packed into one integer, which is what a
   // hex colour has always been.
   const packed = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
-  const states = await Promise.all(
+  const landed = await Promise.all(
     chosen.map((light) =>
       control(light, {
         type: 'devices.capabilities.color_setting',
@@ -419,11 +451,7 @@ export async function setColour(
       }),
     ),
   );
-  return {
-    lights: chosen.map((light) => light.name),
-    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name),
-    colour: wanted,
-  };
+  return {landed, colour: wanted};
 }
 
 /** The nearest colour she has a word for, so state can be said rather than shown. */

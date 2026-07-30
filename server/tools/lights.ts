@@ -18,6 +18,7 @@ import {
   SCENE_NAMES,
   tuneScene,
 } from '../scenes';
+import type {Landed} from '../lights';
 import type {Tool} from './types';
 
 const NUDGES: Nudge[] = ['dimmer', 'brighter', 'warmer', 'cooler'];
@@ -59,16 +60,55 @@ function said(names: string[]): string {
 }
 
 /**
- * The change landed and nobody can see it.
+ * What actually happened, light by light.
  *
- * A colour set on a light that is switched off is a complete success and a
- * visible nothing, which is indistinguishable from the failure this whole
- * change exists to stop. She is told, and left to decide — offering to switch
- * them on is right for "make it red" and quite wrong for "sleep mode".
+ * Three different things used to come out of here as one flat claim of
+ * success, and one of them — an unconfirmed read-back — came out as a flat
+ * claim of failure instead. They are not the same and she should not say they
+ * are:
+ *
+ *   it worked                  → say so and stop
+ *   it worked, nobody can see it → the light is off; mention it
+ *   the light will not confirm  → say that, not "it isn't working"
+ *   it could not be delivered   → a real failure, and only this one
+ *
+ * The middle two are the ones that made her sound broken. A strip that
+ * changes colour perfectly and reports its old colour for a few seconds is
+ * not a broken strip, and telling someone standing in a room that has visibly
+ * just changed that their light is not working teaches them to stop believing
+ * her — which is expensive, because she is usually right.
  */
-function unlit(dark: string[]): string {
-  if (dark.length === 0) return '';
-  return ` ${said(dark)} ${dark.length === 1 ? 'is' : 'are'} switched off, so nothing shows yet — mention it, and offer to turn ${dark.length === 1 ? 'it' : 'them'} on.`;
+function outcome(landed: Landed[], what: string): string {
+  const worked = landed.filter((one) => !one.failed);
+  const broken = landed.filter((one) => one.failed);
+  const dark = worked.filter((one) => one.state.on === false);
+  const unsure = worked.filter((one) => one.unconfirmed.length > 0);
+
+  if (worked.length === 0) {
+    return `Could not reach ${said(broken.map((one) => one.name))}: ${broken[0]?.failed}`;
+  }
+
+  const parts = [`${said(worked.map((one) => one.name))} ${what}.`];
+
+  if (broken.length > 0) {
+    parts.push(
+      `${said(broken.map((one) => one.name))} could not be reached (${broken[0]?.failed}) — say which one, rather than calling the whole thing a failure.`,
+    );
+  }
+
+  if (dark.length > 0) {
+    parts.push(
+      `${said(dark.map((one) => one.name))} ${dark.length === 1 ? 'is' : 'are'} switched off, so nothing shows yet — mention it and offer to turn ${dark.length === 1 ? 'it' : 'them'} on.`,
+    );
+  }
+
+  if (unsure.length > 0) {
+    parts.push(
+      `${said(unsure.map((one) => one.name))} would not confirm its ${unsure[0]!.unconfirmed.join(' and ')} — the instruction was sent twice and accepted both times. Do NOT say it is not working; if they can see it changed, it changed. Only mention this if they ask.`,
+    );
+  }
+
+  return parts.join(' ');
 }
 
 async function guarded(work: () => Promise<string>): Promise<string> {
@@ -101,11 +141,8 @@ export const lightTools: Tool[] = [
     run: (args) =>
       guarded(async () => {
         const on = Boolean(args.on);
-        const names = await setPower(
-          args.which ? String(args.which) : undefined,
-          on,
-        );
-        return `${said(names)} ${on ? 'on' : 'off'}. Say so in a few words.`;
+        const landed = await setPower(args.which ? String(args.which) : undefined, on);
+        return `${outcome(landed, on ? 'on' : 'off')} Say it in a few words.`;
       }),
   },
   {
@@ -124,12 +161,12 @@ export const lightTools: Tool[] = [
       guarded(async () => {
         const percent = Number(args.percent);
         if (!Number.isFinite(percent)) return 'That was not a brightness.';
-        const {lights: names, dark} = await setBrightness(
+        const landed = await setBrightness(
           args.which ? String(args.which) : undefined,
           percent,
         );
         const level = Math.max(1, Math.min(100, Math.round(percent)));
-        return `${said(names)} at ${level}%.${unlit(dark)}`;
+        return outcome(landed, `at ${level}%`);
       }),
   },
   {
@@ -146,11 +183,11 @@ export const lightTools: Tool[] = [
     required: ['colour'],
     run: (args) =>
       guarded(async () => {
-        const {lights: names, colour, dark} = await setColour(
+        const {landed, colour} = await setColour(
           args.which ? String(args.which) : undefined,
           String(args.colour),
         );
-        return `${said(names)} now ${colour}.${unlit(dark)}`;
+        return outcome(landed, `now ${colour}`);
       }),
   },
   {
@@ -174,12 +211,12 @@ export const lightTools: Tool[] = [
         const scene = await findScene(String(args.scene));
         if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
 
-        const names = await applyScene(
+        const landed = await applyScene(
           args.which ? String(args.which) : undefined,
           kelvinToRgb(scene.kelvin),
           scene.brightness,
         );
-        return `${said(names)} in ${scene.id} — ${scene.kelvin}K at ${scene.brightness}%. Say it in a few words. If they ask why it is set this way: ${scene.why}`;
+        return `${outcome(landed, `in ${scene.id}, ${scene.kelvin}K at ${scene.brightness}%`)} Say it in a few words. If they ask why it is set this way: ${scene.why}`;
       }),
   },
   {
@@ -229,8 +266,8 @@ export const lightTools: Tool[] = [
 
         // Shown as well as saved: a change to a light you cannot see is a
         // change you cannot judge, and they will only ask again.
-        const names = await applyScene(undefined, kelvinToRgb(tuned.kelvin), tuned.brightness);
-        return `${scene.id} is now ${tuned.kelvin}K at ${tuned.brightness}%, and ${said(names)} ${names.length === 1 ? 'is' : 'are'} showing it. Saved for next time.`;
+        const landed = await applyScene(undefined, kelvinToRgb(tuned.kelvin), tuned.brightness);
+        return `${scene.id} is now ${tuned.kelvin}K at ${tuned.brightness}%, saved for next time. ${outcome(landed, 'showing it')}`;
       }),
   },
   {
@@ -279,7 +316,14 @@ export const lightTools: Tool[] = [
         const found = await survey(args.which ? String(args.which) : undefined);
         if (found.length === 0) return 'No lights on the account.';
 
-        return found
+        // The count comes first on purpose. A Govee account keeps listing a
+        // device long after it has been unplugged, and "all the lights" then
+        // means one real strip and one ghost that never answers — which reads
+        // as her failing at something she did perfectly. If the number here
+        // does not match what is plugged in, that is the whole explanation.
+        const count = `${found.length} light${found.length === 1 ? '' : 's'} on the account.`;
+
+        return `${count} ${found
           .map(({name, state}) => {
             if (state.online === false) return `${name}: offline, not reachable.`;
             if (state.on === null) return `${name}: not reporting its state.`;
@@ -291,7 +335,7 @@ export const lightTools: Tool[] = [
             ].filter(Boolean);
             return `${name}: on${parts.length ? `, ${parts.join(', ')}` : ''}.`;
           })
-          .join(' ');
+          .join(' ')}`;
       }),
   },
   {
@@ -307,7 +351,9 @@ export const lightTools: Tool[] = [
         const found = await lights();
         return found.length === 0
           ? 'No lights on the account.'
-          : `Lights: ${found.map((one) => one.name).join(', ')}.`;
+          : `${found.length} light${found.length === 1 ? '' : 's'} on the account: ${found
+              .map((one) => one.name)
+              .join(', ')}. If that is more than they actually have plugged in, the extra ones are stale entries in the Govee app and are worth deleting there.`;
       }),
   },
 ];

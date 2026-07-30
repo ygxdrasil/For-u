@@ -2102,6 +2102,10 @@ try {
   let lastAcceptedAt = 0;
   /** Forces the swallow-it-silently behaviour, to prove the recovery works. */
   let dropNext = false;
+  /** Makes the pretend strip report a stale colour, as real ones do briefly. */
+  let staleColour = false;
+  /** Adds a device the account lists but nothing answers for. */
+  let ghost = false;
 
   const asGovee = async (url: string, init?: {body?: string}) => {
     const body = init?.body ? (JSON.parse(init.body) as Record<string, any>) : null;
@@ -2112,7 +2116,17 @@ try {
       });
 
     if (url.endsWith('/user/devices')) {
-      return json({data: [{sku: 'H6199', device: 'AA:BB', deviceName: 'Strip'}]});
+      return json({
+        data: [
+          {sku: 'H6199', device: 'AA:BB', deviceName: 'Strip'},
+          ...(ghost ? [{sku: 'H6199', device: 'CC:DD', deviceName: 'Ghost'}] : []),
+        ],
+      });
+    }
+
+    if (body?.payload?.device === 'CC:DD') {
+      // The unplugged one: the account lists it and nothing ever answers.
+      return new Response('{}', {status: 500});
     }
 
     if (url.endsWith('/device/control')) {
@@ -2139,7 +2153,11 @@ try {
             {instance: 'online', state: {value: true}},
             {instance: 'powerSwitch', state: {value: bulb.powerSwitch}},
             {instance: 'brightness', state: {value: bulb.brightness}},
-            {instance: 'colorRgb', state: {value: bulb.colorRgb}},
+            {
+              instance: 'colorRgb',
+              // A read-back that lags behind what the strip is visibly doing.
+              state: {value: staleColour ? 0x010203 : bulb.colorRgb},
+            },
           ],
         },
       });
@@ -2202,6 +2220,64 @@ try {
     assert.match(seen.result, /20%/, 'and its real brightness reported');
     assert.match(seen.result, /blue/, 'and its real colour, in a word she can say');
     ok('she can read the room back from the lights themselves');
+
+    /*
+     * A light that will not confirm is not a light that failed.
+     *
+     * The verification added above went too far: a strip whose colour
+     * read-back lags, reports one segment of several, or answers on a scale
+     * it was not commanded in reads as disobedient. She then told someone
+     * standing in a visibly-changed room that their light was not working,
+     * which is worse than the silence it was added to fix — it teaches you to
+     * stop believing her.
+     */
+    staleColour = true;
+    const shy = await runTool({name: 'colour_lights', args: {colour: 'green'}});
+    assert.ok(shy.ok, 'a light that will not confirm must not be an error');
+    assert.doesNotMatch(
+      shy.result,
+      /did not act|could not be reached|failed/i,
+      `and must never be asserted to have failed — got: ${shy.result}`,
+    );
+    assert.match(shy.result, /would not confirm/i, 'the uncertainty is reported honestly');
+    assert.match(
+      shy.result,
+      /Do NOT say it is not working/,
+      'and she is told plainly not to call it broken',
+    );
+    assert.equal(bulb.colorRgb, (0 << 16) | (255 << 8) | 60, 'and it really was set');
+    staleColour = false;
+    ok('a light that will not confirm is reported as unconfirmed, not broken');
+
+    /*
+     * One dead device beside a working one.
+     *
+     * A Govee account goes on listing a strip long after it is unplugged, so
+     * "the lights" is one real light and one ghost. Every command then had one
+     * half throw, and Promise.all turns one thrown half into a total failure —
+     * so a strip that had just changed colour perfectly was reported as not
+     * working. That is very probably what has been happening.
+     */
+    ghost = true;
+    forgetLights();
+    const beside = await runTool({name: 'set_lights', args: {on: true}});
+    assert.ok(beside.ok, 'one unreachable light must not sink the working one');
+    assert.match(beside.result, /Strip/, 'the working light is named as having worked');
+    assert.match(beside.result, /Ghost/, 'and the unreachable one is named separately');
+    assert.match(
+      beside.result,
+      /rather than calling the whole thing a failure/,
+      'and she is told not to generalise from it',
+    );
+    ok('one unreachable light is named, and does not sink the ones that worked');
+
+    const counted = await runTool({name: 'list_lights', args: {}});
+    assert.match(counted.result, /2 lights/, 'she can say how many the account lists');
+    assert.match(counted.result, /stale/i, 'and explain a count that looks wrong');
+    ok('she can say how many lights the account thinks exist');
+
+    ghost = false;
+    forgetLights();
 
     // ---- the named settings ---------------------------------------------
     // Kelvin is the axis because it is the language the research uses and

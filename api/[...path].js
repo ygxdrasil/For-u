@@ -3552,10 +3552,13 @@ function took(state, capability) {
   switch (capability.instance) {
     case "powerSwitch":
       return state.on === null ? null : state.on === (capability.value === 1);
-    case "brightness":
-      return state.brightness === null ? null : close(state.brightness, capability.value, 3);
+    case "brightness": {
+      if (state.brightness === null) return null;
+      if (state.brightness > 100) return null;
+      return close(state.brightness, capability.value, 6);
+    }
     case "colorRgb": {
-      if (state.colour === null) return null;
+      if (state.colour === null || state.colour === 0) return null;
       const channels = (packed) => [
         packed >> 16 & 255,
         packed >> 8 & 255,
@@ -3563,10 +3566,15 @@ function took(state, capability) {
       ];
       const got = channels(state.colour);
       const wanted = channels(capability.value);
-      return got.every((value, at) => close(value, wanted[at], 8));
+      return got.every((value, at) => close(value, wanted[at], 24));
     }
   }
 }
+var PLAINLY = {
+  powerSwitch: "switching",
+  brightness: "brightness",
+  colorRgb: "colour"
+};
 async function apply(light, capabilities) {
   const send2 = async (capability) => {
     await pace(light.device);
@@ -3575,28 +3583,37 @@ async function apply(light, capabilities) {
       payload: { sku: light.sku, device: light.device, capability }
     });
   };
-  for (const capability of capabilities) await send2(capability);
-  await sleep(CONFIRM_AFTER_MS);
-  let state = await stateOf(light).catch(() => UNKNOWN);
-  const missed = capabilities.filter((one) => took(state, one) === false);
-  if (missed.length === 0) return state;
-  for (const capability of missed) await send2(capability);
-  await sleep(CONFIRM_AFTER_MS);
-  state = await stateOf(light).catch(() => UNKNOWN);
-  const stubborn = capabilities.filter((one) => took(state, one) === false);
-  if (stubborn.length > 0) {
-    throw new LightError(
-      `${light.name} took the instruction and did not act on it, twice. ` + (state.online === false ? "It is showing as offline." : "It may be off the network or mid-update.")
-    );
+  try {
+    for (const capability of capabilities) await send2(capability);
+    await sleep(CONFIRM_AFTER_MS);
+    let state = await stateOf(light).catch(() => UNKNOWN);
+    const missed = capabilities.filter((one) => took(state, one) === false);
+    if (missed.length > 0) {
+      for (const capability of missed) await send2(capability);
+      await sleep(CONFIRM_AFTER_MS);
+      state = await stateOf(light).catch(() => UNKNOWN);
+    }
+    return {
+      name: light.name,
+      state,
+      unconfirmed: capabilities.filter((one) => took(state, one) === false).map((one) => PLAINLY[one.instance] ?? one.instance),
+      failed: null
+    };
+  } catch (error) {
+    return {
+      name: light.name,
+      state: UNKNOWN,
+      unconfirmed: [],
+      failed: error instanceof LightError ? error.message : error.message
+    };
   }
-  return state;
 }
 var control = (light, capability) => apply(light, [capability]);
 async function applyScene(said2, rgb, brightness) {
   const chosen = await pick(said2);
   const level = Math.max(1, Math.min(100, Math.round(brightness)));
   const packed = rgb[0] << 16 | rgb[1] << 8 | rgb[2];
-  await Promise.all(
+  return Promise.all(
     chosen.map(
       (light) => apply(light, [
         { type: "devices.capabilities.on_off", instance: "powerSwitch", value: 1 },
@@ -3609,11 +3626,10 @@ async function applyScene(said2, rgb, brightness) {
       ])
     )
   );
-  return chosen.map((light) => light.name);
 }
 async function setPower(said2, on) {
   const chosen = await pick(said2);
-  await Promise.all(
+  return Promise.all(
     chosen.map(
       (light) => control(light, {
         type: "devices.capabilities.on_off",
@@ -3622,12 +3638,11 @@ async function setPower(said2, on) {
       })
     )
   );
-  return chosen.map((light) => light.name);
 }
 async function setBrightness(said2, percent) {
   const level = Math.max(1, Math.min(100, Math.round(percent)));
   const chosen = await pick(said2);
-  const states = await Promise.all(
+  return Promise.all(
     chosen.map(
       (light) => control(light, {
         type: "devices.capabilities.range",
@@ -3636,10 +3651,6 @@ async function setBrightness(said2, percent) {
       })
     )
   );
-  return {
-    lights: chosen.map((light) => light.name),
-    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name)
-  };
 }
 var COLOURS = {
   red: [255, 0, 0],
@@ -3671,7 +3682,7 @@ async function setColour(said2, colour) {
   }
   const chosen = await pick(said2);
   const packed = rgb[0] << 16 | rgb[1] << 8 | rgb[2];
-  const states = await Promise.all(
+  const landed = await Promise.all(
     chosen.map(
       (light) => control(light, {
         type: "devices.capabilities.color_setting",
@@ -3680,11 +3691,7 @@ async function setColour(said2, colour) {
       })
     )
   );
-  return {
-    lights: chosen.map((light) => light.name),
-    dark: chosen.filter((_, at) => states[at]?.on === false).map((light) => light.name),
-    colour: wanted
-  };
+  return { landed, colour: wanted };
 }
 function nameOfColour(packed) {
   const channels = [packed >> 16 & 255, packed >> 8 & 255, packed & 255];
@@ -3880,9 +3887,31 @@ function said(names) {
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
   return `all ${names.length} of them`;
 }
-function unlit(dark) {
-  if (dark.length === 0) return "";
-  return ` ${said(dark)} ${dark.length === 1 ? "is" : "are"} switched off, so nothing shows yet \u2014 mention it, and offer to turn ${dark.length === 1 ? "it" : "them"} on.`;
+function outcome(landed, what) {
+  const worked = landed.filter((one) => !one.failed);
+  const broken = landed.filter((one) => one.failed);
+  const dark = worked.filter((one) => one.state.on === false);
+  const unsure = worked.filter((one) => one.unconfirmed.length > 0);
+  if (worked.length === 0) {
+    return `Could not reach ${said(broken.map((one) => one.name))}: ${broken[0]?.failed}`;
+  }
+  const parts = [`${said(worked.map((one) => one.name))} ${what}.`];
+  if (broken.length > 0) {
+    parts.push(
+      `${said(broken.map((one) => one.name))} could not be reached (${broken[0]?.failed}) \u2014 say which one, rather than calling the whole thing a failure.`
+    );
+  }
+  if (dark.length > 0) {
+    parts.push(
+      `${said(dark.map((one) => one.name))} ${dark.length === 1 ? "is" : "are"} switched off, so nothing shows yet \u2014 mention it and offer to turn ${dark.length === 1 ? "it" : "them"} on.`
+    );
+  }
+  if (unsure.length > 0) {
+    parts.push(
+      `${said(unsure.map((one) => one.name))} would not confirm its ${unsure[0].unconfirmed.join(" and ")} \u2014 the instruction was sent twice and accepted both times. Do NOT say it is not working; if they can see it changed, it changed. Only mention this if they ask.`
+    );
+  }
+  return parts.join(" ");
 }
 async function guarded(work) {
   try {
@@ -3907,11 +3936,8 @@ var lightTools = [
     required: ["on"],
     run: (args) => guarded(async () => {
       const on = Boolean(args.on);
-      const names = await setPower(
-        args.which ? String(args.which) : void 0,
-        on
-      );
-      return `${said(names)} ${on ? "on" : "off"}. Say so in a few words.`;
+      const landed = await setPower(args.which ? String(args.which) : void 0, on);
+      return `${outcome(landed, on ? "on" : "off")} Say it in a few words.`;
     })
   },
   {
@@ -3926,12 +3952,12 @@ var lightTools = [
     run: (args) => guarded(async () => {
       const percent = Number(args.percent);
       if (!Number.isFinite(percent)) return "That was not a brightness.";
-      const { lights: names, dark } = await setBrightness(
+      const landed = await setBrightness(
         args.which ? String(args.which) : void 0,
         percent
       );
       const level = Math.max(1, Math.min(100, Math.round(percent)));
-      return `${said(names)} at ${level}%.${unlit(dark)}`;
+      return outcome(landed, `at ${level}%`);
     })
   },
   {
@@ -3944,11 +3970,11 @@ var lightTools = [
     },
     required: ["colour"],
     run: (args) => guarded(async () => {
-      const { lights: names, colour, dark } = await setColour(
+      const { landed, colour } = await setColour(
         args.which ? String(args.which) : void 0,
         String(args.colour)
       );
-      return `${said(names)} now ${colour}.${unlit(dark)}`;
+      return outcome(landed, `now ${colour}`);
     })
   },
   {
@@ -3963,12 +3989,12 @@ var lightTools = [
     run: (args) => guarded(async () => {
       const scene = await findScene(String(args.scene));
       if (!scene) return `No setting called "${args.scene}". ${await sceneList()}`;
-      const names = await applyScene(
+      const landed = await applyScene(
         args.which ? String(args.which) : void 0,
         kelvinToRgb(scene.kelvin),
         scene.brightness
       );
-      return `${said(names)} in ${scene.id} \u2014 ${scene.kelvin}K at ${scene.brightness}%. Say it in a few words. If they ask why it is set this way: ${scene.why}`;
+      return `${outcome(landed, `in ${scene.id}, ${scene.kelvin}K at ${scene.brightness}%`)} Say it in a few words. If they ask why it is set this way: ${scene.why}`;
     })
   },
   {
@@ -4005,8 +4031,8 @@ var lightTools = [
         ...args.brightness !== void 0 ? { brightness: Number(args.brightness) } : {},
         ...args.kelvin !== void 0 ? { kelvin: Number(args.kelvin) } : {}
       });
-      const names = await applyScene(void 0, kelvinToRgb(tuned.kelvin), tuned.brightness);
-      return `${scene.id} is now ${tuned.kelvin}K at ${tuned.brightness}%, and ${said(names)} ${names.length === 1 ? "is" : "are"} showing it. Saved for next time.`;
+      const landed = await applyScene(void 0, kelvinToRgb(tuned.kelvin), tuned.brightness);
+      return `${scene.id} is now ${tuned.kelvin}K at ${tuned.brightness}%, saved for next time. ${outcome(landed, "showing it")}`;
     })
   },
   {
@@ -4041,7 +4067,8 @@ var lightTools = [
     run: (args) => guarded(async () => {
       const found = await survey(args.which ? String(args.which) : void 0);
       if (found.length === 0) return "No lights on the account.";
-      return found.map(({ name, state }) => {
+      const count = `${found.length} light${found.length === 1 ? "" : "s"} on the account.`;
+      return `${count} ${found.map(({ name, state }) => {
         if (state.online === false) return `${name}: offline, not reachable.`;
         if (state.on === null) return `${name}: not reporting its state.`;
         if (!state.on) return `${name}: off.`;
@@ -4050,7 +4077,7 @@ var lightTools = [
           state.colour === null ? null : nameOfColour(state.colour)
         ].filter(Boolean);
         return `${name}: on${parts.length ? `, ${parts.join(", ")}` : ""}.`;
-      }).join(" ");
+      }).join(" ")}`;
     })
   },
   {
@@ -4061,7 +4088,7 @@ var lightTools = [
     required: [],
     run: () => guarded(async () => {
       const found = await lights();
-      return found.length === 0 ? "No lights on the account." : `Lights: ${found.map((one) => one.name).join(", ")}.`;
+      return found.length === 0 ? "No lights on the account." : `${found.length} light${found.length === 1 ? "" : "s"} on the account: ${found.map((one) => one.name).join(", ")}. If that is more than they actually have plugged in, the extra ones are stale entries in the Govee app and are worth deleting there.`;
     })
   }
 ];
@@ -5321,9 +5348,9 @@ async function takeTurn({
       // entire inbox on screen no matter how carefully the tool layer worded
       // its summary. It is kept here instead.
       onToolCall: async (name, args) => {
-        const outcome = await runTool({ name, args });
-        shown.set(name, outcome.summary);
-        return outcome.result;
+        const outcome2 = await runTool({ name, args });
+        shown.set(name, outcome2.summary);
+        return outcome2.result;
       },
       onToolUsed: (name, raw) => {
         const summary2 = shown.get(name) ?? raw;
@@ -5614,24 +5641,24 @@ function createApi() {
         return;
       }
       const open = [];
-      const outcome = await takeTurn({
+      const outcome2 = await takeTurn({
         text,
         // Spoken, because it is: she should answer the way she answers out
         // loud, not the way she writes on screen.
         via: "voice",
         hooks: { onOpened: (urls) => open.push(...urls) }
       });
-      if (outcome.error && !outcome.reply.trim()) {
-        res.json({ reply: outcome.error, spoken: outcome.error, acted: [], open: [] });
+      if (outcome2.error && !outcome2.reply.trim()) {
+        res.json({ reply: outcome2.error, spoken: outcome2.error, acted: [], open: [] });
         return;
       }
       await noteRelayUse();
       contextCache = null;
       res.json({
-        reply: outcome.reply,
+        reply: outcome2.reply,
         // What to read aloud, with the markdown taken out of it.
-        spoken: forSpeaking(outcome.reply),
-        acted: outcome.acted,
+        spoken: forSpeaking(outcome2.reply),
+        acted: outcome2.acted,
         // Shortcuts can open these itself, which is the only way opening a page
         // can work when her own tab isn't the thing being spoken to.
         open
@@ -5745,7 +5772,7 @@ function createApi() {
       };
       const controller = new AbortController();
       res.on("close", () => controller.abort());
-      const outcome = await takeTurn({
+      const outcome2 = await takeTurn({
         text,
         via,
         signal: controller.signal,
@@ -5758,12 +5785,12 @@ function createApi() {
           onOpened: (urls, workspace) => send2({ type: "open", urls, workspace })
         }
       });
-      if (outcome.error) {
-        send2({ type: "error", message: outcome.error });
+      if (outcome2.error) {
+        send2({ type: "error", message: outcome2.error });
         res.end();
         return;
       }
-      send2({ type: "done", message: outcome.message });
+      send2({ type: "done", message: outcome2.message });
       contextCache = null;
       res.end();
     })
