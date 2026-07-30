@@ -1225,14 +1225,14 @@ try {
   // The bridge now opens pages on the laptop's own screen, which makes what it
   // will accept an address a security question rather than a tidiness one:
   // file:// reaches local documents and the shell schemes start programs.
-  const bridgeSource = readFileSync('bridge/bridge.mjs', 'utf8');
+  const bridgeCode = readFileSync('bridge/bridge.mjs', 'utf8');
   assert.match(
-    bridgeSource,
+    bridgeCode,
     /protocol !== 'http:' && address\.protocol !== 'https:'/,
     'the bridge must open web addresses and nothing else',
   );
   assert.doesNotMatch(
-    bridgeSource,
+    bridgeCode,
     // Quoted, so the comment explaining why cmd is avoided does not itself
     // fail the check that cmd is avoided.
     /shell: true|['"]cmd\.exe['"]/,
@@ -1668,7 +1668,46 @@ try {
   });
 
   const said = await woken;
-  assert.match(said.result, /coming on/i, 'she reports what the laptop actually did');
+  assert.match(said.result, /console is on/i, 'she reports what the laptop actually did');
+  assert.doesNotMatch(
+    said.result,
+    /coming on|on its way|going to sleep/i,
+    'and states it, because the laptop now watches the console change before saying so',
+  );
+
+  /*
+   * The laptop must not take playactor's word for it.
+   *
+   * playactor exits zero having opened a Remote Play session, sent the
+   * request and closed again — whether or not the console acted. On a PS5
+   * with more than one account the standby is routinely swallowed by a
+   * Remote Play connection the wake left unfinished, so the console stays on,
+   * playactor exits zero, and she reports it asleep. Structural rather than
+   * behavioural because the bridge runs on someone's laptop and cannot be
+   * exercised from here; what is asserted is that the unverified path is
+   * gone and the verified one consults the console.
+   */
+  const bridgeProgram = readFileSync('bridge/bridge.mjs', 'utf8');
+  for (const straightThrough of [
+    "return playactor('wake')",
+    "return playactor('standby')",
+  ]) {
+    assert.ok(
+      !bridgeProgram.includes(straightThrough),
+      `${straightThrough} reports an exit code as a fact — it must go through settle()`,
+    );
+  }
+  assert.match(
+    bridgeProgram,
+    /async function settle\([\s\S]*?await discover\(\)/,
+    'settle must ask the console what state it is actually in',
+  );
+  assert.match(
+    bridgeProgram,
+    /attempt <= 3/,
+    'and must send it again, because twice-or-thrice is the documented remedy',
+  );
+  ok('waking and sleeping are verified against the console, not against an exit code');
   ok('an instruction reaches the laptop once, and she reports back what happened');
 
   // She can look at the console, and she cannot operate it beyond on and off.

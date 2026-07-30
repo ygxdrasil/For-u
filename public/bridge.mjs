@@ -284,14 +284,59 @@ function lockScreen() {
   });
 }
 
+/**
+ * Ask the console to change state, and then look to see whether it did.
+ *
+ * playactor exits zero having opened a Remote Play session, sent the request
+ * and closed again — whether or not the console acted on it. On a PS5 with
+ * more than one account this fails routinely: waking leaves a Remote Play
+ * connection that never finished, and the standby that follows is swallowed
+ * by it. The console stays on, playactor exits zero, and Grace says she has
+ * put it to sleep. The documented workaround is to send it two or three
+ * times, which is exactly the thing a program should do rather than a person.
+ *
+ * So the exit code is treated as an opinion and the discovery packet as the
+ * fact. Discovery is a two-line UDP exchange that costs nothing and answers
+ * even when the wake tooling is unhappy, which makes it the right authority.
+ */
+async function settle(want, command) {
+  let lastDetail = '';
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const ran = await playactor(command);
+    if (!ran.ok) lastDetail = ran.detail;
+
+    // Ten seconds of asking. A console takes a moment to act on either
+    // instruction, and waking is much slower than sleeping.
+    const until = Date.now() + (command === 'wake' ? 25_000 : 10_000);
+    while (Date.now() < until) {
+      const state = await discover();
+      if (state.found && state.status === want) {
+        return {
+          ok: true,
+          detail: attempt === 1 ? '' : `it took ${attempt} attempts`,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+
+  return {
+    ok: false,
+    detail:
+      `the console did not go to ${want.toLowerCase()} after three attempts` +
+      (lastDetail ? ` (${lastDetail})` : ''),
+  };
+}
+
 async function carryOut(action, arg) {
   if (action === 'status') {
     const state = await discover();
     return {ok: state.found, detail: state.found ? `${state.status}` : 'no console answered'};
   }
 
-  if (action === 'wake') return playactor('wake');
-  if (action === 'sleep') return playactor('standby');
+  if (action === 'wake') return settle('AWAKE', 'wake');
+  if (action === 'sleep') return settle('STANDBY', 'standby');
   if (action === 'open') return openOnScreen(arg ?? '');
   if (action === 'lock') return lockScreen();
 

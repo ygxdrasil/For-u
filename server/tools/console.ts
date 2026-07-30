@@ -40,7 +40,20 @@ async function send(action: BridgeAction, verb: string, arg?: string): Promise<s
     return 'The console is already asleep.';
   }
 
-  const finished = await awaitResult(await enqueue(action, arg));
+  /*
+   * How long to wait for the laptop to say what happened.
+   *
+   * Waking and sleeping are no longer fire-and-forget: the laptop now watches
+   * the console until it has actually changed state, and re-sends the
+   * instruction if it has not, because a PS5 with more than one account
+   * swallows the first standby often enough that "send it twice" is the
+   * documented remedy. That verification is worth several seconds and is the
+   * whole difference between her reporting what happened and reporting what
+   * she asked for. Opening a page and locking a screen are instant by
+   * comparison and keep the short wait.
+   */
+  const patience = action === 'wake' || action === 'sleep' ? 25_000 : 12_000;
+  const finished = await awaitResult(await enqueue(action, arg), patience);
 
   if (!finished) {
     return (
@@ -53,9 +66,12 @@ async function send(action: BridgeAction, verb: string, arg?: string): Promise<s
     return `That did not work: ${finished.detail || 'the laptop gave no reason'}.`;
   }
 
+  // Past tense now, and it is earned: the laptop watched the console change
+  // before saying so. It used to say "is coming on" off the back of an exit
+  // code, which was a guess dressed as a report.
   const done: Record<string, string> = {
-    wake: 'Done — the console is coming on.',
-    sleep: 'Done — the console is going to sleep.',
+    wake: `The console is on${finished.detail ? ` — ${finished.detail}` : ''}.`,
+    sleep: `The console is asleep${finished.detail ? ` — ${finished.detail}` : ''}.`,
     open: `Done — it is up on the laptop screen${finished.detail ? ` (${finished.detail})` : ''}.`,
     lock: 'Done — the laptop is locked.',
   };

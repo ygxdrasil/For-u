@@ -3039,7 +3039,8 @@ async function send(action, verb, arg) {
   if (action === "sleep" && state?.status === "STANDBY") {
     return "The console is already asleep.";
   }
-  const finished = await awaitResult(await enqueue(action, arg));
+  const patience = action === "wake" || action === "sleep" ? 25e3 : 12e3;
+  const finished = await awaitResult(await enqueue(action, arg), patience);
   if (!finished) {
     return `The laptop took the instruction to ${verb} but has not reported back yet. Say that it is on its way rather than that it is done.`;
   }
@@ -3047,8 +3048,8 @@ async function send(action, verb, arg) {
     return `That did not work: ${finished.detail || "the laptop gave no reason"}.`;
   }
   const done = {
-    wake: "Done \u2014 the console is coming on.",
-    sleep: "Done \u2014 the console is going to sleep.",
+    wake: `The console is on${finished.detail ? ` \u2014 ${finished.detail}` : ""}.`,
+    sleep: `The console is asleep${finished.detail ? ` \u2014 ${finished.detail}` : ""}.`,
     open: `Done \u2014 it is up on the laptop screen${finished.detail ? ` (${finished.detail})` : ""}.`,
     lock: "Done \u2014 the laptop is locked."
   };
