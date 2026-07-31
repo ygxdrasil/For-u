@@ -16,18 +16,22 @@
 import { GoogleGenAI } from '@google/genai';
 import { PRICES } from './meter.js';
 
+/**
+ * Fallback chains, cheapest first. These are only the defaults and the
+ * fallback order — the model actually used comes from preferences.
+ */
 export const TIERS = {
   /** Short conversational turns, status questions, formatting. */
   chat: {
-    models: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'],
+    models: ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'],
     maxOutputTokens: 4096,
     thinkingBudget: 0,
   },
-  /** Designing, validating and repairing workflows. Earns its keep here. */
+  /** Designing, validating and repairing workflows. */
   design: {
-    models: ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-pro'],
-    maxOutputTokens: 32768,
-    thinkingBudget: 8192,
+    models: ['gemini-2.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'],
+    maxOutputTokens: 16384,
+    thinkingBudget: 2048,
   },
 };
 
@@ -118,7 +122,18 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
       }
 
       try {
-        const res = await client.models.generateContent({ model, contents, config });
+        let res;
+        try {
+          res = await client.models.generateContent({ model, contents, config });
+        } catch (err) {
+          // Not every model accepts a thinking budget, and the cheapest tiers
+          // are the most likely to reject one. Retry once without it rather
+          // than failing the whole request over a config field — and say which
+          // happened rather than silently degrading.
+          if (!/thinking|thought/i.test(String(err?.message ?? '')) || config.thinkingConfig === undefined) throw err;
+          const { thinkingConfig, ...withoutThinking } = config;
+          res = await client.models.generateContent({ model, contents, config: withoutThinking });
+        }
 
         const usage = res.usageMetadata ?? {};
         const priced = await meter.record({ model, usage, label: label ?? tier });

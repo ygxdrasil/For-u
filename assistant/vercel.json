@@ -7,5 +7,11 @@
       "maxDuration": 60,
       "includeFiles": "vendor/**"
     }
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "claude/n8n-workflow-ai-assistant-vmciql": false
+    }
   }
 }

@@ -35,11 +35,13 @@ const PLAIN_FIELDS = ['n8nBaseUrl', 'monthlyCapUsd'];
  * request.
  */
 export const DEFAULT_PREFS = {
-  // model
-  chatModel: 'gemini-3.1-flash-lite',
-  designModel: 'gemini-3.6-flash',
-  thinkingBudget: 8192,
-  maxOutputTokens: 32768,
+  // Model. Both tiers default to the cheapest priced model — $0.10 in /
+  // $0.40 out per million. Design work will be noticeably weaker than on a
+  // flash-class model; both are one dropdown away in Settings.
+  chatModel: 'gemini-2.5-flash-lite',
+  designModel: 'gemini-2.5-flash-lite',
+  thinkingBudget: 2048,
+  maxOutputTokens: 16384,
 
   // pipeline
   deadlineMs: 50000,
