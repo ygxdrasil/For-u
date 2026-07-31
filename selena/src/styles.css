@@ -217,8 +217,10 @@ a:hover { text-decoration: underline; }
   display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
 }
 .item:last-child { border-bottom: none; }
-.item .t { font-weight: 600; font-size: 13.5px; }
-.item .s { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+/* Both are spans so the whole row can be a link. Without display:block the
+ * name and its sub-line run together into one paragraph. */
+.item .t { display: block; font-weight: 600; font-size: 13.5px; }
+.item .s { display: block; color: var(--ink-3); font-size: 12px; margin-top: 2px; }
 .item .r { display: flex; gap: 6px; align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
 
 .rowbtn { cursor: pointer; }

@@ -148,7 +148,7 @@ export default function App() {
 
         {data?.context?.store && !data.context.store.durable ? (
           <Banner tone="warn" title="Storage is not durable">
-            {data.context.store.note} Watches cannot remember what they already reported until this is fixed.
+            {data.context.store.note}
           </Banner>
         ) : null}
 

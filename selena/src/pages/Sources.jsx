@@ -42,7 +42,20 @@ export default function Sources({ data }) {
                 <h3 style={{ margin: 0, textTransform: 'none', fontSize: 15, letterSpacing: 0 }}>{s.name}</h3>
                 <span className="r" style={{ display: 'flex', gap: 6 }}>
                   <Pill tone={tone}>{label}</Pill>
-                  {s.live ? <Pill tone="ok">live</Pill> : <Pill tone="warn">dark</Pill>}
+                  {/* "live" only means something for a source she actually
+                      calls. Putting it on Reddit read as though she were
+                      hitting their API, which is the opposite of the truth. */}
+                  {s.access === 'official-api' ? (
+                    s.live ? (
+                      <Pill tone="ok">key set</Pill>
+                    ) : (
+                      <Pill tone="warn">dark — no key</Pill>
+                    )
+                  ) : s.access === 'search-index-only' ? (
+                    <Pill>never fetched</Pill>
+                  ) : (
+                    <Pill tone="ok">via grounded search</Pill>
+                  )}
                 </span>
               </div>
 

@@ -33,7 +33,7 @@ export const SOURCES = [
       'GET /v3/application/shops/{shop_id}/reviews — reviews on a shop',
     ],
     note:
-      'These three need no OAuth scope — an API keystring is the only auth. That combination is the strongest evidence available to us anywhere: a priced listing proves someone is paying, and its reviews prove whether they are happy. Getting a keystring means registering a Personal App, which Etsy reviews by hand.',
+      'Marketplace listing search, plus reviews on a listing and on a shop — the three endpoints below — need no OAuth scope at all; an API keystring is the only auth. That combination is the strongest evidence available to us anywhere: a priced listing proves someone is paying, and its reviews prove whether they are happy about it. Getting a keystring means registering a Personal App, which Etsy reviews by hand.',
     limits: 'Per-key QPS and QPD, reported live in x-limit-per-second and x-remaining-today on every response.',
     neverFetchHtml: true,
     htmlNote: 'Etsy states plainly that screen-scraping is not allowed, so Selena only ever calls the API — never a page.',
