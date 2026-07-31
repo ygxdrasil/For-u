@@ -143,3 +143,88 @@ test('write-capable operations are recognised so dry runs can disable them', () 
   assert.equal(isWriteOperation({ type: 'n8n-nodes-base.slack', resource: 'message', operation: 'post' }), true);
   assert.equal(isWriteOperation({ type: 'n8n-nodes-base.slack', resource: 'message', operation: 'search' }), false);
 });
+
+test('the canvas drawing places nodes by distance from the trigger', async () => {
+  const { buildPreview, previewFrom } = await import('../core/preview.js');
+
+  const wf = {
+    name: 'Leads',
+    nodes: [
+      { name: 'On form submission', type: 'n8n-nodes-base.formTrigger' },
+      { name: 'Qualify', type: 'n8n-nodes-base.if' },
+      { name: 'Post to Slack', type: 'n8n-nodes-base.slack' },
+    ],
+    connections: {
+      'On form submission': { main: [[{ node: 'Qualify', type: 'main', index: 0 }]] },
+      Qualify: { main: [[{ node: 'Post to Slack', type: 'main', index: 0 }]] },
+    },
+  };
+
+  const p = buildPreview(wf, { disabledNodes: ['Post to Slack'] });
+  const byName = Object.fromEntries(p.nodes.map((n) => [n.name, n]));
+
+  assert.equal(byName['On form submission'].depth, 0);
+  assert.equal(byName['On form submission'].trigger, true);
+  assert.equal(byName.Qualify.depth, 1);
+  assert.equal(byName['Post to Slack'].depth, 2);
+
+  // A node switched off for the dry run is drawn differently, so "nothing was
+  // sent" is visible rather than only stated.
+  assert.equal(byName['Post to Slack'].muted, true);
+  assert.equal(byName.Qualify.muted, false);
+  assert.equal(byName['Post to Slack'].short, 'Slack');
+
+  assert.equal(previewFrom({ workflow: wf }, {}).nodes.length, 3);
+  assert.equal(previewFrom({}, {}), null, 'a tool with no workflow draws nothing');
+});
+
+test('a peer answers, and refuses to let a missing peer become a guess', async () => {
+  const { savePeer, listPeers, askPeer, removePeer } = await import('../core/peers.js');
+  const { createMemoryStore } = await import('../core/store.js');
+  const store = createMemoryStore();
+
+  // With nothing configured, the answer must push back to the user — never a
+  // shrug that lets the model invent the requirement itself.
+  const none = await askPeer(store, { question: 'what counts as qualified?' });
+  assert.equal(none.ok, false);
+  assert.match(none.error, /Ask the user|No research peer/i);
+
+  await savePeer(store, { name: 'research', url: 'https://peer.invalid/ask', protocol: 'json', token: 'secret-token' });
+
+  const peers = await listPeers(store);
+  assert.equal(peers.length, 1);
+  assert.equal(peers[0].hasToken, true);
+  assert.equal(peers[0].token, undefined, 'a peer token must never be listed back');
+
+  let sentAuth = null;
+  const res = await askPeer(store, {
+    question: 'what counts as qualified?',
+    fetchImpl: async (url, init) => {
+      sentAuth = init.headers.Authorization;
+      return new Response(JSON.stringify({ reply: 'budget over 10k' }), { status: 200 });
+    },
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.answer, 'budget over 10k');
+  assert.equal(sentAuth, 'Bearer secret-token');
+
+  // Saving again without a token keeps the existing one.
+  await savePeer(store, { name: 'research', url: 'https://peer.invalid/ask', protocol: 'json', description: 'the idea one' });
+  assert.equal((await listPeers(store))[0].hasToken, true);
+
+  assert.equal((await removePeer(store, 'research')).length, 0);
+});
+
+test('a peer that cannot be reached still refuses to become a guess', async () => {
+  const { savePeer, askPeer } = await import('../core/peers.js');
+  const { createMemoryStore } = await import('../core/store.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'research', url: 'https://peer.invalid/ask' });
+
+  const res = await askPeer(store, {
+    question: 'which channel?',
+    fetchImpl: async () => { throw new Error('getaddrinfo ENOTFOUND'); },
+  });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Could not reach research/);
+});

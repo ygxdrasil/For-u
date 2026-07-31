@@ -130,6 +130,10 @@ function Jason({ onSignOut }) {
   const [live, setLive] = useState([]);
   const [busy, setBusy] = useState(false);
   const [approval, setApproval] = useState(null);
+  const [canvas, setCanvas] = useState(null);
+  // Held in a ref as well as state: the 'done' frame needs the latest drawing
+  // synchronously, and reading state there would capture a stale closure.
+  const lastCanvas = useRef(null);
   const sessionId = useRef(`s_${Math.random().toString(36).slice(2)}`);
 
   const prefs = data?.sections?.settings?.data?.prefs;
@@ -176,7 +180,7 @@ function Jason({ onSignOut }) {
 
   async function send(text, approvals = []) {
     if (!text.trim() || busy) return;
-    setBusy(true); setLive([]); setApproval(null);
+    setBusy(true); setLive([]); setApproval(null); setCanvas(null); lastCanvas.current = null;
     setMessages((m) => [...m, { role: 'user', text }]);
     const events = [];
     try {
@@ -203,9 +207,10 @@ function Jason({ onSignOut }) {
           if (ev === 'tool_end') {
             const hit = [...events].reverse().find((e) => e.key === d.name && e.kind === 'run');
             if (hit) { hit.kind = d.ok ? 'ok' : 'bad'; hit.text = d.say ?? d.name; hit.error = d.ok ? null : d.error; }
+            if (d.preview) { lastCanvas.current = d.preview; setCanvas(d.preview); }
             if (d.needsApproval) setApproval({ action: d.needsApproval, detail: d.error });
           }
-          if (ev === 'done') { setMessages((m) => [...m, { role: 'jason', text: d.reply, steps: [...events], status: d.status, spend: d.spend, elapsedMs: d.elapsedMs }]); refresh(); }
+          if (ev === 'done') { setMessages((m) => [...m, { role: 'jason', text: d.reply, steps: [...events], status: d.status, spend: d.spend, elapsedMs: d.elapsedMs, canvas: lastCanvas.current }]); refresh(); }
           if (ev === 'error') setMessages((m) => [...m, { role: 'jason', text: d.error, status: 'error' }]);
           setLive([...events]);
         }
@@ -238,6 +243,7 @@ function Jason({ onSignOut }) {
           approval={approval}
           onSend={send}
           onDismiss={() => setApproval(null)}
+          canvas={canvas}
           ready={ready}
           showStream={prefs?.showToolStream !== false}
         />
@@ -278,7 +284,7 @@ const STARTERS = [
   'Build me a contact form that posts good leads to Slack',
 ];
 
-function Chat({ messages, live, busy, approval, onSend, onDismiss, ready, showStream }) {
+function Chat({ messages, live, busy, approval, onSend, onDismiss, canvas, ready, showStream }) {
   const [input, setInput] = useState('');
   const bottom = useRef(null);
   useEffect(() => bottom.current?.scrollIntoView({ behavior: 'smooth' }), [messages, live]);
@@ -306,6 +312,7 @@ function Chat({ messages, live, busy, approval, onSend, onDismiss, ready, showSt
               {m.role === 'jason' && showStream && m.steps?.length > 0 && (
                 <div className="steps">{m.steps.map((s, j) => <div key={j} className={s.kind}>{s.text}</div>)}</div>
               )}
+              {m.canvas && <Canvas preview={m.canvas} />}
               <div className="bubble">{m.text}</div>
               {m.role === 'jason' && (
                 <div className="after">
@@ -317,8 +324,11 @@ function Chat({ messages, live, busy, approval, onSend, onDismiss, ready, showSt
             </div>
           ))}
 
-          {live.length > 0 && showStream && (
-            <div className="msg jason"><div className="steps">{live.map((s, j) => <div key={j} className={s.kind}>{s.text}</div>)}</div></div>
+          {(live.length > 0 || canvas) && (
+            <div className="msg jason">
+              {showStream && live.length > 0 && <div className="steps">{live.map((s, j) => <div key={j} className={s.kind}>{s.text}</div>)}</div>}
+              {canvas && <Canvas preview={canvas} live />}
+            </div>
           )}
 
           {approval && (
@@ -347,6 +357,43 @@ function Chat({ messages, live, busy, approval, onSend, onDismiss, ready, showSt
         </div>
       </div>
     </main>
+  );
+}
+
+/**
+ * The workflow, drawn as it is built. Columns are distance from the trigger.
+ * A node switched off for the dry run is drawn dashed and faded, so "nothing
+ * was sent" is something you can see rather than only be told.
+ */
+function Canvas({ preview, live }) {
+  if (!preview?.nodes?.length) return null;
+  const depths = [...new Set(preview.nodes.map((n) => n.depth))].sort((a, b) => a - b);
+  const muted = preview.nodes.filter((n) => n.muted).length;
+
+  return (
+    <div className="canvas">
+      <div className="cap">
+        <span>{preview.name ?? 'workflow'}</span>
+        <span>· {preview.nodes.length} steps</span>
+        {muted > 0 && <span style={{ color: 'var(--invisible)' }}>· {muted} switched off for the test</span>}
+        {live && <span style={{ color: 'var(--state)' }}>· building</span>}
+      </div>
+      <div className="lanes">
+        {depths.map((d, i) => (
+          <span key={d} style={{ display: 'contents' }}>
+            {i > 0 && <span className="link">→</span>}
+            <div className="lane">
+              {preview.nodes.filter((n) => n.depth === d).map((n) => (
+                <div key={n.name} className={`node ${n.trigger ? 'trigger' : ''} ${n.muted ? 'muted' : ''}`}>
+                  <div className="t">{n.name}</div>
+                  <div className="k">{n.short}</div>
+                </div>
+              ))}
+            </div>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -657,8 +704,10 @@ function Settings({ onSaved }) {
         <Setting n="Tests never send" h="keep this on"><Toggle on={prefs.dryRunDisablesWrites} onChange={(v) => savePref({ dryRunDisablesWrites: v })} /></Setting>
       </div>
 
+      <Peers />
+
       <div className="card">
-        <h3>Other AIs<span className="rule" /></h3>
+        <h3>Let other AIs use him<span className="rule" /></h3>
         <div className="meta" style={{ marginBottom: 8 }}>Point them at <span className="mono">/api/mcp</span> with a token. Same tools as you get, and they still can't switch anything on.</div>
         {minted && <div className="notice warn">Copy this now — it isn't shown again:<br /><span className="mono">{minted}</span></div>}
         {tokens.map((t) => (
@@ -685,6 +734,64 @@ function Settings({ onSaved }) {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The AIs Jason can ask. He builds; he does not decide. When a specification
+ * is thin he asks one of these — and if none is configured, he asks you and
+ * stops rather than filling the gap himself.
+ */
+function Peers() {
+  const [peers, setPeers] = useState([]);
+  const [draft, setDraft] = useState({ name: '', url: '', protocol: 'json', token: '' });
+  const [note, setNote] = useState(null);
+
+  const load = () => fetch('/api/settings').then((r) => r.json()).then((r) => setPeers(r.peers ?? []));
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    const r = await post('/api/settings', { peer: draft });
+    if (!r.ok) return setNote(r.error);
+    setPeers(r.peers); setDraft({ name: '', url: '', protocol: 'json', token: '' }); setNote('Added');
+  };
+
+  return (
+    <div className="card">
+      <h3>Who he can ask<span className="rule" /></h3>
+      <div className="meta" style={{ marginBottom: 8 }}>
+        He builds, he doesn't decide. When something is unclear he asks one of these instead of guessing.
+        {!peers.length && ' With none set up, he asks you and waits.'}
+      </div>
+
+      {peers.map((p) => (
+        <div className="setting" key={p.name}>
+          <div>
+            <div className="n">{p.name}</div>
+            <div className="h">{p.protocol} · {p.hasToken ? 'has a token' : 'no token'}</div>
+          </div>
+          <button className="ghost" style={{ padding: '3px 8px', fontSize: 11 }}
+            onClick={async () => { const r = await post('/api/settings', { peer: { action: 'remove', name: p.name } }); if (r.ok) setPeers(r.peers); }}>
+            Remove
+          </button>
+        </div>
+      ))}
+
+      <label>Name</label>
+      <input value={draft.name} placeholder="research" onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+      <label>Address</label>
+      <input value={draft.url} placeholder="https://…" onChange={(e) => setDraft({ ...draft, url: e.target.value })} />
+      <label>Speaks</label>
+      <div className="seg">
+        {['json', 'mcp'].map((x) => <button key={x} aria-pressed={draft.protocol === x} onClick={() => setDraft({ ...draft, protocol: x })}>{x}</button>)}
+      </div>
+      <label>Token</label>
+      <input type="password" value={draft.token} placeholder="optional" onChange={(e) => setDraft({ ...draft, token: e.target.value })} />
+      <div className="row" style={{ marginTop: 10 }}>
+        <button disabled={!draft.name || !draft.url} onClick={save}>Add</button>
+        {note && <span className="meta">{note}</span>}
+      </div>
+    </div>
   );
 }
 

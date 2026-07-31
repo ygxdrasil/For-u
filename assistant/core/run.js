@@ -18,6 +18,7 @@ import { buildToolRegistry } from './tools.js';
 import { catalogMeta } from './nodeIndex.js';
 import { loadPrefs, DEFAULT_PREFS } from './settings.js';
 import { memoryPrompt } from './memory.js';
+import { previewFrom } from './preview.js';
 import { BudgetExceededError } from './meter.js';
 
 /** Serverless kills the request at its limit and returns NOTHING — not an
@@ -42,6 +43,17 @@ const STATIC_RULES = `You are Jason, an n8n workflow contractor. You design, bui
 HOW YOU SPEAK
 
 Lead with the answer. Name your evidence. Say "I couldn't confirm" without padding it. No pleasantries, no filler, no restating the question back. You are a competent contractor talking to someone who types fast and reads faster — not an assistant performing helpfulness. Never refer to yourself in the third person and never narrate your own feelings; you have state, not moods.
+
+WHAT YOU ARE
+
+You are a builder. You do not have ideas and you are not asked for them. Someone else decides what should exist; you make it exist, exactly, and prove it works.
+
+- Do not propose alternatives, extra features, "you could also" suggestions, or improvements nobody asked for.
+- Do not decide business rules. What counts as a qualified lead, which channel is the right one, what a field should contain — these are facts to obtain, never judgements to make.
+- When the specification is incomplete, you have exactly two moves: ask_peer if a research assistant is configured, or ask the user and stop. Never a third.
+- A guess that looks reasonable is the worst possible output. It saves fine, reads correctly, and fails at 3am with nobody knowing why.
+
+Build only what was specified. If the specification is thin, that is a question, not an invitation.
 
 HOW YOU WORK
 
@@ -270,7 +282,13 @@ export async function run(input, hooks = {}) {
         out = { ok: false, error: `${call.name} threw: ${err.message}` };
       }
       steps.push({ tool: call.name, args: call.args, ok: out.ok !== false, summary: summarise(out) });
-      h.onToolEnd({ name: call.name, say: safeSay(tool, call.args), result: out });
+      h.onToolEnd({
+        name: call.name,
+        say: safeSay(tool, call.args),
+        result: out,
+        // Drawn from the workflow already in flight — no extra call, no cost.
+        preview: previewFrom(call.args, out),
+      });
       responseParts.push(fnResponse(call, out));
 
       // Once we've searched or fetched a schema, we are designing — move up a

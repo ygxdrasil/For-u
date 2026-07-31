@@ -10,6 +10,7 @@ import { createStore } from '../core/store.js';
 import { json, methodGuard, readBody } from '../core/http.js';
 import { describeServerConfig, saveServerConfig, savePrefs } from '../core/settings.js';
 import { activeFacts, remember, correct, retire } from '../core/memory.js';
+import { listPeers, savePeer, removePeer } from '../core/peers.js';
 import { requireSession } from './auth.js';
 
 export default async function handler(req, res) {
@@ -24,6 +25,7 @@ export default async function handler(req, res) {
       ok: true,
       settings: await describeServerConfig(store),
       memory: await activeFacts(store),
+      peers: await listPeers(store),
       durable: store.durable,
       storeNote: store.note ?? null,
     });
@@ -51,6 +53,17 @@ export default async function handler(req, res) {
       return json(res, 400, { ok: false, error: err.message });
     }
     return json(res, 200, { ok: true, memory: await activeFacts(store) });
+  }
+
+  // Peers: the other AIs Jason may ask when a specification is incomplete.
+  if (req.body.peer) {
+    const p = req.body.peer;
+    try {
+      const peers = p.action === 'remove' ? await removePeer(store, p.name) : await savePeer(store, p);
+      return json(res, 200, { ok: true, peers });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message });
+    }
   }
 
   const hasPrefs = req.body.prefs && typeof req.body.prefs === 'object';

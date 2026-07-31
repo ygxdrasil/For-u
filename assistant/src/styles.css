@@ -360,3 +360,31 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--s
 :root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after {
   animation: none !important; transition: none !important;
 }
+
+/* ================================================================= canvas */
+/* The workflow drawing itself as he builds it. Nodes are placed by distance
+   from the trigger, which is the only layout that matches how it runs. */
+
+.canvas {
+  border: 1px solid var(--line); border-radius: 10px; padding: 11px;
+  background: var(--sunk); margin: 9px 0;
+  overflow-x: auto;
+}
+.canvas .lanes { display: flex; align-items: flex-start; gap: 0; min-width: min-content; }
+.canvas .lane { display: flex; flex-direction: column; gap: 6px; }
+.canvas .link { align-self: center; color: var(--dimmer); padding: 0 7px; font-size: 11px; }
+
+.node {
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--panel); padding: 6px 9px; min-width: 104px;
+  animation: pop .28s cubic-bezier(.2, .9, .3, 1.2) both;
+}
+@keyframes pop { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }
+.node .t { font-size: 11.5px; font-weight: 570; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.node .k { font-size: 10px; color: var(--dimmer); }
+.node.trigger { border-color: var(--state); box-shadow: 0 0 0 2px var(--state-soft); }
+/* switched off for the dry run: visibly not going to send anything */
+.node.muted { opacity: .5; border-style: dashed; }
+.node.muted .k::after { content: " · off"; color: var(--invisible); }
+
+.canvas .cap { font-size: 10.5px; color: var(--dimmer); margin-bottom: 8px; display: flex; gap: 8px; }

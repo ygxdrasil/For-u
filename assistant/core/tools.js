@@ -16,6 +16,7 @@ import { searchNodes, getNodeSchema, catalogMeta, isWriteOperation, getNode } fr
 import { validateWorkflow } from './validate.js';
 import { assessExecution } from './assess.js';
 import { remember, activeFacts } from './memory.js';
+import { askPeer, listPeers } from './peers.js';
 
 /** Actions that need explicit confirmation: sending and spending. Nothing else. */
 export const APPROVAL_REQUIRED = {
@@ -419,6 +420,39 @@ export function buildToolRegistry(ctx) {
           return fail(e.message);
         }
       },
+    },
+
+    {
+      name: 'ask_peer',
+      say: (a) => `asking ${a.peer ?? 'the research assistant'}`,
+      description:
+        'Ask another AI a question when the specification is incomplete and you need a fact to build correctly — what counts as a qualified lead, which format a field should take, what the business rule actually is. Use this INSTEAD OF guessing or inventing a requirement. You are a builder: you do not decide what should be built, you find out.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'One specific question. Not "what should I build" — something answerable.' },
+          peer: { type: 'string', description: 'Which peer to ask. Omit for the first configured one.' },
+        },
+        required: ['question'],
+      },
+      handler: async ({ question, peer }) => {
+        const res = await askPeer(store, { name: peer ?? null, question });
+        if (!res.ok) {
+          return fail(
+            `${res.error} Ask the user this question directly and wait — do not decide it yourself.`,
+            { question },
+          );
+        }
+        return ok({ peer: res.peer, question, answer: res.answer });
+      },
+    },
+
+    {
+      name: 'list_peers',
+      say: () => 'checking who I can ask',
+      description: 'List the other AIs available to ask.',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ok({ peers: await listPeers(store) }),
     },
 
     {
