@@ -126,7 +126,8 @@ export function buildToolRegistry(ctx) {
       handler: async ({ limit, active }) => {
         if (!n8n) return needsN8n();
         try {
-          const res = await n8n.listWorkflows({ limit: limit ?? 30, active: active ?? null });
+          const asked = limit ?? 30;
+          const res = await n8n.listWorkflows({ limit: asked, active: active ?? null });
           const items = (res?.data ?? []).map((w) => ({
             id: w.id,
             name: w.name,
@@ -135,7 +136,17 @@ export function buildToolRegistry(ctx) {
             updatedAt: w.updatedAt,
             nodeCount: w.nodes?.length ?? null,
           }));
-          return ok({ workflows: items });
+          // n8n hands back a cursor when there is another page. Without saying
+          // so, "you have 30 workflows" is confidently wrong on an instance
+          // with 200 — and nothing in the answer would hint at it.
+          const more = Boolean(res?.nextCursor);
+          return ok({
+            workflows: items,
+            more,
+            note: more
+              ? `This is the first ${items.length} only — there are more. Say so rather than implying this is everything, and ask for a bigger limit or a filter if the whole list matters.`
+              : null,
+          });
         } catch (e) {
           return fail(`Could not list workflows: ${e.message}`);
         }
@@ -310,7 +321,12 @@ export function buildToolRegistry(ctx) {
             status: e.status,
             startedAt: e.startedAt,
           }));
-          return ok({ failures: items });
+          const more = Boolean(res?.nextCursor);
+          return ok({
+            failures: items,
+            more,
+            note: more ? `The newest ${items.length} only — there are older failures beyond this. Do not describe this as everything that has broken.` : null,
+          });
         } catch (e) {
           return fail(`Could not list executions: ${e.message}`);
         }

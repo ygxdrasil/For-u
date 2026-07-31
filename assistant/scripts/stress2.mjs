@@ -88,7 +88,7 @@ function fakeN8n(behaviour = {}) {
       if (behaviour.cannotRun) return reply({ message: 'not found' }, 404);
       return reply({ executionId: 'ex1' });
     }
-    if (method === 'GET' && p === '/executions') return reply({ data: [{ id: 'ex1', workflowId: 'wf1', status: 'success' }] });
+    if (method === 'GET' && p === '/executions') return reply({ data: [{ id: 'ex1', workflowId: 'wf1', status: 'error', startedAt: '2030-01-01T00:00:00.000Z' }], nextCursor: behaviour.cursor ?? null });
     if (method === 'GET' && p.startsWith('/executions/')) {
       return reply({
         id: 'ex1', workflowId: 'wf1', status: 'success',
@@ -672,6 +672,230 @@ await check('a client that disconnects mid-stream does not crash the function', 
     threw = err.message;
   }
   assert.equal(threw, null, `the handler threw after the client left: ${threw}`);
+});
+
+/* ============================== 9. the watch keeps watching */
+
+section('9. The watch, and what it does not tell you');
+
+const sweepRes = async (body, store, executions) => {
+  const handler = (await import('../api/sweep.js')).default;
+  const chunks = [];
+  const res = {
+    statusCode: 0, headers: {},
+    setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
+    end(c) { if (c) chunks.push(String(c)); this.text = chunks.join(''); },
+    get body() { try { return JSON.parse(this.text ?? ''); } catch { return null; } },
+  };
+  process.env.AGENT_TOKEN = 'stress-agent-token';
+  process.env.N8N_BASE_URL = 'https://n8n.invalid';
+  process.env.N8N_API_KEY = 'k';
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const p = new URL(url).pathname.replace('/api/v1', '');
+    const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (p === '/executions') return reply({ data: executions });
+    if (p.startsWith('/executions/')) {
+      const id = p.split('/')[2];
+      return reply({ id, workflowId: 'wf1', status: 'error', data: { resultData: { lastNodeExecuted: 'Slack', runData: { Slack: [{ error: { message: 'boom' } }] } } } });
+    }
+    return reply({});
+  };
+  try {
+    await handler({ method: 'POST', headers: { authorization: 'Bearer stress-agent-token' }, body: { explain: false, ...body }, __store: store }, res);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.N8N_BASE_URL;
+    delete process.env.N8N_API_KEY;
+  }
+  return res;
+};
+
+await check('the sweep keeps noticing failures after execution ids gain a digit', async () => {
+  const { createStore, resetStoreCache } = await import('../core/store.js');
+  resetStoreCache();
+  const store = await createStore({ databaseUrl: null });
+
+  // Ids climb past a digit boundary, which is where a string comparison quietly
+  // decides nothing is new ever again: "100" > "99" is false.
+  const first = await sweepRes({}, store, [{ id: '99', workflowId: 'wf1', startedAt: new Date().toISOString() }]);
+  assert.equal(first.body.newFailures, 1, 'the first failure was not picked up');
+
+  const second = await sweepRes({}, store, [{ id: '100', workflowId: 'wf1', startedAt: new Date().toISOString() }]);
+  assert.equal(
+    second.body.newFailures,
+    1,
+    'execution 100 was treated as older than 99, so the watch stopped reporting anything new — silently, forever',
+  );
+});
+
+await check('the sweep does not report the same failure twice', async () => {
+  const { createStore, resetStoreCache } = await import('../core/store.js');
+  resetStoreCache();
+  const store = await createStore({ databaseUrl: null });
+  const executions = [{ id: '500', workflowId: 'wf1', startedAt: new Date().toISOString() }];
+  await sweepRes({}, store, executions);
+  const again = await sweepRes({}, store, executions);
+  assert.equal(again.body.newFailures, 0, 'the same failure was reported twice');
+});
+
+await check('a truncated list says so instead of implying that is everything', async () => {
+  // "You have 30 workflows" is confidently wrong on an instance with 200, and
+  // nothing in the answer hints that a limit was applied.
+  const fake = fakeN8n({ cursor: 'next-page-token' });
+  const { byName } = registryFor(fake);
+
+  const workflows = await byName('list_workflows').handler({ limit: 1 });
+  assert.equal(workflows.ok, true);
+  assert.ok(
+    workflows.more === true || /more|truncat|only the first/i.test(JSON.stringify(workflows.note ?? '')),
+    'the workflow list was cut short with nothing saying so',
+  );
+
+  const failures = await byName('list_failed_executions').handler({ limit: 1 });
+  assert.ok(
+    failures.more === true || /more|truncat|only the first/i.test(JSON.stringify(failures.note ?? '')),
+    'the failure list was cut short with nothing saying so',
+  );
+});
+
+/* ============================== 10. the client's manners */
+
+section('10. How he treats your instance');
+
+await check('consecutive calls are spaced rather than fired all at once', async () => {
+  const times = [];
+  const client = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async () => { times.push(Date.now()); return new Response(JSON.stringify({ id: 'wf1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); },
+  });
+  for (let i = 0; i < 4; i++) await client.getWorkflow('wf1');
+  const gaps = times.slice(1).map((t, i) => t - times[i]);
+  assert.ok(gaps.every((g) => g >= 250), `calls went out ${gaps.join('ms, ')}ms apart — n8n drops rapid consecutive writes`);
+});
+
+await check('a read-back that disagrees is retried once before it is believed', async () => {
+  // A single disagreeing read is more often a race than a real failure.
+  let reads = 0;
+  const client = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      const p = new URL(url).pathname;
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      if ((init?.method ?? 'GET') === 'POST') return reply({ ok: true });
+      reads++;
+      // First read still says inactive; the second catches up.
+      return reply({ id: 'wf1', active: reads > 1 });
+    },
+  });
+  const res = await client.setActive('wf1', true);
+  assert.ok(reads >= 2, 'it believed the first disagreeing read');
+  assert.equal(res.confirmed, true, 'the retry did not change the verdict');
+});
+
+await check('a read-back that still disagrees is reported as unconfirmed, never as done', async () => {
+  const client = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return (init?.method ?? 'GET') === 'POST' ? reply({ ok: true }) : reply({ id: 'wf1', active: false });
+    },
+  });
+  const res = await client.setActive('wf1', true);
+  assert.equal(res.confirmed, false);
+  assert.equal(res.actual, false, 'it reported what was asked for rather than what came back');
+});
+
+await check('every shape of n8n failure is read for the node that broke', async () => {
+  const { describeFailure } = await import('../core/assess.js');
+  const shapes = [
+    [{ data: { resultData: { error: { message: 'top level boom' }, lastNodeExecuted: 'Slack' } } }, 'Slack', 'top level boom'],
+    [{ data: { resultData: { runData: { Sheets: [{ error: { message: 'per node boom' } }] } } } }, 'Sheets', 'per node boom'],
+    [{ data: { executionData: { resultData: { error: { message: 'nested boom' }, lastNodeExecuted: 'Gmail' } } } }, 'Gmail', 'nested boom'],
+    [{ data: { resultData: { lastNodeExecuted: 'Only this' } } }, 'Only this', null],
+    [{}, null, null],
+    [null, null, null],
+  ];
+  for (const [execution, node, message] of shapes) {
+    const d = describeFailure(execution);
+    assert.equal(d.node, node, `wrong node for ${JSON.stringify(execution)?.slice(0, 50)}`);
+    assert.equal(d.message, message);
+  }
+});
+
+/* ============================== 11. the settings and token routes */
+
+section('11. Settings and tokens, for real');
+
+const callRoute = async (route, req) => {
+  const handler = (await import(`../api/${route}`)).default;
+  const chunks = [];
+  const res = {
+    statusCode: 0, headers: {},
+    setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
+    end(c) { if (c) chunks.push(String(c)); this.text = chunks.join(''); },
+    get body() { try { return JSON.parse(this.text ?? ''); } catch { return null; } },
+  };
+  await handler(req, res);
+  return res;
+};
+
+await check('preferences saved through the route come back applied', async () => {
+  const { createStore, resetStoreCache } = await import('../core/store.js');
+  const { setupPassword, sessionSecret, loadPrefs } = await import('../core/settings.js');
+  const { issueSession, sessionCookie } = await import('../core/secrets.js');
+  process.env.ALLOW_MEMORY_AUTH = '1';
+  resetStoreCache();
+  const store = await createStore({ databaseUrl: null });
+  await setupPassword(store, 'stress-test-password');
+  const cookie = sessionCookie(issueSession(await sessionSecret(store))).split(';')[0];
+
+  const res = await callRoute('settings.js', { method: 'POST', headers: { cookie }, body: { prefs: { accent: 'violet', maxSteps: 12 } } });
+  assert.equal(res.body.ok, true, res.body?.error);
+  const prefs = await loadPrefs(store);
+  assert.equal(prefs.accent, 'violet');
+  assert.equal(prefs.maxSteps, 12);
+});
+
+await check('a fact told through the route is remembered, and forgetting keeps the record', async () => {
+  const { createStore } = await import('../core/store.js');
+  const { sessionSecret } = await import('../core/settings.js');
+  const { issueSession, sessionCookie } = await import('../core/secrets.js');
+  const store = await createStore({ databaseUrl: null });
+  const cookie = sessionCookie(issueSession(await sessionSecret(store))).split(';')[0];
+
+  const added = await callRoute('settings.js', { method: 'POST', headers: { cookie }, body: { memory: { action: 'add', text: 'The real channel is #leads-uk' } } });
+  assert.equal(added.body.ok, true, added.body?.error);
+  assert.ok(added.body.memory.some((f) => /leads-uk/.test(f.text)));
+
+  const id = added.body.memory.find((f) => /leads-uk/.test(f.text)).id;
+  const retired = await callRoute('settings.js', { method: 'POST', headers: { cookie }, body: { memory: { action: 'retire', id } } });
+  assert.ok(!retired.body.memory.some((f) => f.id === id), 'the fact is still active after being forgotten');
+
+  const { loadMemory } = await import('../core/memory.js');
+  assert.ok((await loadMemory(store)).some((f) => f.id === id), 'forgetting destroyed the record instead of retiring it');
+});
+
+await check('a minted token works once and is never shown again', async () => {
+  const { createStore } = await import('../core/store.js');
+  process.env.AGENT_TOKEN = 'stress-agent-token';
+  const store = await createStore({ databaseUrl: null });
+
+  const minted = await callRoute('tokens.js', { method: 'POST', headers: { authorization: 'Bearer stress-agent-token' }, body: { action: 'mint', label: 'another ai' } });
+  assert.equal(minted.body.ok, true, minted.body?.error);
+  const token = minted.body.token;
+  assert.ok(token, 'no token came back');
+
+  const { authenticate } = await import('../core/auth.js');
+  assert.equal((await authenticate({ headers: { authorization: `Bearer ${token}` } }, store)).ok, true, 'the minted token does not work');
+
+  const listed = await callRoute('tokens.js', { method: 'GET', headers: { authorization: 'Bearer stress-agent-token' } });
+  assert.equal(listed.body.ok, true, listed.body?.error);
+  assert.doesNotMatch(JSON.stringify(listed.body), new RegExp(token.slice(-14)), 'the token is retrievable after minting');
+
+  const id = (listed.body.tokens ?? []).find((t) => t.label === 'another ai')?.id;
+  await callRoute('tokens.js', { method: 'POST', headers: { authorization: 'Bearer stress-agent-token' }, body: { action: 'retire', id } });
+  assert.equal((await authenticate({ headers: { authorization: `Bearer ${token}` } }, store)).ok, false, 'a retired token still works');
 });
 
 /* ============================================================ report */

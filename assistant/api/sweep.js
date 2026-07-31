@@ -45,8 +45,18 @@ export default async function handler(req, res) {
     return json(res, 502, { ok: false, error: `Could not read executions from n8n: ${err.message}` });
   }
 
+  // n8n execution ids are numeric strings, and comparing them as TEXT means
+  // "100" > "99" is false. Once ids gained a digit the cursor decided nothing
+  // was ever new again and the watch went quietly dead — the worst possible
+  // failure for a thing whose whole job is noticing.
+  const newer = (a, b) => {
+    const na = Number(a);
+    const nb = Number(b);
+    return Number.isFinite(na) && Number.isFinite(nb) ? na > nb : String(a) > String(b);
+  };
+
   const cursor = (await store.getCursor('sweep')) ?? null;
-  const fresh = cursor ? failures.filter((f) => String(f.id) > String(cursor)) : failures;
+  const fresh = cursor ? failures.filter((f) => newer(f.id, cursor)) : failures;
 
   if (!fresh.length) {
     return json(res, 200, { ok: true, checked: failures.length, newFailures: 0, findings: [], note: 'Nothing new has failed.' });
@@ -73,7 +83,11 @@ export default async function handler(req, res) {
     }
   }
 
-  await store.setCursor('sweep', String(fresh[0].id));
+  // The highest id seen, not whichever happened to come back first — the API
+  // does not promise an order, and taking the wrong one re-reports failures or
+  // skips them.
+  const highest = fresh.reduce((best, f) => (newer(f.id, best) ? f.id : best), cursor ?? fresh[0].id);
+  await store.setCursor('sweep', String(highest));
 
   // Optionally have the assistant write the one-sentence explanation.
   let summary = null;

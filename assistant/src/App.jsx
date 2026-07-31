@@ -750,8 +750,13 @@ function Dock({ messages, live, busy, ready, approval, onSend, onDismiss, showSt
             <div className="approval">
               <div style={{ marginBottom: 10 }}>{approval.detail}</div>
               <div className="row">
-                <button onClick={() => onSend('Yes, go ahead.', [approval.action])}>Approve</button>
-                <button className="ghost" onClick={onDismiss}>Not now</button>
+                {/* Disabled while the turn is still streaming. Left enabled,
+                    the click was silently dropped — you pressed Approve, nothing
+                    happened, and nothing said why. */}
+                <button disabled={busy} onClick={() => onSend('Yes, go ahead.', [approval.action])}>
+                  {busy ? 'finishing…' : 'Approve'}
+                </button>
+                <button className="ghost" disabled={busy} onClick={onDismiss}>Not now</button>
               </div>
             </div>
           )}

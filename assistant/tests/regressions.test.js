@@ -243,6 +243,66 @@ test('every route that reads the node index has it bundled with it', async () =>
   }
 });
 
+test('the watch keeps watching after execution ids gain a digit', async () => {
+  // The cursor compared ids as TEXT, and "100" > "99" is false. Once ids gained
+  // a digit the sweep decided nothing was ever new again and went quietly dead
+  // — the worst possible failure for the thing whose job is noticing.
+  const handler = (await import('../api/sweep.js')).default;
+  const { createStore, resetStoreCache } = await import('../core/store.js');
+
+  process.env.AGENT_TOKEN = 'regression-token';
+  process.env.N8N_BASE_URL = 'https://n8n.invalid';
+  process.env.N8N_API_KEY = 'k';
+  resetStoreCache();
+  await createStore({ databaseUrl: null });
+
+  const sweep = async (executionId) => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const p = new URL(url).pathname.replace('/api/v1', '');
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      if (p === '/executions') return reply({ data: [{ id: executionId, workflowId: 'wf1', startedAt: new Date().toISOString() }] });
+      if (p.startsWith('/executions/')) return reply({ id: executionId, status: 'error', data: { resultData: { lastNodeExecuted: 'Slack', runData: { Slack: [{ error: { message: 'boom' } }] } } } });
+      return reply({});
+    };
+    const chunks = [];
+    const res = { statusCode: 0, setHeader() {}, end(c) { if (c) chunks.push(String(c)); }, get body() { try { return JSON.parse(chunks.join('')); } catch { return null; } } };
+    try {
+      await handler({ method: 'POST', headers: { authorization: 'Bearer regression-token' }, body: { explain: false } }, res);
+    } finally { globalThis.fetch = realFetch; }
+    return res.body;
+  };
+
+  assert.equal((await sweep('99')).newFailures, 1);
+  assert.equal((await sweep('100')).newFailures, 1, 'execution 100 was treated as older than 99');
+  assert.equal((await sweep('100')).newFailures, 0, 'the same failure was reported twice');
+
+  delete process.env.N8N_BASE_URL;
+  delete process.env.N8N_API_KEY;
+});
+
+test('a list that was cut short says so', async () => {
+  // "You have 30 workflows" is confidently wrong on an instance with 200.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const fetchImpl = async (url) => {
+    const p = new URL(url).pathname.replace('/api/v1', '');
+    const body = p === '/workflows'
+      ? { data: [{ id: '1', name: 'One', active: true, nodes: [] }], nextCursor: 'more-to-come' }
+      : { data: [{ id: 'e1', workflowId: '1', status: 'error' }], nextCursor: 'more-to-come' };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const tools = buildToolRegistry({ n8n: createN8nClient({ baseUrl: 'https://x.invalid', apiKey: 'k', fetchImpl }), store: createMemoryStore(), approvals: [] });
+
+  for (const name of ['list_workflows', 'list_failed_executions']) {
+    const out = await tools.find((t) => t.name === name).handler({ limit: 1 });
+    assert.equal(out.more, true, `${name} did not report that there is more`);
+    assert.match(out.note, /more|only/i, `${name} gave the model nothing to pass on`);
+  }
+});
+
 test('a model with no price cannot be saved as a preference', async () => {
   // It saved happily and the next request then refused to run at all, because
   // the meter will not guess a rate — correctly, but the trap was set on save.
