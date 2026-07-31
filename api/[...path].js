@@ -27,12 +27,31 @@ var config = {
    */
   model: process.env.GRACE_MODEL ?? "gemini-2.5-flash",
   /**
-   * The model that listens. Deliberately not the fast one.
+   * The model that listens.
    *
-   * Mishearing a name is far more costly than half a second, and this runs
-   * once per spoken turn rather than on every token.
+   * This was deliberately the same model she thinks with, on the reasoning
+   * that mishearing a name costs far more than half a second and this runs
+   * only once per spoken turn. That reasoning was sound and the arithmetic
+   * behind it was wrong.
+   *
+   * A single spoken exchange is not one request. It is one to hear, one to
+   * three to answer — each tool she reaches for is another round trip — and
+   * several more to speak the reply, which gets split into chunks. Six or
+   * seven requests for "Grace, sleep mode". The free tier allows a few
+   * hundred a day, so an ordinary evening exhausts it, and she spends the
+   * rest of the night saying her free limit has ended.
+   *
+   * The lighter model has roughly four times that daily allowance and costs a
+   * third as much per token, for a job that is transcription rather than
+   * judgement. It takes audio in and gives text back, which is the whole
+   * requirement. The context hint below — the names and topic in play — is
+   * doing much of the work that the heavier model was being paid for.
+   *
+   * Reversible without a deploy: set GRACE_TRANSCRIBE_MODEL back to
+   * gemini-2.5-flash. Do that the moment she starts getting names wrong,
+   * because that is the cost this trade is being made against.
    */
-  transcribeModel: process.env.GRACE_TRANSCRIBE_MODEL ?? "gemini-2.5-flash",
+  transcribeModel: process.env.GRACE_TRANSCRIBE_MODEL ?? "gemini-2.5-flash-lite",
   /** The model that gives her a voice. Separate from the one that thinks. */
   speechModel: process.env.GRACE_SPEECH_MODEL ?? "gemini-2.5-flash-preview-tts",
   /**

@@ -18,6 +18,19 @@ const RATES: Record<string, {in: number; out: number}> = {
 /** Anything unrecognised is charged at the dearest known rate, not ignored. */
 const FALLBACK = {in: 1, out: 20};
 
+/**
+ * Whether a model has a real price here, rather than the fallback.
+ *
+ * Exists so the self-test can prove that every model she is configured to use
+ * is actually priced. Being charged the dearest rate for a cheap model is the
+ * safe direction to be wrong in, but it is still wrong: it would show her
+ * spending several times what she was, and stop her against a cap she had not
+ * reached.
+ */
+export function priceOf(model: string): {in: number; out: number} | null {
+  return RATES[model] ?? null;
+}
+
 export interface Spend {
   /** Calendar month this covers, as YYYY-MM. */
   month: string;

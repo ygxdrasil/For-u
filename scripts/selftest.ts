@@ -56,7 +56,7 @@ import {pulse} from '../server/pulse';
 import {setBackend} from '../server/store/index';
 import {allTools, auditTools, declarations, runTool} from '../server/tools/index';
 import {worthLearningFrom} from '../server/learn';
-import {record as bill, spend as readSpend} from '../server/budget';
+import {priceOf, record as bill, spend as readSpend} from '../server/budget';
 import {parseDuration} from '../server/tools/timers';
 import {allReminders, outstanding} from '../server/tools/reminders';
 import type {Backend} from '../server/store/types';
@@ -441,6 +441,23 @@ try {
     'without a tool, deliberation should still be off for speed',
   );
   ok('deliberation stays on whenever a tool is attached');
+
+  // Every model she actually uses must have a known price. An unrecognised one
+  // is charged at the dearest rate in the table rather than ignored — which is
+  // the safe direction, and also means swapping a model for a cheaper one and
+  // forgetting to price it would show up as her spending three times more, and
+  // stop her early against a cap she had not really reached.
+  for (const [what, model] of [
+    ['the model she thinks with', config.model],
+    ['the model that listens', config.transcribeModel],
+    ['the model that speaks', config.speechModel],
+  ] as const) {
+    assert.ok(
+      priceOf(model),
+      `${what} (${model}) has no rate, so it would be billed at the fallback`,
+    );
+  }
+  ok('every model she uses is priced, so the meter is not guessing');
 
   // ---- how hard she thinks, per sentence ---------------------------------
   // One flat budget for everything meant a question worth thinking about got
