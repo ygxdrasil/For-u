@@ -342,6 +342,7 @@ const Vitals = ({ vitals }) => (
   <div className="kv">
     <div><span className="k">Build</span><span className="v">{vitals.build?.buildId ?? 'unstamped'}</span></div>
     <div><span className="k">Nodes indexed</span><span className="v">{vitals.nodeIndex?.nodeCount ?? '—'} · {vitals.nodeIndex?.operationCount ?? '—'} ops</span></div>
+    <div><span className="k">Schemas</span><span className="v"><span className={`dot-s ${vitals.nodeIndex?.schemasBundledHere ? 'ok' : 'bad'}`} />{vitals.nodeIndex?.schemasBundledHere ? 'bundled' : 'missing'}</span></div>
     <div><span className="k">n8n-nodes-base</span><span className="v">{vitals.nodeIndex?.packages?.['n8n-nodes-base'] ?? '—'}</span></div>
     <div><span className="k">Your instance</span><span className="v"><span className="dot-s unk" />unconfirmed</span></div>
     <div><span className="k">Store</span><span className="v"><span className={`dot-s ${vitals.store.durable ? 'ok' : 'bad'}`} />{vitals.store.kind}</span></div>

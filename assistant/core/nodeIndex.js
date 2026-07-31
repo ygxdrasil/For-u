@@ -39,7 +39,12 @@ export function catalogMeta() {
     packages: c.packages,
     nodeCount: c.nodeCount,
     operationCount: c.operationCount,
-    schemasPresent: fs.existsSync(SCHEMAS_DIR),
+    // Whether the schema files are bundled into THIS serverless function.
+    // They are only shipped to the functions that validate workflows, because
+    // copying 9,600 files into every function turned a 1.4s build into a
+    // three-minute deploy. A function without them can still search and
+    // describe nodes from the catalog.
+    schemasBundledHere: fs.existsSync(SCHEMAS_DIR),
   };
 }
 

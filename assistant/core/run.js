@@ -162,7 +162,7 @@ export async function run(input, hooks = {}) {
   const systemInstruction = [
     STATIC_RULES,
     '',
-    `NODE INDEX: ${meta.nodeCount} nodes, ${meta.operationCount} operations, generated from n8n-nodes-base ${meta.packages['n8n-nodes-base']} and @n8n/n8n-nodes-langchain ${meta.packages['@n8n/n8n-nodes-langchain']}. Schema files ${meta.schemasPresent ? 'are' : 'are NOT'} available.`,
+    `NODE INDEX: ${meta.nodeCount} nodes, ${meta.operationCount} operations, generated from n8n-nodes-base ${meta.packages['n8n-nodes-base']} and @n8n/n8n-nodes-langchain ${meta.packages['@n8n/n8n-nodes-langchain']}. Schema files ${meta.schemasBundledHere ? 'are' : 'are NOT'} available.`,
     n8nStatus.configured
       ? `N8N: connected to ${n8nStatus.baseUrl}.`
       : 'N8N: not configured. You can still search nodes and design a workflow, but you cannot read, save, ground or test anything. Say so plainly rather than pretending.',
