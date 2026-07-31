@@ -1,0 +1,30 @@
+{
+  "name": "selena",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Selena finds unmet demand and understands it well enough to be built. Headless core; the HUD, the scheduler and Jason's endpoint are all callers of the same pipeline.",
+  "scripts": {
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "node scripts/stamp-build.mjs && node node_modules/vite/bin/vite.js build",
+    "test": "node --test tests/*.test.js",
+    "selftest": "node scripts/selftest.mjs",
+    "stress": "node scripts/stress.mjs",
+    "watch:run": "node scripts/run-watches.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^2.15.0",
+    "@neondatabase/serverless": "^1.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^6.2.3"
+  },
+  "comments": {
+    "no-npx": "Every script is `node <path>`, never a bare CLI name: .cmd/.bat shims are blocked by group policy on the target machine.",
+    "lazy-genai": "core/llm.js imports @google/genai dynamically, so the core, the tests and the stress suite all run with no node_modules at all. A test that needs a network SDK installed is a test that stops being run.",
+    "no-router-dep": "The HUD routes on window.location.hash in ~40 lines. A router dependency for eight pages is weight with no payoff."
+  }
+}
