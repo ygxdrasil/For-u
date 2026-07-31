@@ -19,7 +19,7 @@
 import { run } from '../core/run.js';
 import { createStore } from '../core/store.js';
 import { authenticate } from '../core/auth.js';
-import { json, methodGuard, readBody, readConfig } from '../core/http.js';
+import { json, methodGuard, readBody, resolveConfig } from '../core/http.js';
 
 export default async function handler(req, res) {
   if (!methodGuard(req, res, ['POST'])) return;
@@ -40,7 +40,7 @@ export default async function handler(req, res) {
         text,
         sessionId: req.body.sessionId ?? null,
         approvals: req.body.approvals ?? [],
-        config: readConfig(req),
+        config: await resolveConfig(req, store),
         store,
         // Leave headroom under the 60s function limit so this returns an
         // answer rather than being killed and returning nothing at all.

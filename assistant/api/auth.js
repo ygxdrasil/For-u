@@ -1,0 +1,120 @@
+/**
+ * POST /api/auth — the front door.
+ *
+ * The site is on a public URL and, once configured, holds an n8n API key with
+ * full read/write on every workflow. So this is a real lock, not a speed bump:
+ * scrypt password hashing, constant-time comparison, and a signed HttpOnly
+ * cookie that the browser cannot read from JavaScript.
+ *
+ * Actions:
+ *   status           is a password set, am I logged in
+ *   setup            claim the instance by setting the first password
+ *   login            exchange password for a session cookie
+ *   logout           clear the cookie
+ *   change-password  requires the current password
+ *
+ * First-run note: until a password is set, anyone who reaches the URL can set
+ * it. There is nothing secret stored yet at that point, so the exposure is
+ * "someone else claims your instance", not "someone reads your keys" — but set
+ * it immediately after deploying. If someone does claim it first, clear the
+ * app_kv row for auth:owner (or redeploy with an empty database) to reset.
+ */
+
+import { createStore } from '../core/store.js';
+import { json, methodGuard, readBody } from '../core/http.js';
+import { isPasswordSet, setupPassword, checkPassword, changePassword, sessionSecret } from '../core/settings.js';
+import { issueSession, verifySession, sessionCookie, readSessionCookie } from '../core/secrets.js';
+
+/** Shared by every route that serves a browser. */
+export async function requireSession(req, store) {
+  const secret = await sessionSecret(store);
+  const token = readSessionCookie(req);
+  const payload = token ? verifySession(secret, token) : null;
+  return payload ? { ok: true, session: payload } : { ok: false, error: 'Not signed in.' };
+}
+
+export default async function handler(req, res) {
+  if (!methodGuard(req, res, ['POST'])) return;
+
+  const store = await createStore();
+  req.body = await readBody(req);
+  const action = req.body?.action ?? 'status';
+
+  const passwordSet = await isPasswordSet(store);
+
+  if (action === 'status') {
+    const session = await requireSession(req, store);
+    return json(res, 200, {
+      ok: true,
+      passwordSet,
+      signedIn: session.ok,
+      durable: store.durable,
+      // Being honest about the consequence rather than letting them find out.
+      warning: store.durable
+        ? null
+        : 'There is no database configured, so the password and your keys live in memory and are lost whenever the function cold-starts. Set DATABASE_URL.',
+    });
+  }
+
+  if (action === 'setup') {
+    if (passwordSet) {
+      return json(res, 409, { ok: false, error: 'A password is already set. Sign in instead.' });
+    }
+    // Refused rather than half-working. Serverless functions come and go, so
+    // without a database the password would live in one instance's memory and
+    // vanish the moment another instance served a request — you would be
+    // locked out at random and unable to tell why.
+    // ALLOW_MEMORY_AUTH exists so local development and the wiring probe can
+    // run the real handlers without a database. Never set it in production.
+    if (!store.durable && process.env.ALLOW_MEMORY_AUTH !== '1') {
+      return json(res, 503, {
+        ok: false,
+        error:
+          'No database is configured, so a password set now would be forgotten between requests and lock you out at random. Add DATABASE_URL in Vercel (Neon free tier), redeploy, then set your password.',
+        needsDatabase: true,
+      });
+    }
+    try {
+      await setupPassword(store, req.body.password);
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message });
+    }
+    const secret = await sessionSecret(store);
+    res.setHeader('Set-Cookie', sessionCookie(issueSession(secret)));
+    return json(res, 200, { ok: true, signedIn: true });
+  }
+
+  if (action === 'login') {
+    if (!passwordSet) return json(res, 409, { ok: false, error: 'No password set yet. Set one first.' });
+
+    const good = await checkPassword(store, req.body.password ?? '');
+    if (!good) {
+      // Same message and shape whether the password was wrong or empty.
+      return json(res, 401, { ok: false, error: 'Wrong password.' });
+    }
+    const secret = await sessionSecret(store);
+    res.setHeader('Set-Cookie', sessionCookie(issueSession(secret)));
+    return json(res, 200, { ok: true, signedIn: true });
+  }
+
+  if (action === 'logout') {
+    res.setHeader('Set-Cookie', sessionCookie(null, { clear: true }));
+    return json(res, 200, { ok: true, signedIn: false });
+  }
+
+  if (action === 'change-password') {
+    const session = await requireSession(req, store);
+    if (!session.ok) return json(res, 401, { ok: false, error: session.error });
+    try {
+      await changePassword(store, req.body.currentPassword ?? '', req.body.newPassword ?? '');
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message });
+    }
+    // Re-issue so the current browser stays signed in.
+    const secret = await sessionSecret(store);
+    res.setHeader('Set-Cookie', sessionCookie(issueSession(secret)));
+    return json(res, 200, { ok: true, changed: true });
+  }
+
+  return json(res, 400, { ok: false, error: `Unknown action "${action}".` });
+}

@@ -10,12 +10,23 @@
 
 import { run } from '../core/run.js';
 import { createStore } from '../core/store.js';
-import { readBody, readConfig } from '../core/http.js';
+import { readBody, resolveConfig } from '../core/http.js';
+import { requireSession } from './auth.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.statusCode = 405;
     return res.end('Use POST.');
+  }
+
+  // The browser entry point is behind the password. The site is public and
+  // this route can read and write every workflow in the n8n instance.
+  const store = await createStore();
+  const session = await requireSession(req, store);
+  if (!session.ok) {
+    res.statusCode = 401;
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({ ok: false, error: 'Not signed in.' }));
   }
 
   req.body = await readBody(req);
@@ -38,13 +49,12 @@ export default async function handler(req, res) {
   send('open', { at: new Date().toISOString() });
 
   try {
-    const store = await createStore();
     const result = await run(
       {
         text,
         sessionId: req.body.sessionId ?? null,
         approvals: req.body.approvals ?? [],
-        config: readConfig(req),
+        config: await resolveConfig(req, store),
         store,
         deadlineMs: Number(req.body.deadlineMs ?? 50_000),
       },

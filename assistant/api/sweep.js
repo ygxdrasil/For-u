@@ -14,7 +14,7 @@ import { run } from '../core/run.js';
 import { createStore } from '../core/store.js';
 import { authenticate } from '../core/auth.js';
 import { createN8nClient } from '../core/n8nClient.js';
-import { json, methodGuard, readBody, readConfig } from '../core/http.js';
+import { json, methodGuard, readBody, resolveConfig } from '../core/http.js';
 import { describeFailure } from '../core/assess.js';
 
 export default async function handler(req, res) {
@@ -25,7 +25,7 @@ export default async function handler(req, res) {
   if (!auth.ok) return json(res, 401, { ok: false, error: auth.error });
 
   req.body = await readBody(req);
-  const config = readConfig(req);
+  const config = await resolveConfig(req, store);
 
   if (!config.n8nBaseUrl || !config.n8nApiKey) {
     return json(res, 400, {

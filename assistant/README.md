@@ -91,11 +91,46 @@ as server environment variables. Server env is required for `/api/sweep` and for
 
 | variable | what for |
 | --- | --- |
-| `GEMINI_API_KEY` | the model |
-| `N8N_BASE_URL`, `N8N_API_KEY` | your n8n instance |
-| `AGENT_TOKEN` | bootstrap token for `/api/agent`; also the admin credential |
-| `DATABASE_URL` | optional; without it state is per-cold-start and the UI says so |
+| `DATABASE_URL` | **required.** Postgres (Neon free tier). Holds the password, your encrypted keys, snapshots and the spend meter |
+| `MASTER_KEY` | recommended. Encrypts stored API keys with a key held outside the database |
+| `AGENT_TOKEN` | bootstrap token for `/api/agent`; also the admin credential for `/api/tokens` |
+| `GEMINI_API_KEY` | optional — the Settings page is the normal way to set this |
+| `N8N_BASE_URL`, `N8N_API_KEY` | optional, same |
 | `MONTHLY_USD_CAP` | default 8 |
+| `ALLOW_MEMORY_AUTH` | dev only. Lets the password flow run without a database. Never set in production |
+
+## The front door
+
+The site is on a public URL and, once configured, holds an n8n API key with
+full read/write on every workflow. So the first screen is a password:
+
+- **First run** claims the instance by setting the password. It only works while
+  no password exists, so it cannot double as a reset.
+- Passwords are **scrypt** hashed and salted, compared in constant time.
+- Sessions are **signed HttpOnly cookies** — not readable from JavaScript, and
+  a tampered payload fails the signature check.
+- Stored API keys are **AES-256-GCM encrypted**. `GET /api/settings` returns
+  only whether each key is set plus its last four characters; the values never
+  travel back to the browser.
+
+Setting a password is **refused without a database**, deliberately. Serverless
+instances come and go, so a password in one instance's memory would vanish when
+another served a request and lock you out at random. Better to say why than to
+half-work.
+
+To reset a forgotten password: clear the `auth:owner` row from the `app_kv`
+table.
+
+### Getting a database
+
+Either route gives you a `DATABASE_URL` on the free tier:
+
+- **Vercel** → project → Storage → create a Neon Postgres database. It sets
+  `DATABASE_URL` for you.
+- **neon.tech** → new project → copy the pooled connection string → add it as a
+  Vercel environment variable.
+
+Tables are created on first use; there is no migration step to forget.
 
 ## Money
 

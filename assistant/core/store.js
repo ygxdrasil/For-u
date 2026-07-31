@@ -23,11 +23,23 @@ export function createMemoryStore() {
   const jobs = new Map();
   const sessions = new Map();
   const tokens = [];
+  const kv = new Map();
 
   return {
     kind: 'memory',
     durable: false,
     note: 'In-memory only. This resets whenever the serverless function cold-starts. Set DATABASE_URL for durable storage.',
+
+    // Generic key/value: the password record, the session secret and the
+    // encrypted API keys live here. In memory that means a cold start logs you
+    // out and forgets your keys — which is exactly why DATABASE_URL matters.
+    async getKv(k) {
+      return kv.get(k) ?? null;
+    },
+    async setKv(k, v) {
+      kv.set(k, v);
+      return v;
+    },
 
     async getMonthlySpend() {
       const m = MONTH();
@@ -117,18 +129,44 @@ export function createMemoryStore() {
 }
 
 /**
- * Select a backend. Deliberately synchronous about which one it picked so the
- * UI can say "state is not durable" instead of quietly losing things.
+ * Cached per module instance.
+ *
+ * Without this, every handler call built a NEW store — so with no database a
+ * password set by one request was already gone by the next one, and signing in
+ * reported "no password set yet" immediately after setup. Caching also stops
+ * the Postgres backend re-running its migration on every invocation.
+ *
+ * This makes state survive within a warm lambda. It does NOT make it durable:
+ * only a database does that, which is why setup refuses without one.
  */
+let cached = null;
+let cachedFor = null;
+
 export async function createStore({ databaseUrl = process.env.DATABASE_URL } = {}) {
-  if (!databaseUrl) return createMemoryStore();
-  try {
-    const { createNeonStore } = await import('./store.neon.js');
-    return await createNeonStore(databaseUrl);
-  } catch (err) {
-    const store = createMemoryStore();
-    store.note = `DATABASE_URL is set but the Postgres store could not start (${err.message}). Falling back to memory — state will not persist.`;
-    store.degraded = true;
-    return store;
+  const key = databaseUrl ?? '(memory)';
+  if (cached && cachedFor === key) return cached;
+
+  let store;
+  if (!databaseUrl) {
+    store = createMemoryStore();
+  } else {
+    try {
+      const { createNeonStore } = await import('./store.neon.js');
+      store = await createNeonStore(databaseUrl);
+    } catch (err) {
+      store = createMemoryStore();
+      store.note = `DATABASE_URL is set but the Postgres store could not start (${err.message}). Falling back to memory — state will not persist.`;
+      store.degraded = true;
+    }
   }
+
+  cached = store;
+  cachedFor = key;
+  return store;
+}
+
+/** Tests only: drop the cached instance so each case starts clean. */
+export function resetStoreCache() {
+  cached = null;
+  cachedFor = null;
 }
