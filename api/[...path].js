@@ -3125,18 +3125,11 @@ var askTools = [
 ];
 
 // server/tools/console.ts
-var NO_LAPTOP = "The laptop bridge is not running, so I have no way into the room at all. Tell the user plainly: the console and the laptop can only be reached from a program running in the same house, and it is not answering. Do not imply anything happened.";
+var NO_LAPTOP = "The laptop bridge is not running, so I have no way into the room at all. Tell the user plainly: the laptop can only be reached from a program running in the same house, and it is not answering. Do not imply anything happened.";
 async function send(action, verb, arg) {
   const { online, state } = await bridgeStatus();
   if (!online) return NO_LAPTOP;
-  if (action === "wake" && state?.status === "AWAKE") {
-    return "The console is already on.";
-  }
-  if (action === "sleep" && state?.status === "STANDBY") {
-    return "The console is already asleep.";
-  }
-  const patience = action === "wake" || action === "sleep" ? 25e3 : 12e3;
-  const finished = await awaitResult(await enqueue(action, arg), patience);
+  const finished = await awaitResult(await enqueue(action, arg));
   if (!finished) {
     return `The laptop took the instruction to ${verb} but has not reported back yet. Say that it is on its way rather than that it is done.`;
   }
@@ -3144,30 +3137,31 @@ async function send(action, verb, arg) {
     return `That did not work: ${finished.detail || "the laptop gave no reason"}. Say so plainly and do not offer to try again \u2014 it has already been tried twice and checked against the console both times.`;
   }
   const done = {
-    wake: `The console is on${finished.detail ? ` \u2014 ${finished.detail}` : ""}.`,
-    sleep: `The console is asleep${finished.detail ? ` \u2014 ${finished.detail}` : ""}.`,
     open: `Done \u2014 it is up on the laptop screen${finished.detail ? ` (${finished.detail})` : ""}.`,
     lock: "Done \u2014 the laptop is locked."
   };
   return done[action] ?? "Done.";
 }
 var consoleTools = [
-  {
-    name: "wake_playstation",
-    description: "Switch the PlayStation on. Use it whenever the user asks you to turn on the console, the PS5, or the PlayStation, or to get it ready. It takes a few seconds to come up.",
-    category: "home",
-    parameters: {},
-    required: [],
-    run: () => send("wake", "wake")
-  },
-  {
-    name: "sleep_playstation",
-    description: "Put the PlayStation into rest mode. Use it when the user asks you to turn it off, switch it off, or put it to sleep. It is rest mode rather than a full shutdown, so you can switch it back on again afterwards.",
-    category: "home",
-    parameters: {},
-    required: [],
-    run: () => send("sleep", "sleep")
-  },
+  /*
+   * Waking and sleeping the console used to live here, and do not any more.
+   *
+   * They worked through playactor, whose last release was February 2022. Both
+   * directions now fail silently against current PS5 firmware: the request is
+   * sent, the console is entirely unmoved, and the process exits zero. There is
+   * no maintained alternative — the most recently published PlayStation
+   * integration on npm still depends on that same version.
+   *
+   * A tool that can never succeed is worse than an absent one. It costs its
+   * description in every prompt, she reaches for it in good faith, and the user
+   * waits ten seconds to be told it did not work. Removing it means she says
+   * plainly that she cannot do it, immediately, which is the honest version of
+   * the same answer.
+   *
+   * The bridge still carries the code for both, and the laptop half of it —
+   * opening a page, locking the screen — is untouched and works. If playactor
+   * is ever revived, this is two tool definitions and a line in NEEDS.
+   */
   {
     name: "open_on_laptop",
     description: 'Put a web page up on the laptop in the room, on its own screen. Use it when the user is not holding a phone and says "pull that up", "put it on the laptop", or "show me". Different from open_pages, which opens a tab in whatever they are looking at now \u2014 this one reaches the machine in the room. Web addresses only.',
@@ -4825,8 +4819,6 @@ var LABELS = {
   add_to_diary: "Added to the diary",
   check_playstation: "Looked at the PlayStation",
   recent_games: "Checked recent games",
-  wake_playstation: "Switched the PlayStation on",
-  sleep_playstation: "Put the PlayStation to sleep",
   search_memory: "Went back through the record",
   ask_choice: "Asked you something",
   open_pages: "Opened a page",
@@ -4932,8 +4924,6 @@ var NEEDS = {
   pause_workflow: "n8n",
   check_playstation: "playstation",
   recent_games: "playstation",
-  wake_playstation: "room",
-  sleep_playstation: "room",
   open_on_laptop: "room",
   lock_laptop: "room",
   notify_phone: "phone",
@@ -5225,9 +5215,9 @@ You keep every word either of you has ever said, and search_memory reaches into 
 
 You are never to say that you cannot access current or real-time information. You can: that is what search_web is for. If someone asks about the weather, the news, a price or anything else happening now, call it. Answering "I am a language model and cannot access live data" while holding a working search tool is simply false, and it is the one thing you must never say.`;
 var WORK_NOTE = `check_github and check_workflows read their code and their n8n, and you act on both rather than only reporting. rerun_checks sets the failed jobs of a red build running again \u2014 offer it the moment a failure looks flaky, since re-running is what anyone would do next. pause_workflow stops or restarts an n8n workflow by name; when one has failed several times over, say you are pausing it and pause it, because every further run repeats the damage. You cannot trigger a workflow to run \u2014 n8n offers no way in from outside \u2014 so say so rather than implying you tried. Nothing you have comments, merges, or closes anything on GitHub: those speak to other people in their name, and stay theirs.`;
-var CONSOLE_NOTE = `You can see their PlayStation with check_playstation and recent_games, and switch it on and off with wake_playstation and sleep_playstation, through a small program on the laptop in their room \u2014 a console only takes instructions from something on the same network. If that program is not running, say so plainly: it is not that you refused, it is that you have no way in.
+var CONSOLE_NOTE = `You can see their PlayStation with check_playstation and recent_games \u2014 what they have been playing, for how long, and whether they are online.
 
-Be precise about where that stops. You can turn it on, put it into rest mode, and see what is running. You cannot start a particular game and you cannot press buttons \u2014 a PlayStation accepts neither from anything but a live Remote Play session, which is different software. If asked, say so in one sentence and do not imply you tried.`;
+You cannot switch it on or off, start a game, or press anything. The tool that did the switching stopped working against current PlayStation firmware and there is no replacement, so it has been taken away rather than left to fail. If they ask, say plainly that you cannot power the console and that it is not something you can be given back \u2014 do not offer to try, and do not imply you tried.`;
 var LAPTOP_NOTE = `The laptop in their room is the one place you reach without them holding anything. open_on_laptop puts a web page on that screen \u2014 use it when they say "pull that up" or "show me" with their hands full. lock_laptop locks it when they say they are going out; nothing closes and nothing is lost. Both go through the same program as the console, so if it is not running, say so rather than claiming the page is up.`;
 var PHONE_NOTE = `notify_phone reaches their phone when something genuinely wants them and they are not in front of you \u2014 a failed build, a finished timer. Never for a reply to something they just said, and never for anything that can wait until they next look.`;
 var PHASE_NOTE = `You can search the web with the search_web tool, and you should whenever an answer depends on something current, specific, or outside what you already know \u2014 news, prices, opening times, weather, scores, anything that has changed since you were trained. Search quietly and answer; do not narrate that you are searching, and do not list sources unless you are asked for them. If what you find is thin or the sources disagree, say so.

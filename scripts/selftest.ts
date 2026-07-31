@@ -1660,11 +1660,14 @@ try {
   // With no laptop answering, she must say so rather than claim to have done
   // it. Reporting success about a console that never moved is the one failure
   // that would make this whole feature untrustworthy.
-  const noBridge = await runTool({name: 'wake_playstation', args: {}});
+  const noBridge = await runTool({
+    name: 'open_on_laptop',
+    args: {url: 'https://example.com'},
+  });
   assert.match(
     noBridge.result,
-    /not running|no way onto/i,
-    'with no bridge she must say she cannot reach the console',
+    /not running|no way into/i,
+    'with no bridge she must say she cannot reach the laptop',
   );
   ok('with no laptop listening she says so, rather than claiming success');
 
@@ -1688,7 +1691,7 @@ try {
   };
   assert.deepEqual(firstCheckIn.commands, [], 'nothing queued yet');
 
-  const woken = runTool({name: 'wake_playstation', args: {}});
+  const woken = runTool({name: 'open_on_laptop', args: {url: 'https://example.com'}});
   // Give the tool a moment to queue the instruction before the laptop looks.
   await new Promise((resolve) => setTimeout(resolve, 300));
 
@@ -1696,7 +1699,7 @@ try {
     commands: {id: string; action: string}[];
   };
   assert.equal(collected.commands.length, 1, 'the laptop should be given the job');
-  assert.equal(collected.commands[0].action, 'wake');
+  assert.equal(collected.commands[0].action, 'open');
 
   const claimedAgain = (await (await asBridge({token, state: consoleState})).json()) as {
     commands: unknown[];
@@ -1704,7 +1707,7 @@ try {
   assert.deepEqual(
     claimedAgain.commands,
     [],
-    'and must not be handed the same job twice — that is a console switched on twice',
+    'and must not be handed the same job twice — that is two tabs, or two locks',
   );
 
   await asBridge({
@@ -1714,12 +1717,8 @@ try {
   });
 
   const said = await woken;
-  assert.match(said.result, /console is on/i, 'she reports what the laptop actually did');
-  assert.doesNotMatch(
-    said.result,
-    /coming on|on its way|going to sleep/i,
-    'and states it, because the laptop now watches the console change before saying so',
-  );
+  assert.match(said.result, /laptop screen/i, 'she reports what the laptop actually did');
+  assert.doesNotMatch(said.result, /on its way/i, 'and states it rather than predicting it');
 
   /*
    * The laptop must not take playactor's word for it.
@@ -2057,7 +2056,7 @@ try {
   assert.match(wholeSelf, /pause_workflow/, 'the whole of her still describes it');
   assert.doesNotMatch(
     thisAccount,
-    /pause_workflow|wake_playstation|open_on_laptop|notify_phone/,
+    /pause_workflow|open_on_laptop|notify_phone|recent_games/,
     'nothing unconnected may be described',
   );
   // The rules that hold whatever is plugged in must survive the narrowing.
