@@ -57,6 +57,7 @@ export const DEFAULT_PREFS = {
   sweepLimit: 10,
 
   // interface
+  theme: 'light', // light | dark | auto
   accent: 'cyan', // cyan | violet | amber | green | magenta
   refreshSeconds: 30,
   density: 'compact', // compact | roomy
@@ -75,6 +76,7 @@ const CLAMP = {
 };
 
 const ENUMS = {
+  theme: ['light', 'dark', 'auto'],
   accent: ['cyan', 'violet', 'amber', 'green', 'magenta'],
   density: ['compact', 'roomy'],
 };

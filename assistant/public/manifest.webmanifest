@@ -1,12 +1,12 @@
 {
-  "name": "Jason — n8n workflow contractor",
+  "name": "Jason \u2014 n8n workflow contractor",
   "short_name": "Jason",
   "description": "Designs, builds, tests and repairs n8n workflows.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#05070d",
-  "theme_color": "#05070d",
+  "background_color": "#f7f8fa",
+  "theme_color": "#ffffff",
   "orientation": "any",
   "icons": [
     {

@@ -216,8 +216,8 @@ fs.writeFileSync(
       start_url: '/',
       scope: '/',
       display: 'standalone',
-      background_color: '#05070d',
-      theme_color: '#05070d',
+      background_color: '#f7f8fa',
+      theme_color: '#ffffff',
       orientation: 'any',
       icons: [
         { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
