@@ -307,8 +307,10 @@ function buildNode({ pkgName, nodeDir, nodeName }) {
       mode: disc.mode ?? null,
       params: parseTopLevelParams(body).map((p) => (p.required ? `${p.name}!` : p.name)),
       grounded: parseGroundedParams(ts),
-      // path relative to the schemas root, so get_node_schema can find the file
-      file: path.relative(versionDir, file).split(path.sep).join('/'),
+      // Path relative to the schemas root, so get_node_schema can find it.
+      // `.txt` is appended to match what copyTree() emits — see the comment
+      // there for why these are not shipped as .ts.
+      file: `${path.relative(versionDir, file).split(path.sep).join('/')}.txt`,
     });
   }
 
@@ -438,9 +440,23 @@ function main() {
 function copyTree(from, to) {
   for (const e of fs.readdirSync(from, { withFileTypes: true })) {
     const src = path.join(from, e.name);
-    const dst = path.join(to, e.name);
-    if (e.isDirectory()) copyTree(src, dst);
-    else if (e.name.endsWith('.ts') || e.name.endsWith('.schema.js')) copyFileEnsuring(src, dst);
+    if (e.isDirectory()) {
+      copyTree(src, path.join(to, e.name));
+    } else if (e.name.endsWith('.ts')) {
+      // Emitted as .ts.txt, NOT .ts.
+      //
+      // These files are reference documentation shown to the model, not
+      // compilable code — they use ambient types (Expression, NodeConfig,
+      // CredentialReference) that only exist inside n8n's own build. Left with
+      // a .ts extension, every build system that scans the project tries to
+      // type-check ~9,000 of them and drowns: the first Vercel deploy produced
+      // more than 4MB of TS2304 errors before giving up.
+      copyFileEnsuring(src, path.join(to, `${e.name}.txt`));
+    } else if (e.name.endsWith('.schema.js')) {
+      // These must keep their .js extension — the SDK resolves them by
+      // require()ing the path without an extension.
+      copyFileEnsuring(src, path.join(to, e.name));
+    }
   }
 }
 
