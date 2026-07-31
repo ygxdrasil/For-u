@@ -17,6 +17,12 @@
 const MONTH = () => new Date().toISOString().slice(0, 7); // YYYY-MM
 
 export function createMemoryStore() {
+  // Everything in and out is copied. Handing a caller the live object means a
+  // result they are holding changes under them later — and any code that edits
+  // what it was given silently rewrites the store. The Postgres store cannot do
+  // that, so neither may this one, or the two behave differently.
+  const copy = (v) => (v === undefined ? v : structuredClone(v));
+
   const spend = [];
   const snapshots = [];
   const findings = [];
@@ -34,10 +40,10 @@ export function createMemoryStore() {
     // encrypted API keys live here. In memory that means a cold start logs you
     // out and forgets your keys — which is exactly why DATABASE_URL matters.
     async getKv(k) {
-      return kv.get(k) ?? null;
+      return copy(kv.get(k) ?? null);
     },
     async setKv(k, v) {
-      kv.set(k, v);
+      kv.set(k, copy(v));
       return v;
     },
 
@@ -49,7 +55,7 @@ export function createMemoryStore() {
       spend.push(entry);
     },
     async recentSpend(limit = 50) {
-      return spend.slice(-limit).reverse();
+      return copy(spend.slice(-limit).reverse());
     },
 
     /** Append-only. A snapshot is what makes an update reversible. */
@@ -62,51 +68,51 @@ export function createMemoryStore() {
         reason,
         at: new Date().toISOString(),
       };
-      snapshots.push(entry);
+      snapshots.push(copy(entry));
       return entry;
     },
     async listSnapshots(workflowId) {
-      return snapshots.filter((s) => !workflowId || s.workflowId === workflowId).reverse();
+      return copy(snapshots.filter((s) => !workflowId || s.workflowId === workflowId).reverse());
     },
     async getSnapshot(id) {
-      return snapshots.find((s) => s.id === id) ?? null;
+      return copy(snapshots.find((s) => s.id === id) ?? null);
     },
 
     async addFinding(f) {
       const entry = { id: `find_${findings.length + 1}`, at: new Date().toISOString(), status: 'open', ...f };
       findings.push(entry);
-      return entry;
+      return copy(entry);
     },
     async listFindings({ status = null } = {}) {
-      return findings.filter((f) => !status || f.status === status).reverse();
+      return copy(findings.filter((f) => !status || f.status === status).reverse());
     },
     async updateFinding(id, patch) {
       const f = findings.find((x) => x.id === id);
       if (f) Object.assign(f, patch);
-      return f ?? null;
+      return copy(f ?? null);
     },
 
     async saveJob(job) {
-      jobs.set(job.id, job);
+      jobs.set(job.id, copy(job));
       return job;
     },
     async getJob(id) {
-      return jobs.get(id) ?? null;
+      return copy(jobs.get(id) ?? null);
     },
 
     async getSession(id) {
-      return sessions.get(id) ?? { id, messages: [] };
+      return copy(sessions.get(id) ?? { id, messages: [] });
     },
     async saveSession(session) {
-      sessions.set(session.id, session);
+      sessions.set(session.id, copy(session));
       return session;
     },
 
     async listTokens() {
-      return tokens.map(({ hash, ...rest }) => rest);
+      return tokens.map(({ hash, ...rest }) => copy(rest));
     },
     async addToken(t) {
-      tokens.push(t);
+      tokens.push(copy(t));
       return t;
     },
     async findTokenByHash(hash) {
@@ -115,14 +121,14 @@ export function createMemoryStore() {
     async retireToken(id) {
       const t = tokens.find((x) => x.id === id);
       if (t) t.retiredAt = new Date().toISOString();
-      return t ?? null;
+      return copy(t ?? null);
     },
 
     async getCursor(name) {
-      return sessions.get(`cursor:${name}`) ?? null;
+      return copy(sessions.get(`cursor:${name}`) ?? null);
     },
     async setCursor(name, value) {
-      sessions.set(`cursor:${name}`, value);
+      sessions.set(`cursor:${name}`, copy(value));
       return value;
     },
   };

@@ -40,6 +40,9 @@ export default async function handler(req, res) {
         text,
         sessionId: req.body.sessionId ?? null,
         approvals: req.body.approvals ?? [],
+        // Handed back as jobId when a turn runs out of road; passing it picks the
+        // work up where it stopped rather than starting again.
+        resumeJobId: req.body.resumeJobId ?? null,
         config: await resolveConfig(req, store),
         store,
         // Leave headroom under the 60s function limit so this returns an
@@ -54,6 +57,7 @@ export default async function handler(req, res) {
       status: result.status,
       reply: result.reply,
       jobId: result.jobId ?? null,
+      resumedFrom: result.resumedFrom ?? null,
       steps: result.steps.map((s) => ({ tool: s.tool, ok: s.ok, summary: s.summary })),
       spend: result.spend,
       elapsedMs: result.elapsedMs,

@@ -260,23 +260,82 @@ export function groundingRequirements({ type, resource = null, operation = null 
     .flatMap((o) => o.grounded);
 }
 
-/** Nodes whose operation changes something in the outside world. */
-const WRITE_VERBS = /^(create|update|upsert|delete|send|post|append|write|add|remove|archive|move|copy|insert|set|assign|invite|share|publish|execute|run|trigger|reply|forward|reserve|charge|refund)/i;
+/**
+ * Verbs that mean something changes out in the world.
+ *
+ * The bias here is deliberate and one-directional: disabling a node that turns
+ * out to be harmless costs a slightly emptier dry run. MISSING one sends a real
+ * message to a real person. So when in doubt, this says write.
+ */
+const WRITE_VERB_LIST = [
+  'create', 'update', 'upsert', 'delete', 'send', 'post', 'append', 'write', 'add', 'remove', 'archive',
+  'move', 'copy', 'insert', 'set', 'assign', 'invite', 'share', 'publish', 'execute', 'run', 'trigger',
+  'reply', 'forward', 'reserve', 'charge', 'refund', 'upload', 'put', 'patch', 'push', 'deploy', 'submit',
+  'respond', 'dispatch', 'notify', 'mail', 'pay', 'transfer', 'order', 'book', 'approve', 'revoke', 'grant',
+  'import', 'rename', 'replace', 'restore', 'comment', 'subscribe', 'unsubscribe', 'clear', 'truncate', 'sync',
+  'emit', 'sms', 'call', 'tweet', 'toot', 'like', 'follow',
+];
+
+/** Operations are camelCase verbs: sendMessage, appendOrUpdate, deleteChannel. */
+const WRITE_VERB_PREFIX = new RegExp(`^(${WRITE_VERB_LIST.join('|')})`, 'i');
+/** Node names are matched word by word, so "emailSend" is caught, not just "sendEmail". */
+const WRITE_VERB_EXACT = new RegExp(`^(${WRITE_VERB_LIST.join('|')})$`, 'i');
+
+/** Anything but these changes state at the other end. */
+const READ_ONLY_METHOD = /^(get|head|options)$/i;
 
 /**
- * Classify an operation as write-capable. Derived from the catalog's own
- * operation names — never a hand-maintained list, because the second copy of a
- * list always goes stale and starts advertising things that don't exist.
+ * Nodes that can reach anything, whose intent cannot be read off a parameter.
+ * These are NOT auto-disabled — disabling every Code node would leave a dry run
+ * proving nothing — but they are named in the report, because "I disabled
+ * everything that sends" is only true for things that can be identified.
  */
-export function isWriteOperation({ type, resource = null, operation = null }) {
-  if (operation && WRITE_VERBS.test(operation)) return true;
+const OPAQUE_TYPES = new Set([
+  'n8n-nodes-base.code',
+  'n8n-nodes-base.function',
+  'n8n-nodes-base.functionItem',
+  'n8n-nodes-base.executeCommand',
+  'n8n-nodes-base.ssh',
+  'n8n-nodes-base.httpRequest',
+  'n8n-nodes-base.graphql',
+  'n8n-nodes-base.n8n',
+  '@n8n/n8n-nodes-langchain.toolHttpRequest',
+  '@n8n/n8n-nodes-langchain.toolCode',
+]);
+
+export function isOpaqueNode(type) {
+  return OPAQUE_TYPES.has(type);
+}
+
+/**
+ * Classify a node as write-capable.
+ *
+ * Three signals, in order of how much they can be trusted:
+ *   1. an explicit HTTP method that is not a read — an HTTP Request node doing
+ *      POST is a send, whatever the node happens to be called
+ *   2. the operation verb, from the catalog's own operation names
+ *   3. failing both, the words in the node's name
+ *
+ * Signal 3 matches word by word rather than only at the start. Anchoring it to
+ * the start meant "emailSend" — the literal Send Email node — was classified as
+ * a read and stayed switched on through every dry run.
+ */
+export function isWriteOperation({ type, resource = null, operation = null, parameters = null }) {
+  const method = parameters?.method ?? parameters?.requestMethod ?? parameters?.httpMethod;
+  if (typeof method === 'string' && method && !READ_ONLY_METHOD.test(method)) return true;
+
+  if (operation) return WRITE_VERB_PREFIX.test(operation);
 
   const node = getNode(type);
   if (!node) return false;
 
-  // Nodes with no operation discriminator: judge by node name.
-  if (!operation) {
-    return WRITE_VERBS.test(node.name);
-  }
-  return false;
+  // A trigger starts a workflow, it does not send anything — and "trigger" is
+  // itself a write verb, so without this every manualTrigger and
+  // scheduleTrigger got switched off and the dry run had nothing to run at all.
+  if (/trigger$/i.test(type) || type.endsWith('.webhook')) return false;
+
+  return String(node.name)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .some((word) => WRITE_VERB_EXACT.test(word));
 }

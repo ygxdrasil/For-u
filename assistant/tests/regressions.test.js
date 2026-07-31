@@ -96,6 +96,153 @@ test('a model that hangs is cut off before the platform kills the request', asyn
   assert.equal(r.status, 'continuing');
 });
 
+test('the nodes that actually send are the ones a dry run switches off', async () => {
+  // The Send Email node and an HTTP Request doing POST were both classified as
+  // reads and left switched ON through every dry run. "Tests never send" is the
+  // guarantee everything else rests on.
+  const { isWriteOperation } = await import('../core/nodeIndex.js');
+  const { writeNodesIn } = await import('../core/tools.js');
+
+  const mustBeOff = [
+    ['n8n-nodes-base.emailSend', {}],
+    ['n8n-nodes-base.httpRequest', { method: 'POST' }],
+    ['n8n-nodes-base.httpRequest', { method: 'DELETE' }],
+    ['n8n-nodes-base.ftp', { operation: 'upload' }],
+    ['n8n-nodes-base.gmail', { resource: 'message', operation: 'send' }],
+    ['n8n-nodes-base.slack', { resource: 'message', operation: 'post' }],
+  ];
+  for (const [type, parameters] of mustBeOff) {
+    assert.equal(
+      isWriteOperation({ type, resource: parameters.resource ?? null, operation: parameters.operation ?? null, parameters }),
+      true,
+      `${type} ${JSON.stringify(parameters)} would have sent for real during a test`,
+    );
+  }
+
+  // And the opposite mistake: switching off the trigger leaves a dry run with
+  // nothing to run, which looks like a pass and proves nothing.
+  const mustStayOn = [
+    ['n8n-nodes-base.manualTrigger', {}],
+    ['n8n-nodes-base.scheduleTrigger', {}],
+    ['n8n-nodes-base.httpRequest', { method: 'GET' }],
+    ['n8n-nodes-base.slack', { resource: 'message', operation: 'search' }],
+    ['n8n-nodes-base.if', {}],
+  ];
+  for (const [type, parameters] of mustStayOn) {
+    assert.equal(
+      isWriteOperation({ type, resource: parameters.resource ?? null, operation: parameters.operation ?? null, parameters }),
+      false,
+      `${type} was disabled needlessly`,
+    );
+  }
+
+  const writers = writeNodesIn({
+    nodes: [
+      { name: 'Start', type: 'n8n-nodes-base.manualTrigger', parameters: {} },
+      { name: 'Email them', type: 'n8n-nodes-base.emailSend', parameters: {} },
+      { name: 'Charge them', type: 'n8n-nodes-base.httpRequest', parameters: { method: 'POST' } },
+    ],
+  });
+  assert.deepEqual(writers.sort(), ['Charge them', 'Email them']);
+});
+
+test('a dry run puts its test copy away instead of piling them up', async () => {
+  // Left visible, every dry run added another "[assistant test]" workflow to
+  // the real instance.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+  const { createMemoryStore: mem } = await import('../core/store.js');
+
+  const archived = new Set();
+  const wf = { id: 'wf1', name: 'Leads', nodes: [{ id: '1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }], connections: {} };
+  const fetchImpl = async (url, init) => {
+    const p = new URL(url).pathname.replace('/api/v1', '');
+    const method = init?.method ?? 'GET';
+    const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (method === 'POST' && p === '/workflows') return reply({ ...wf, id: 'copy1' });
+    if (method === 'POST' && /\/archive$/.test(p)) { archived.add(p.split('/')[2]); return reply({ isArchived: true }); }
+    if (method === 'POST' && /\/(run|execute)$/.test(p)) return reply({ executionId: 'e1' });
+    if (method === 'GET' && p === '/executions') return reply({ data: [{ id: 'e1', status: 'success' }] });
+    if (method === 'GET' && p.startsWith('/executions/')) return reply({ id: 'e1', status: 'success', data: { resultData: { runData: {} } } });
+    if (method === 'GET' && p === '/workflows/copy1') return reply({ ...wf, id: 'copy1', isArchived: archived.has('copy1') });
+    return reply(wf);
+  };
+
+  const tools = buildToolRegistry({ n8n: createN8nClient({ baseUrl: 'https://x.invalid', apiKey: 'k', fetchImpl }), store: mem(), approvals: [] });
+  const out = await tools.find((t) => t.name === 'dry_run_workflow').handler({ id: 'wf1' });
+
+  assert.equal(out.ok, true, out.error);
+  assert.ok(archived.has('copy1'), 'the test copy was left in the workflow list');
+  assert.match(out.note, /archiv/i);
+  assert.match(out.note, /nothing was deleted/i);
+});
+
+test('an unfinished turn leaves the conversation where he can pick it up', async () => {
+  // "Ask me to carry on and I will pick up from here" was not something the
+  // code could do: nothing was saved, so the next message started from before.
+  const store = createMemoryStore();
+  const first = await run(
+    { text: 'build it', sessionId: 's1', config: cfg, store, deadlineMs: 40_000, llmClientFactory: stubModel([{ calls: [{ name: 'search_nodes', args: { query: 'slack' } }] }]) },
+    {},
+  );
+  assert.equal(first.status, 'continuing');
+  const session = await store.getSession('s1');
+  assert.ok(session.messages.length > 0, 'nothing was carried, so he would start again from scratch');
+  assert.match(JSON.stringify(session.messages), /search_nodes/);
+
+  // And a headless caller can hand the job id straight back.
+  const resumed = await run(
+    { text: 'carry on', resumeJobId: first.jobId, config: cfg, store, llmClientFactory: stubModel([{ text: 'finished' }]) },
+    {},
+  );
+  assert.equal(resumed.resumedFrom, first.jobId);
+});
+
+test('a store with rubbish in it does not stop him answering', async () => {
+  const store = createMemoryStore();
+  for (const key of ['settings:prefs', 'memory:facts', 'settings:peers', 'settings:secrets']) await store.setKv(key, 'corrupted');
+  const r = await run({ text: 'what is running?', config: cfg, store, llmClientFactory: stubModel([{ text: 'an answer' }]) }, {});
+  assert.equal(r.status, 'ok', r.reply);
+});
+
+test('the memory store hands out copies, not its own live objects', async () => {
+  // listFindings returned the internal objects, so a later update mutated a
+  // result the caller was already holding — something Postgres cannot do, which
+  // meant the two stores behaved differently.
+  const store = createMemoryStore();
+  const added = await store.addFinding({ workflowId: 'wf1', error: 'boom' });
+  const open = await store.listFindings({ status: 'open' });
+  await store.updateFinding(added.id, { status: 'closed' });
+  assert.equal(open[0].status, 'open', 'a result already returned changed underneath the caller');
+
+  open[0].workflowId = 'tampered';
+  assert.equal((await store.listFindings({}))[0].workflowId, 'wf1', 'editing a returned object rewrote the store');
+});
+
+test('every route that reads the node index has it bundled with it', async () => {
+  // /api/workflow and /api/mcp read the index at runtime, which Vercel's tracer
+  // cannot see. Both 401 before reaching it, so probing production proved
+  // nothing — they would have failed only once someone was signed in.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const root = path.dirname(new URL('.', import.meta.url).pathname);
+  const vercel = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+
+  const reaches = (file, seen = new Set()) => {
+    if (seen.has(file) || !fs.existsSync(file)) return false;
+    seen.add(file);
+    if (file.endsWith('nodeIndex.js')) return true;
+    const src = fs.readFileSync(file, 'utf8');
+    return [...src.matchAll(/from\s+'(\.[^']+)'/g), ...src.matchAll(/import\(\s*'(\.[^']+)'\s*\)/g)]
+      .some((m) => reaches(path.resolve(path.dirname(file), m[1]), seen));
+  };
+
+  for (const file of fs.readdirSync(path.join(root, 'api'))) {
+    if (!file.endsWith('.js') || !reaches(path.join(root, 'api', file))) continue;
+    assert.ok(vercel.functions?.[`api/${file}`]?.includeFiles, `api/${file} reads the node index but ships without it`);
+  }
+});
+
 test('a model with no price cannot be saved as a preference', async () => {
   // It saved happily and the next request then refused to run at all, because
   // the meter will not guess a rate — correctly, but the trap was set on save.

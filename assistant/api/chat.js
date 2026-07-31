@@ -42,9 +42,19 @@ export default async function handler(req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
 
+  // Once the browser is gone every write throws, and an uncaught one takes the
+  // whole function down mid-answer — closing a tab is not an error condition.
+  // The work finishes and is recorded; only the narration stops.
+  let clientGone = false;
   const send = (event, data) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (clientGone) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      clientGone = true;
+    }
   };
+  req.on?.('close', () => { clientGone = true; });
 
   send('open', { at: new Date().toISOString() });
 
@@ -54,6 +64,9 @@ export default async function handler(req, res) {
         text,
         sessionId: req.body.sessionId ?? null,
         approvals: req.body.approvals ?? [],
+        // Handed back as jobId when a turn runs out of road; passing it picks the
+        // work up where it stopped rather than starting again.
+        resumeJobId: req.body.resumeJobId ?? null,
         config: await resolveConfig(req, store),
         store,
         deadlineMs: Number(req.body.deadlineMs ?? 50_000),
@@ -81,6 +94,7 @@ export default async function handler(req, res) {
       status: result.status,
       reply: result.reply,
       jobId: result.jobId ?? null,
+      resumedFrom: result.resumedFrom ?? null,
       steps: result.steps,
       spend: result.spend,
       elapsedMs: result.elapsedMs,
@@ -90,7 +104,11 @@ export default async function handler(req, res) {
   } catch (err) {
     send('error', { error: err.message });
   } finally {
-    res.end();
+    try {
+      res.end();
+    } catch {
+      // Already closed by the client. Nothing to report to nobody.
+    }
   }
 }
 

@@ -139,6 +139,13 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     const payload = { ...workflow, active: false };
     const created = await request('POST', '/workflows', { body: payload });
 
+    // No id back means we do not know what we just made. Carrying on would
+    // send the next request to /workflows/undefined and then report on a
+    // workflow nobody can find.
+    if (!created?.id) {
+      throw new N8nError('n8n accepted the workflow but returned no id, so I cannot tell you what was created or check on it.', { body: created });
+    }
+
     const readBack = await getWorkflow(created.id).catch(() => null);
     return {
       workflow: created,

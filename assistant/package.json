@@ -9,7 +9,7 @@
     "build": "node scripts/stamp-build.mjs && node node_modules/vite/bin/vite.js build",
     "test": "node --test tests/*.test.js",
     "selftest": "node scripts/selftest.mjs",
-    "stress": "node scripts/stress.mjs",
+    "stress": "node scripts/stress.mjs && node scripts/stress2.mjs && node scripts/stress-store.mjs",
     "build:nodes": "node scripts/build-node-index.mjs",
     "build:icons": "node scripts/make-icons.mjs"
   },
@@ -27,6 +27,7 @@
   },
   "comments": {
     "no-npx": "Every script is invoked as `node <path>` rather than a bare CLI name, because .cmd/.bat shims are blocked by group policy on the target machine.",
-    "node-packages": "n8n-nodes-base and @n8n/n8n-nodes-langchain are deliberately NOT dependencies. They pull ~1.7GB of transitive deps and are only needed to regenerate vendor/. Install them with --no-save when regenerating; see README."
+    "node-packages": "n8n-nodes-base and @n8n/n8n-nodes-langchain are deliberately NOT dependencies. They pull ~1.7GB of transitive deps and are only needed to regenerate vendor/. Install them with --no-save when regenerating; see README.",
+    "pglite": "scripts/stress-store.mjs drives the real Postgres store against an embedded Postgres. Install it only when running that script: npm install --no-save @electric-sql/pglite. It is deliberately not a dependency."
   }
 }

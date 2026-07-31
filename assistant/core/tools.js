@@ -12,7 +12,7 @@
  * Not for workflows, not for executions, not for credentials.
  */
 
-import { searchNodes, getNodeSchema, catalogMeta, isWriteOperation, getNode } from './nodeIndex.js';
+import { searchNodes, getNodeSchema, catalogMeta, isWriteOperation, isOpaqueNode, getNode } from './nodeIndex.js';
 import { validateWorkflow } from './validate.js';
 import { assessExecution } from './assess.js';
 import { remember, activeFacts } from './memory.js';
@@ -484,19 +484,34 @@ function prettyNode(type) {
 export function writeNodesIn(workflow) {
   const out = [];
   for (const node of workflow?.nodes ?? []) {
-    if (node.disabled) continue;
+    if (!node || node.disabled) continue;
     const params = node.parameters ?? {};
     if (
       isWriteOperation({
         type: node.type,
         resource: typeof params.resource === 'string' ? params.resource : null,
         operation: typeof params.operation === 'string' ? params.operation : null,
+        // The HTTP method is the difference between reading an API and posting
+        // to it, and no operation discriminator carries it.
+        parameters: params,
       })
     ) {
       out.push(node.name);
     }
   }
   return out;
+}
+
+/**
+ * Nodes whose reach cannot be read off their parameters — a Code node can call
+ * anything. They are not disabled, because disabling every one would leave a
+ * dry run proving nothing; they are named, because "nothing was sent" must not
+ * be claimed about a node nobody can inspect.
+ */
+export function opaqueNodesIn(workflow) {
+  return (workflow?.nodes ?? [])
+    .filter((n) => n && !n.disabled && isOpaqueNode(n.type))
+    .map((n) => n.name);
 }
 
 function summariseExecution(execution) {
@@ -541,11 +556,18 @@ async function dryRun({ n8n, store, onStatus, prefs = {}, id, pinData }) {
   } catch (e) {
     return fail(`Could not fetch workflow ${id}: ${e.message}`);
   }
+  // A 200 with an empty body is a thing real instances do behind a proxy.
+  if (!original || typeof original !== 'object' || !Array.isArray(original.nodes)) {
+    return fail(`n8n returned nothing usable for workflow ${id}, so there is nothing I can safely copy and test.`);
+  }
 
   // Disabling writes is the default and stays on unless deliberately turned
   // off in settings. With it off, a dry run can reach real systems.
   const disableWrites = prefs.dryRunDisablesWrites !== false;
   const writers = disableWrites ? writeNodesIn(original) : [];
+  // Named, not disabled. A Code node can call anything, and claiming "nothing
+  // was sent" while one runs would be a guarantee nobody can actually make.
+  const opaque = opaqueNodesIn(original).filter((n) => !writers.includes(n));
   onStatus(writers.length ? `Disabling ${writers.length} write node(s) for the dry run…` : 'No write nodes to disable.');
 
   const testWorkflow = {
@@ -564,6 +586,7 @@ async function dryRun({ n8n, store, onStatus, prefs = {}, id, pinData }) {
   }
 
   const testId = created.workflow?.id;
+  if (!testId) return fail('n8n did not say what id the test copy got, so I cannot run it or tell you where it is.');
   onStatus(`Running test copy ${testId}…`);
 
   const run = await n8n.runWorkflow(testId);
@@ -576,6 +599,17 @@ async function dryRun({ n8n, store, onStatus, prefs = {}, id, pinData }) {
     } catch (e) {
       readError = e.message;
     }
+  }
+
+  // Put the copy away. Left visible, every dry run adds another "[assistant
+  // test]" workflow to the list — after twenty builds the instance is mostly
+  // test copies. Archived, not deleted: it is still there, still readable,
+  // still restorable, just not in the way.
+  let retired;
+  try {
+    retired = await n8n.archiveWorkflow(testId);
+  } catch (e) {
+    retired = { archived: false, error: e.message };
   }
 
   const assessment = run.ran
@@ -594,10 +628,17 @@ async function dryRun({ n8n, store, onStatus, prefs = {}, id, pinData }) {
     ran: run.ran,
     assessment,
     execution: execution ? summariseExecution(execution) : null,
+    retired,
     wouldHaveSent: writers.length
       ? `These nodes were disabled and sent nothing: ${writers.join(', ')}. Their input is visible in the execution of the node feeding them.`
       : null,
-    note: 'The test copy is left in place, inactive, so you can inspect it. Nothing was deleted.',
+    couldNotBeCertainAbout: opaque.length
+      ? `${opaque.join(', ')} can reach anything from inside their own code, so I cannot promise those sent nothing. Everything I could identify as sending was switched off.`
+      : null,
+    note:
+      retired?.archived === true
+        ? `The test copy (${testId}) has been archived so it is out of your workflow list. Nothing was deleted — it is under Archived in n8n, with its execution history.`
+        : `The test copy (${testId}) is still in your workflow list, inactive: ${retired?.reason ?? retired?.error ?? 'archiving it did not confirm'}. Nothing was deleted.`,
   });
 }
 
@@ -644,6 +685,7 @@ async function runProbe({ n8n, store, onStatus, prefs = {}, nodeType, resource, 
     return fail(`Could not create the probe workflow: ${e.message}`);
   }
   const probeId = created.workflow?.id;
+  if (!probeId) return fail('n8n did not say what id the probe got, so I cannot run it or clean it up. I will not guess a value instead.');
 
   const run = await n8n.runWorkflow(probeId);
   let execution = null;

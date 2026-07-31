@@ -17,7 +17,10 @@ const MAX_LEN = 300;
 
 export async function loadMemory(store) {
   const raw = (await store.getKv(KEY)) ?? [];
-  return Array.isArray(raw) ? raw : [];
+  // Entries are filtered, not just the container. A half-written row leaving a
+  // null in the list made every later read throw, which took out the whole
+  // answer over a fact he did not even need.
+  return Array.isArray(raw) ? raw.filter((f) => f && typeof f === 'object' && typeof f.text === 'string') : [];
 }
 
 export async function activeFacts(store) {

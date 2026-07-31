@@ -17,13 +17,15 @@ const TIMEOUT_MS = 25000;
 
 /** @returns {Promise<Array<{name,url,protocol,tool,description,hasToken}>>} */
 export async function listPeers(store) {
-  const raw = (await store.getKv(KEY_PEERS)) ?? [];
-  return (Array.isArray(raw) ? raw : []).map(({ token, ...rest }) => ({ ...rest, hasToken: Boolean(token) }));
+  return (await loadRaw(store)).map(({ token, ...rest }) => ({ ...rest, hasToken: Boolean(token) }));
 }
 
 async function loadRaw(store) {
   const raw = (await store.getKv(KEY_PEERS)) ?? [];
-  return Array.isArray(raw) ? raw : [];
+  // Entries as well as the container: a null left by a half-written row used to
+  // break listing entirely, which reads as "no peers configured" — and a peer
+  // he cannot see is a question he does not ask.
+  return Array.isArray(raw) ? raw.filter((p) => p && typeof p === 'object' && typeof p.name === 'string') : [];
 }
 
 export async function savePeer(store, peer) {

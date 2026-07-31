@@ -197,10 +197,18 @@ function Jason({ onSignOut }) {
   const prefs = data?.sections?.settings?.data?.prefs;
   const n8nBaseUrl = data?.sections?.settings?.data?.n8nBaseUrl ?? null;
 
+  const [signedOut, setSignedOut] = useState(false);
+
   const refresh = useCallback(() => {
     fetch('/api/dashboard')
-      .then((r) => r.json())
-      .then((d) => { if (d.ok) { setData(d); setCheckedAt(new Date().toISOString()); } })
+      .then(async (r) => {
+        // A poll that quietly fails leaves the numbers on screen looking
+        // current when nobody is reading them any more.
+        if (r.status === 401) { setSignedOut(true); return null; }
+        setSignedOut(false);
+        return r.json();
+      })
+      .then((d) => { if (d?.ok) { setData(d); setCheckedAt(new Date().toISOString()); } })
       .catch(() => {});
   }, []);
 
@@ -443,8 +451,14 @@ function Jason({ onSignOut }) {
       />
 
       <footer className="status">
-        <i className={`heart ${checkedAt && Date.now() - new Date(checkedAt).getTime() > (prefs?.refreshSeconds ?? 30) * 2500 ? 'stale' : ''}`} />
-        <span>checked {ago(checkedAt)} ago</span>
+        <i className={`heart ${signedOut || (checkedAt && Date.now() - new Date(checkedAt).getTime() > (prefs?.refreshSeconds ?? 30) * 2500) ? 'stale' : ''}`} />
+        {signedOut ? (
+          <button className="ghost" style={{ padding: '0 8px', fontSize: 10.5, height: 16 }} onClick={() => window.location.reload()}>
+            signed out — these numbers are old, click to sign in
+          </button>
+        ) : (
+          <span>checked {ago(checkedAt)} ago</span>
+        )}
         <i className="sep" />
         <span>{data?.vitals?.nodeIndex?.nodeCount ?? '—'} nodes known</span>
         <i className="sep" />

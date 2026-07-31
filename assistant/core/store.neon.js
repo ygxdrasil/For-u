@@ -14,10 +14,13 @@ import { neon } from '@neondatabase/serverless';
 
 const MONTH = () => new Date().toISOString().slice(0, 7);
 
-let migrated = false;
+// Per-connection rather than per-process: a module-level boolean meant a test
+// (or a second database) could skip the migration entirely and then fail on a
+// missing table.
+const migratedFor = new WeakSet();
 
 async function migrate(sql) {
-  if (migrated) return;
+  if (migratedFor.has(sql)) return;
   await sql`create table if not exists app_kv (
     k text primary key,
     v jsonb not null,
@@ -66,11 +69,26 @@ async function migrate(sql) {
     created_at timestamptz not null default now()
   )`;
   await sql`create index if not exists spend_at_idx on spend (at)`;
-  migrated = true;
+
+  // Insertion order, because two snapshots taken in the same millisecond have
+  // the same timestamp and "order by at desc" then returns them in whatever
+  // order the planner likes. For a rollback, "the previous version" has to be
+  // the newest one every single time.
+  await sql`alter table snapshots add column if not exists seq bigserial`;
+  await sql`alter table findings add column if not exists seq bigserial`;
+  migratedFor.add(sql);
 }
 
-export async function createNeonStore(databaseUrl) {
-  const sql = neon(databaseUrl);
+/**
+ * @param {string} databaseUrl
+ * @param {object} [opts]
+ * @param {Function} [opts.sqlImpl] a tagged-template SQL function, for driving
+ *   this exact code against a real Postgres in tests. Production storage is
+ *   what everything above this layer depends on, and testing only the memory
+ *   store proves nothing about it.
+ */
+export async function createNeonStore(databaseUrl, { sqlImpl = null } = {}) {
+  const sql = sqlImpl ?? neon(databaseUrl);
   await migrate(sql);
 
   const kvGet = async (k) => {
@@ -118,8 +136,8 @@ export async function createNeonStore(databaseUrl) {
     },
     async listSnapshots(workflowId) {
       const rows = workflowId
-        ? await sql`select id, workflow_id, name, reason, at from snapshots where workflow_id = ${workflowId} order by at desc limit 100`
-        : await sql`select id, workflow_id, name, reason, at from snapshots order by at desc limit 100`;
+        ? await sql`select id, workflow_id, name, reason, at from snapshots where workflow_id = ${workflowId} order by at desc, seq desc limit 100`
+        : await sql`select id, workflow_id, name, reason, at from snapshots order by at desc, seq desc limit 100`;
       return rows.map((r) => ({ id: r.id, workflowId: r.workflow_id, name: r.name, reason: r.reason, at: r.at }));
     },
     async getSnapshot(id) {
@@ -137,8 +155,8 @@ export async function createNeonStore(databaseUrl) {
     },
     async listFindings({ status = null } = {}) {
       const rows = status
-        ? await sql`select * from findings where status = ${status} order by at desc limit 100`
-        : await sql`select * from findings order by at desc limit 100`;
+        ? await sql`select * from findings where status = ${status} order by at desc, seq desc limit 100`
+        : await sql`select * from findings order by at desc, seq desc limit 100`;
       return rows.map((r) => ({ id: r.id, at: r.at, status: r.status, ...r.data }));
     },
     async updateFinding(id, patch) {

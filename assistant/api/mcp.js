@@ -37,7 +37,11 @@ export default async function handler(req, res) {
   req.body = await readBody(req);
   const { id = null, method, params } = req.body ?? {};
 
-  if (!method) return json(res, 400, rpcError(id, -32600, 'No method.'));
+  // Not just missing — the wrong TYPE. A caller sending {"method": 123} used to
+  // reach method.startsWith and take the whole route down with a 500.
+  if (typeof method !== 'string' || !method) {
+    return json(res, 400, rpcError(id, -32600, 'The "method" field must be a string naming a JSON-RPC method.'));
+  }
 
   if (method === 'initialize') {
     return json(res, 200, rpc(id, {

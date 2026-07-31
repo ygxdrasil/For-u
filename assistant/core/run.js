@@ -112,6 +112,9 @@ export async function run(input, hooks = {}) {
   const meter = createMeter({ store, capUsd: Number(config.monthlyCapUsd ?? process.env.MONTHLY_USD_CAP ?? 8) });
 
   const steps = [];
+  // Only set once a job has actually been loaded — claiming to have resumed
+  // work that could not be found would be its own small lie.
+  let resumedFrom = null;
   const result = (extra) => ({
     status: 'ok',
     reply: '',
@@ -120,6 +123,7 @@ export async function run(input, hooks = {}) {
     spend: null,
     storeKind: store.kind,
     storeDurable: store.durable,
+    resumedFrom,
     ...extra,
   });
 
@@ -196,9 +200,21 @@ export async function run(input, hooks = {}) {
     .filter((line) => line !== null && line !== undefined)
     .join('\n');
 
+  // A caller with no session (the token API, the sweep) has no conversation to
+  // carry, so an unfinished turn hands back a job id. Passing it here picks the
+  // work up exactly where it stopped instead of starting again.
+  let resumed = null;
+  if (input.resumeJobId) {
+    const job = await store.getJob(input.resumeJobId);
+    if (job?.contents?.length) {
+      resumed = job;
+      resumedFrom = input.resumeJobId;
+    }
+  }
+
   const session = input.sessionId ? await store.getSession(input.sessionId) : { id: null, messages: [] };
   const contents = [
-    ...(session.messages ?? []),
+    ...(resumed ? resumed.contents : (session.messages ?? [])),
     { role: 'user', parts: [{ text: input.text }] },
   ];
 
@@ -323,6 +339,15 @@ export async function run(input, hooks = {}) {
   if (stoppedBecause === 'deadline' || stoppedBecause === 'steps') {
     const jobId = `job_${Date.now().toString(36)}`;
     await store.saveJob({ id: jobId, sessionId: input.sessionId ?? null, contents, createdAt: new Date().toISOString(), status: 'paused' });
+
+    // The session is saved on the unfinished path too. Without this, "ask me to
+    // carry on and I will pick up from here" was a promise the code could not
+    // keep: the next message started from the state before the turn, so he
+    // repeated work he had already done and had no record of doing it.
+    if (input.sessionId) {
+      await store.saveSession({ id: input.sessionId, messages: contents.slice(-40) });
+    }
+
     const ran = steps.map((s) => s.tool).join(', ') || 'nothing yet';
     return result({
       status: 'continuing',
