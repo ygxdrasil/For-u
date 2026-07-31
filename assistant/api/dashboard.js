@@ -16,7 +16,7 @@
 import { createStore } from '../core/store.js';
 import { createN8nClient } from '../core/n8nClient.js';
 import { json, methodGuard, resolveConfig } from '../core/http.js';
-import { describeServerConfig } from '../core/settings.js';
+import { describeServerConfig, loadPrefs } from '../core/settings.js';
 import { catalogMeta } from '../core/nodeIndex.js';
 import { TIERS } from '../core/llm.js';
 import { PRICES_CHECKED_ON } from '../core/meter.js';
@@ -40,6 +40,7 @@ export default async function handler(req, res) {
   if (!session.ok) return json(res, 401, { ok: false, error: session.error });
 
   const config = await resolveConfig(req, store);
+  const prefs = await loadPrefs(store);
   const n8n = config.n8nBaseUrl && config.n8nApiKey ? createN8nClient({ baseUrl: config.n8nBaseUrl, apiKey: config.n8nApiKey }) : null;
 
   const [settings, workflows, executions, findings, spend, snapshots] = await Promise.all([
@@ -113,7 +114,10 @@ export default async function handler(req, res) {
       // unknown rather than assumed to match. Said plainly instead of implied.
       instanceVersion: null,
       instanceVersionNote: "n8n's public API does not report its version, so I cannot confirm the node index matches your instance.",
-      models: { chat: TIERS.chat.models[0], design: TIERS.design.models[0] },
+      // The models actually in use, from preferences — not the tier defaults.
+      // Reporting the default here would keep showing the old model after you
+      // changed it, which is the opposite of what a vitals panel is for.
+      models: { chat: prefs.chatModel, design: prefs.designModel, fallbacks: { chat: TIERS.chat.models, design: TIERS.design.models } },
       encryption: settings.data?.encryption ?? null,
       n8n: { configured: Boolean(n8n), reachable: reachability.data?.reachable ?? false, authorised: reachability.data?.authorised ?? null, error: reachability.error ?? reachability.data?.error ?? null },
     },
