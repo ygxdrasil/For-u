@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-31T14:36:59.145Z",
+  "generatedAt": "2026-07-31T14:49:23.856Z",
   "packages": {
     "n8n-nodes-base": "2.15.1",
     "@n8n/n8n-nodes-langchain": "2.32.4"

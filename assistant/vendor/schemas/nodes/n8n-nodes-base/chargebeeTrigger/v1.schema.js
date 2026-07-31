@@ -1,0 +1,9 @@
+// ../../../../tmp/claude-0/-home-user-For-u/0e645656-0d7d-5e05-bba0-bc0cbe899eb0/scratchpad/nodesrc/node_modules/n8n-nodes-base/dist/node-definitions/nodes/n8n-nodes-base/chargebeeTrigger/v1.schema.js
+module.exports = function getSchema({ parameters, z, expressionSchema, stringOrExpression, numberOrExpression, booleanOrExpression, resourceLocatorValueSchema, resourceMapperValueSchema, filterValueSchema, assignmentCollectionValueSchema, iDataObjectSchema }) {
+  const parametersSchema = z.object({
+    events: z.array(z.union([z.literal("*"), z.literal("card_added"), z.literal("card_deleted"), z.literal("card_expired"), z.literal("card_expiring"), z.literal("card_updated"), z.literal("customer_changed"), z.literal("customer_created"), z.literal("customer_deleted"), z.literal("invoice_created"), z.literal("invoice_deleted"), z.literal("invoice_generated"), z.literal("invoice_updated"), z.literal("payment_failed"), z.literal("payment_initiated"), z.literal("payment_refunded"), z.literal("payment_succeeded"), z.literal("refund_initiated"), z.literal("subscription_activated"), z.literal("subscription_cancellation_scheduled"), z.literal("subscription_cancelled"), z.literal("subscription_cancelling"), z.literal("subscription_changed"), z.literal("subscription_created"), z.literal("subscription_deleted"), z.literal("subscription_reactivated"), z.literal("subscription_renewal_reminder"), z.literal("subscription_renewed"), z.literal("subscription_scheduled_cancellation_removed"), z.literal("subscription_shipping_address_updated"), z.literal("subscription_started"), z.literal("subscription_trial_ending"), z.literal("transaction_created"), z.literal("transaction_deleted"), z.literal("transaction_updated")])).optional()
+  });
+  return z.object({
+    parameters: parametersSchema.optional()
+  });
+};

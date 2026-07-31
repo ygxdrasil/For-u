@@ -1,0 +1,10 @@
+// ../../../../tmp/claude-0/-home-user-For-u/0e645656-0d7d-5e05-bba0-bc0cbe899eb0/scratchpad/nodesrc/node_modules/n8n-nodes-base/dist/node-definitions/nodes/n8n-nodes-base/lemlistTrigger/v1.schema.js
+module.exports = function getSchema({ parameters, z, expressionSchema, stringOrExpression, numberOrExpression, booleanOrExpression, resourceLocatorValueSchema, resourceMapperValueSchema, filterValueSchema, assignmentCollectionValueSchema, iDataObjectSchema }) {
+  const parametersSchema = z.object({
+    event: z.union([z.literal("*"), z.literal("contacted"), z.literal("hooked"), z.literal("attracted"), z.literal("warmed"), z.literal("interested"), z.literal("skipped"), z.literal("notInterested"), z.literal("emailsSent"), z.literal("emailsOpened"), z.literal("emailsClicked"), z.literal("emailsReplied"), z.literal("emailsBounced"), z.literal("emailsSendFailed"), z.literal("emailsFailed"), z.literal("emailsUnsubscribed"), z.literal("emailsInterested"), z.literal("emailsNotInterested"), z.literal("opportunitiesDone"), z.literal("aircallCreated"), z.literal("aircallEnded"), z.literal("aircallDone"), z.literal("aircallInterested"), z.literal("aircallNotInterested"), z.literal("apiDone"), z.literal("apiInterested"), z.literal("apiNotInterested"), z.literal("apiFailed"), z.literal("linkedinVisitDone"), z.literal("linkedinVisitFailed"), z.literal("linkedinInviteDone"), z.literal("linkedinInviteFailed"), z.literal("linkedinInviteAccepted"), z.literal("linkedinReplied"), z.literal("linkedinSent"), z.literal("linkedinVoiceNoteDone"), z.literal("linkedinVoiceNoteFailed"), z.literal("linkedinInterested"), z.literal("linkedinNotInterested"), z.literal("linkedinSendFailed"), z.literal("manualInterested"), z.literal("manualNotInterested"), z.literal("paused"), z.literal("resumed"), z.literal("customDomainErrors"), z.literal("connectionIssue"), z.literal("sendLimitReached"), z.literal("lemwarmPaused"), expressionSchema]).optional(),
+    options: z.object({ campaignId: stringOrExpression.optional(), isFirst: booleanOrExpression.optional() }).optional()
+  });
+  return z.object({
+    parameters: parametersSchema.optional()
+  });
+};

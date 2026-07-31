@@ -33,7 +33,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+
+// esbuild is a build-time dependency only. The bundles it produces are
+// committed, so nothing needs it at deploy time or at runtime.
+const require_ = createRequire(import.meta.url);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -338,6 +343,7 @@ function main() {
   const packages = {};
   /** node key -> { relative file path -> definition text } */
   const typedefs = {};
+  let bundled = 0;
   /** @type {any[]} */
   const nodes = [];
 
@@ -385,11 +391,17 @@ function main() {
           // "nothing to check" — so validation passes everything and reports
           // itself healthy. Verified against tryLoadSchemaForNodeType().
           const destDir = path.join(OUT, 'schemas', 'nodes', pkgDirName, nodeName, entry.versionDir || 'v1');
-          // .schema.js files must stay as real files: the SDK resolves them by
-          // require()ing a path. The .ts documentation does not, so it is packed
-          // into one file instead of ~4,700 — file COUNT is what makes a deploy
-          // slow and a cold start sluggish, more than total size does.
+          // The .ts documentation is packed into one file rather than ~4,700 —
+          // file COUNT is what makes a deploy slow and a cold start sluggish,
+          // more than total size does.
           copyTree(srcVersionDir, destDir, { key: entry.key, typedefs });
+
+          // n8n's Zod validators must stay require()-able by path, so they
+          // cannot be packed into JSON — but each node's tree can be bundled
+          // into a single file. The SDK looks for <node>/<version>.schema
+          // BEFORE <node>/<version>/index.schema, so a bundle written at the
+          // node level is found first. 4,900 files becomes one per node.
+          bundled += bundleNodeSchema(srcVersionDir, path.join(OUT, 'schemas', 'nodes', pkgDirName, nodeName), entry.versionDir || 'v1') ? 1 : 0;
         }
       }
     }
@@ -444,8 +456,36 @@ function main() {
   console.log(`operations: ${catalog.operationCount}`);
   console.log(`packages:   ${JSON.stringify(packages)}`);
   console.log(`catalog:    ${(fs.statSync(path.join(OUT, 'catalog.json')).size / 1e6).toFixed(2)} MB`);
-  if (!CATALOG_ONLY) console.log(`schemas:    ${(size(path.join(OUT, 'schemas')) / 1e6).toFixed(2)} MB`);
+  if (!CATALOG_ONLY) {
+    console.log(`schemas:    ${(size(path.join(OUT, 'schemas')) / 1e6).toFixed(2)} MB (${bundled} bundles)`);
+    let fileCount = 0;
+    const count = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) (e.isDirectory() ? count(path.join(d, e.name)) : fileCount++); };
+    count(OUT);
+    console.log(`files:      ${fileCount}`);
+  }
   console.log(`took:       ${((Date.now() - started) / 1000).toFixed(1)}s`);
+}
+
+/**
+ * Bundles one node's Zod schema tree into a single CommonJS file.
+ * Returns false when the node has no schema entrypoint, which is not an error.
+ */
+function bundleNodeSchema(srcVersionDir, destNodeDir, versionName) {
+  const entry = exists(path.join(srcVersionDir, 'index.schema.js'))
+    ? path.join(srcVersionDir, 'index.schema.js')
+    : path.join(srcVersionDir, `${versionName}.schema.js`);
+  if (!exists(entry)) return false;
+
+  const outfile = path.join(destNodeDir, `${versionName}.schema.js`);
+  fs.mkdirSync(destNodeDir, { recursive: true });
+  try {
+    const esbuild = require_('esbuild');
+    esbuild.buildSync({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+    return true;
+  } catch (err) {
+    console.error(`  ! could not bundle ${entry}: ${err.message}`);
+    return false;
+  }
 }
 
 function copyTree(from, to, ctx, prefix = '') {
@@ -463,11 +503,9 @@ function copyTree(from, to, ctx, prefix = '') {
       // type-check ~9,000 of them and drowns: the first Vercel deploy produced
       // more than 4MB of TS2304 errors before giving up.
       (ctx.typedefs[ctx.key] ??= {})[`${prefix}${e.name}`] = fs.readFileSync(src, 'utf8');
-    } else if (e.name.endsWith('.schema.js')) {
-      // These must keep their .js extension — the SDK resolves them by
-      // require()ing the path without an extension.
-      copyFileEnsuring(src, path.join(to, e.name));
     }
+    // Loose .schema.js files are deliberately NOT copied: they are bundled
+    // per node by bundleNodeSchema() instead.
   }
 }
 

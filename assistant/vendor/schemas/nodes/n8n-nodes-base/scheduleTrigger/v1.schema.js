@@ -1,0 +1,9 @@
+// ../../../../tmp/claude-0/-home-user-For-u/0e645656-0d7d-5e05-bba0-bc0cbe899eb0/scratchpad/nodesrc/node_modules/n8n-nodes-base/dist/node-definitions/nodes/n8n-nodes-base/scheduleTrigger/v1.schema.js
+module.exports = function getSchema({ parameters, z, expressionSchema, stringOrExpression, numberOrExpression, booleanOrExpression, resourceLocatorValueSchema, resourceMapperValueSchema, filterValueSchema, assignmentCollectionValueSchema, iDataObjectSchema }) {
+  const parametersSchema = z.object({
+    rule: z.object({ interval: z.array(z.object({ field: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days"), z.literal("weeks"), z.literal("months"), z.literal("cronExpression"), expressionSchema]).optional(), secondsInterval: numberOrExpression.optional(), minutesInterval: numberOrExpression.optional(), hoursInterval: numberOrExpression.optional(), daysInterval: numberOrExpression.optional(), weeksInterval: numberOrExpression.optional(), monthsInterval: numberOrExpression.optional(), triggerAtDayOfMonth: numberOrExpression.optional(), triggerAtDay: z.array(z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(0)])).optional(), triggerAtHour: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(9), z.literal(10), z.literal(11), z.literal(12), z.literal(13), z.literal(14), z.literal(15), z.literal(16), z.literal(17), z.literal(18), z.literal(19), z.literal(20), z.literal(21), z.literal(22), z.literal(23), expressionSchema]).optional(), triggerAtMinute: numberOrExpression.optional(), expression: stringOrExpression.optional() })).optional() }).optional()
+  });
+  return z.object({
+    parameters: parametersSchema.optional()
+  });
+};
