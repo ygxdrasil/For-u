@@ -171,3 +171,38 @@ test('the session secret is created once and then stays stable', async () => {
   assert.equal(a, b, 'a changing secret would sign everyone out on every request');
   assert.ok(a.length >= 32);
 });
+
+test('preferences are clamped on save so a bad value cannot reach the running system', async () => {
+  const { savePrefs, loadPrefs, DEFAULT_PREFS } = await import('../core/settings.js');
+  const store = createMemoryStore();
+
+  const saved = await savePrefs(store, {
+    thinkingBudget: 999999,
+    maxOutputTokens: 8192,
+    deadlineMs: 600000,
+    maxSteps: -5,
+    accent: 'not-a-colour',
+    chatModel: 'gemini-3.5-flash-lite',
+    nonsenseKey: 'ignored',
+  });
+
+  // The invariant that matters most: a thinking budget at or above the output
+  // ceiling returns an empty string from a request that looks entirely healthy.
+  assert.ok(saved.thinkingBudget < saved.maxOutputTokens, 'thinking budget must stay below the output ceiling');
+  assert.equal(saved.deadlineMs, 55000, 'deadline must stay under the serverless function limit');
+  assert.equal(saved.maxSteps, 4, 'step count must stay positive');
+  assert.equal(saved.accent, DEFAULT_PREFS.accent, 'an unknown enum value falls back to the default');
+  assert.equal(saved.chatModel, 'gemini-3.5-flash-lite', 'a valid value is kept');
+  assert.equal(saved.nonsenseKey, undefined, 'unknown keys are dropped rather than stored');
+
+  assert.deepEqual(await loadPrefs(store), saved);
+});
+
+test('preferences round-trip and default when unset', async () => {
+  const { loadPrefs, savePrefs, DEFAULT_PREFS } = await import('../core/settings.js');
+  const store = createMemoryStore();
+  assert.deepEqual(await loadPrefs(store), DEFAULT_PREFS);
+  await savePrefs(store, { allowProbes: false });
+  assert.equal((await loadPrefs(store)).allowProbes, false);
+  assert.equal((await loadPrefs(store)).dryRunDisablesWrites, true, 'unrelated prefs keep their defaults');
+});

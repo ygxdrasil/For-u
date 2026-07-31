@@ -16,13 +16,12 @@ import { createLlm, TIERS } from './llm.js';
 import { createN8nClient } from './n8nClient.js';
 import { buildToolRegistry } from './tools.js';
 import { catalogMeta } from './nodeIndex.js';
+import { loadPrefs, DEFAULT_PREFS } from './settings.js';
 import { BudgetExceededError } from './meter.js';
 
 /** Serverless kills the request at its limit and returns NOTHING — not an
  *  error, not a partial response, nothing. Stop before that and report what we
  *  have. An answer about three of four things beats silence about all four. */
-const DEFAULT_DEADLINE_MS = 50_000;
-const MAX_STEPS = 24;
 
 const NOOP_HOOKS = {
   onStatus: () => {},
@@ -77,12 +76,22 @@ Be brief. The user reads fast and types fast. Lead with the answer.`;
 export async function run(input, hooks = {}) {
   const h = { ...NOOP_HOOKS, ...hooks };
   const startedAt = Date.now();
-  const deadlineMs = input.deadlineMs ?? DEFAULT_DEADLINE_MS;
-  const deadlineAt = startedAt + deadlineMs;
-  const timeLeft = () => deadlineAt - Date.now();
+  const timeLeftFrom = (deadlineAt) => deadlineAt - Date.now();
 
   const config = input.config ?? {};
   const store = input.store ?? (await createStore());
+
+  // Preferences are read from the store, not the request, so the headless
+  // endpoint and the sweep behave exactly like the browser does. They are
+  // clamped on save — this code never has to defend against a bad value.
+  let prefs = DEFAULT_PREFS;
+  try {
+    prefs = await loadPrefs(store);
+  } catch {
+    // A settings read failure must not stop the assistant working; defaults
+    // are the same ones the settings page starts from.
+  }
+
   const meter = createMeter({ store, capUsd: Number(config.monthlyCapUsd ?? process.env.MONTHLY_USD_CAP ?? 8) });
 
   const steps = [];
@@ -119,9 +128,21 @@ export async function run(input, hooks = {}) {
     n8nStatus = { configured: true, baseUrl: n8n.baseUrl };
   }
 
+  // Tiers built from preferences: the cheap turn and the design turn are
+  // separately configurable, because one flat setting for both is a ceiling on
+  // how good it can be at the hard half.
+  const tiers = {
+    chat: { models: [prefs.chatModel, ...TIERS.chat.models.filter((m) => m !== prefs.chatModel)], maxOutputTokens: 4096, thinkingBudget: 0 },
+    design: {
+      models: [prefs.designModel, ...TIERS.design.models.filter((m) => m !== prefs.designModel)],
+      maxOutputTokens: prefs.maxOutputTokens,
+      thinkingBudget: prefs.thinkingBudget,
+    },
+  };
+
   let llm;
   try {
-    llm = createLlm({ apiKey: geminiKey, meter, clientFactory: input.llmClientFactory ?? null });
+    llm = createLlm({ apiKey: geminiKey, meter, tiers, clientFactory: input.llmClientFactory ?? null });
   } catch (err) {
     return result({ status: 'misconfigured', reply: `Model configuration is wrong and I stopped before spending anything: ${err.message}` });
   }
@@ -130,6 +151,7 @@ export async function run(input, hooks = {}) {
     n8n,
     store,
     approvals: input.approvals ?? [],
+    prefs,
     onStatus: (s) => h.onStatus(s),
   });
   const byName = new Map(tools.map((t) => [t.name, t]));
@@ -157,7 +179,11 @@ export async function run(input, hooks = {}) {
   let stoppedBecause = null;
   let tier = input.tier ?? pickTier(input.text);
 
-  for (let step = 0; step < MAX_STEPS; step++) {
+  // Deadline and step cap come from preferences, both clamped on save.
+  const deadlineAt = startedAt + Math.min(input.deadlineMs ?? prefs.deadlineMs, prefs.deadlineMs);
+  const timeLeft = () => timeLeftFrom(deadlineAt);
+
+  for (let step = 0; step < prefs.maxSteps; step++) {
     if (timeLeft() < 8000) {
       stoppedBecause = 'deadline';
       break;

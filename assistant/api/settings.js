@@ -8,7 +8,7 @@
 
 import { createStore } from '../core/store.js';
 import { json, methodGuard, readBody } from '../core/http.js';
-import { describeServerConfig, saveServerConfig } from '../core/settings.js';
+import { describeServerConfig, saveServerConfig, savePrefs } from '../core/settings.js';
 import { requireSession } from './auth.js';
 
 export default async function handler(req, res) {
@@ -36,12 +36,16 @@ export default async function handler(req, res) {
     if (req.body[field] !== undefined) patch[field] = req.body[field];
   }
 
-  if (!Object.keys(patch).length) {
+  const hasPrefs = req.body.prefs && typeof req.body.prefs === 'object';
+
+  if (!Object.keys(patch).length && !hasPrefs) {
     return json(res, 400, { ok: false, error: 'Nothing to save.' });
   }
 
   try {
-    await saveServerConfig(store, patch);
+    if (Object.keys(patch).length) await saveServerConfig(store, patch);
+    // Clamped on the way in, so a bad value can never reach the running system.
+    if (hasPrefs) await savePrefs(store, req.body.prefs);
   } catch (err) {
     return json(res, 500, { ok: false, error: `Could not save settings: ${err.message}` });
   }

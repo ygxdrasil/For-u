@@ -22,8 +22,99 @@ const KEY_SESSION_SECRET = 'auth:session_secret';
 const KEY_DB_ENC = 'auth:db_encryption_key';
 const KEY_SETTINGS = 'settings:secrets';
 
+const KEY_PREFS = 'settings:prefs';
+
 const SECRET_FIELDS = ['n8nApiKey', 'geminiApiKey'];
 const PLAIN_FIELDS = ['n8nBaseUrl', 'monthlyCapUsd'];
+
+/**
+ * Preferences that actually change behaviour. Every one is clamped on save, so
+ * a bad value in the database can never put the running system into a state
+ * the code does not expect — particularly the thinking budget, where a value
+ * above the output ceiling returns an empty string from a healthy-looking
+ * request.
+ */
+export const DEFAULT_PREFS = {
+  // model
+  chatModel: 'gemini-3.1-flash-lite',
+  designModel: 'gemini-3.6-flash',
+  thinkingBudget: 8192,
+  maxOutputTokens: 32768,
+
+  // pipeline
+  deadlineMs: 50000,
+  maxSteps: 24,
+
+  // behaviour
+  allowProbes: true, // read-only probe workflows for grounding picker values
+  dryRunDisablesWrites: true, // never negotiable by accident
+  autoApplySafeFixes: false, // repairs are prepared, not applied
+  testTagPrefix: 'assistant',
+
+  // monitoring
+  sweepLimit: 10,
+
+  // interface
+  accent: 'cyan', // cyan | violet | amber | green | magenta
+  refreshSeconds: 30,
+  density: 'compact', // compact | roomy
+  motion: true,
+  showToolStream: true,
+};
+
+const CLAMP = {
+  thinkingBudget: [0, 24576],
+  maxOutputTokens: [1024, 65536],
+  deadlineMs: [10000, 55000],
+  maxSteps: [4, 60],
+  sweepLimit: [1, 50],
+  refreshSeconds: [10, 600],
+  monthlyCapUsd: [0, 1000],
+};
+
+const ENUMS = {
+  accent: ['cyan', 'violet', 'amber', 'green', 'magenta'],
+  density: ['compact', 'roomy'],
+};
+
+function clampPrefs(input) {
+  const out = { ...DEFAULT_PREFS };
+  for (const [k, v] of Object.entries(input ?? {})) {
+    if (!(k in DEFAULT_PREFS)) continue;
+    if (typeof DEFAULT_PREFS[k] === 'boolean') {
+      out[k] = Boolean(v);
+    } else if (typeof DEFAULT_PREFS[k] === 'number') {
+      const n = Number(v);
+      if (!Number.isFinite(n)) continue;
+      const [lo, hi] = CLAMP[k] ?? [-Infinity, Infinity];
+      out[k] = Math.min(hi, Math.max(lo, n));
+    } else if (ENUMS[k]) {
+      if (ENUMS[k].includes(v)) out[k] = v;
+    } else if (typeof v === 'string') {
+      out[k] = v.slice(0, 64);
+    }
+  }
+
+  // The invariant that matters: thinking is billed out of the output
+  // allowance, so a budget at or above the ceiling returns an empty string
+  // from a request that reads as entirely healthy. Enforced here rather than
+  // trusted to whoever edits the settings page.
+  if (out.thinkingBudget >= out.maxOutputTokens) {
+    out.thinkingBudget = Math.max(0, Math.floor(out.maxOutputTokens / 2));
+  }
+  return out;
+}
+
+export async function loadPrefs(store) {
+  return clampPrefs((await store.getKv(KEY_PREFS)) ?? {});
+}
+
+export async function savePrefs(store, patch) {
+  const current = await loadPrefs(store);
+  const next = clampPrefs({ ...current, ...patch });
+  await store.setKv(KEY_PREFS, next);
+  return next;
+}
 
 /** The session signing secret, created once and then stable. */
 export async function sessionSecret(store) {
@@ -121,6 +212,7 @@ export async function describeServerConfig(store) {
   const config = await loadServerConfig(store);
   const { source } = await resolveEncryption(store);
   return {
+    prefs: await loadPrefs(store),
     n8nBaseUrl: config.n8nBaseUrl ?? null,
     monthlyCapUsd: config.monthlyCapUsd ?? Number(process.env.MONTHLY_USD_CAP ?? 8),
     n8nApiKey: describeSecret(config.n8nApiKey),

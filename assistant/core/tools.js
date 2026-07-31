@@ -33,7 +33,7 @@ const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
  * @param {(s:string)=>void} ctx.onStatus
  */
 export function buildToolRegistry(ctx) {
-  const { n8n = null, store, approvals = [], onStatus = () => {} } = ctx;
+  const { n8n = null, store, approvals = [], prefs = {}, onStatus = () => {} } = ctx;
 
   const needsN8n = () =>
     fail('No n8n connection is configured. Paste your n8n base URL and API key in Settings first.');
@@ -181,7 +181,14 @@ export function buildToolRegistry(ctx) {
         },
         required: ['nodeType', 'credentialType', 'credentialId'],
       },
-      handler: async (args) => runProbe({ n8n, store, onStatus, ...args }),
+      handler: async (args) => {
+        if (prefs.allowProbes === false) {
+          return fail(
+            'Probe workflows are switched off in settings, so I cannot read the real list of values. I will not guess an id — pick the value in n8n and tell me what it is.',
+          );
+        }
+        return runProbe({ n8n, store, onStatus, prefs, ...args });
+      },
     },
 
     {
@@ -270,7 +277,7 @@ export function buildToolRegistry(ctx) {
         },
         required: ['id'],
       },
-      handler: async ({ id, pinData }) => dryRun({ n8n, store, onStatus, id, pinData }),
+      handler: async ({ id, pinData }) => dryRun({ n8n, store, onStatus, prefs, id, pinData }),
     },
 
     {
@@ -435,7 +442,7 @@ function summariseExecution(execution) {
  * have received. The test copy is a separate workflow — the original is never
  * modified to run a test.
  */
-async function dryRun({ n8n, store, onStatus, id, pinData }) {
+async function dryRun({ n8n, store, onStatus, prefs = {}, id, pinData }) {
   if (!n8n) return fail('No n8n connection is configured.');
 
   let original;
@@ -445,11 +452,14 @@ async function dryRun({ n8n, store, onStatus, id, pinData }) {
     return fail(`Could not fetch workflow ${id}: ${e.message}`);
   }
 
-  const writers = writeNodesIn(original);
+  // Disabling writes is the default and stays on unless deliberately turned
+  // off in settings. With it off, a dry run can reach real systems.
+  const disableWrites = prefs.dryRunDisablesWrites !== false;
+  const writers = disableWrites ? writeNodesIn(original) : [];
   onStatus(writers.length ? `Disabling ${writers.length} write node(s) for the dry run…` : 'No write nodes to disable.');
 
   const testWorkflow = {
-    name: `${original.name} [test]`,
+    name: `${original.name} [${prefs.testTagPrefix ?? 'assistant'} test]`,
     nodes: (original.nodes ?? []).map((n) => (writers.includes(n.name) ? { ...n, disabled: true } : { ...n })),
     connections: original.connections ?? {},
     settings: original.settings ?? {},
@@ -506,7 +516,7 @@ async function dryRun({ n8n, store, onStatus, id, pinData }) {
  * user's tokens ever leaving n8n. Builds a minimal read-only workflow, runs it,
  * reads the output, then archives it.
  */
-async function runProbe({ n8n, store, onStatus, nodeType, resource, operation, credentialType, credentialId, parameters }) {
+async function runProbe({ n8n, store, onStatus, prefs = {}, nodeType, resource, operation, credentialType, credentialId, parameters }) {
   if (!n8n) return fail('No n8n connection is configured.');
 
   const catalogNode = getNode(nodeType);
@@ -518,7 +528,7 @@ async function runProbe({ n8n, store, onStatus, nodeType, resource, operation, c
   }
 
   const probe = {
-    name: `[assistant probe] ${catalogNode.displayName} ${resource ?? ''} ${op}`.trim(),
+    name: `[${prefs.testTagPrefix ?? 'assistant'} probe] ${catalogNode.displayName} ${resource ?? ''} ${op}`.trim(),
     nodes: [
       { id: 'trigger', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
       {

@@ -11,14 +11,21 @@
 import { createStore } from '../core/store.js';
 import { authenticateAdmin, mintToken } from '../core/auth.js';
 import { json, methodGuard, readBody } from '../core/http.js';
+import { requireSession } from './auth.js';
 
 export default async function handler(req, res) {
   if (!methodGuard(req, res, ['GET', 'POST'])) return;
 
-  const admin = authenticateAdmin(req);
-  if (!admin.ok) return json(res, 401, { ok: false, error: admin.error });
-
   const store = await createStore();
+
+  // Signed in through the browser, OR holding the bootstrap AGENT_TOKEN. The
+  // second path exists so you cannot lock yourself out when the session store
+  // is unavailable.
+  const session = await requireSession(req, store);
+  if (!session.ok) {
+    const admin = authenticateAdmin(req);
+    if (!admin.ok) return json(res, 401, { ok: false, error: `${session.error} ${admin.error}` });
+  }
 
   if (req.method === 'GET') {
     return json(res, 200, { ok: true, tokens: await store.listTokens(), durable: store.durable });

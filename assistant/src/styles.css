@@ -304,3 +304,79 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ======================================================================
+ * Accent overrides — the idle hue, chosen in settings and stored server
+ * side so it follows you across browsers. Active state colours (thinking,
+ * acting, waiting) still win, because state outranks taste.
+ * ==================================================================== */
+:root[data-accent="violet"][data-state="idle"]  { --state: #a78bfa; --state-soft: rgba(167,139,250,.10); --state-glow: rgba(167,139,250,.30); }
+:root[data-accent="amber"][data-state="idle"]   { --state: #fbbf24; --state-soft: rgba(251,191,36,.10);  --state-glow: rgba(251,191,36,.30); }
+:root[data-accent="green"][data-state="idle"]   { --state: #34d399; --state-soft: rgba(52,211,153,.10);  --state-glow: rgba(52,211,153,.30); }
+:root[data-accent="magenta"][data-state="idle"] { --state: #f472b6; --state-soft: rgba(244,114,182,.10); --state-glow: rgba(244,114,182,.30); }
+
+:root[data-density="roomy"] { font-size: 15px; }
+:root[data-density="roomy"] .panel { padding: 18px; }
+
+/* ------------------------------------------------------------ dense rows */
+
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; font-size: 12px; }
+.kv > div { display: contents; }
+.kv dt, .kv .k { color: var(--dimmer); padding: 3px 0; border-bottom: 1px solid var(--line); }
+.kv dd, .kv .v { margin: 0; text-align: right; font-family: ui-monospace, monospace; font-size: 11.5px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+
+.dot-s { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.dot-s.ok { background: var(--worked); box-shadow: 0 0 6px var(--worked); }
+.dot-s.bad { background: var(--failed); box-shadow: 0 0 6px var(--failed); }
+.dot-s.unk { background: var(--unconfirmed); box-shadow: 0 0 6px var(--unconfirmed); }
+.dot-s.off { background: var(--dimmer); }
+
+/* execution stream: one line each, scannable at a glance */
+.stream { max-height: 260px; overflow-y: auto; font-size: 12px; }
+.stream .ex { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 10px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.stream .ex .t { color: var(--dimmer); font-family: ui-monospace, monospace; font-size: 11px; }
+.stream .ex .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+.stream .ex .d { color: var(--dimmer); font-family: ui-monospace, monospace; font-size: 11px; }
+
+/* success ratio micro-bar on a workflow card */
+.ratio { height: 3px; border-radius: 2px; background: rgba(255,255,255,.06); overflow: hidden; display: flex; margin-top: 7px; }
+.ratio i { display: block; height: 100%; }
+.ratio .good { background: var(--worked); }
+.ratio .bad { background: var(--failed); }
+
+/* sparkline */
+.spark { display: flex; align-items: flex-end; gap: 1.5px; height: 20px; margin-top: 6px; }
+.spark span { flex: 1; background: var(--state); opacity: .55; border-radius: 1px; min-height: 1px; }
+
+/* ------------------------------------------------------------- controls */
+
+.setting { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.setting:last-child { border-bottom: 0; }
+.setting .name { font-size: 12.5px; }
+.setting .hint { font-size: 11px; color: var(--dimmer); }
+.setting .ctl { display: flex; align-items: center; gap: 6px; }
+.setting input[type="number"], .setting input[type="text"] { width: 120px; padding: 5px 8px; font-size: 12px; }
+.setting select { background: rgba(5,7,13,.7); border: 1px solid var(--line); color: var(--text); border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 12px; }
+.setting select:focus { outline: none; border-color: var(--state); }
+
+/* toggle */
+.toggle { width: 38px; height: 21px; border-radius: 20px; border: 1px solid var(--line); background: rgba(5,7,13,.7); position: relative; cursor: pointer; padding: 0; transition: background .2s, border-color .2s; }
+.toggle i { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: var(--dimmer); transition: transform .18s ease, background .2s; }
+.toggle[aria-checked="true"] { background: var(--state-soft); border-color: var(--state); }
+.toggle[aria-checked="true"] i { transform: translateX(17px); background: var(--state); }
+
+/* segmented */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { background: transparent; color: var(--dim); border: 0; border-radius: 0; padding: 5px 10px; font-size: 11.5px; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--state-soft); color: var(--state); }
+
+/* swatches */
+.swatches { display: flex; gap: 6px; }
+.swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.swatch[aria-pressed="true"] { border-color: var(--text); }
+
+/* Motion off, by preference rather than only by OS setting. */
+:root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
