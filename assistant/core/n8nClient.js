@@ -1,0 +1,282 @@
+/**
+ * n8n public API client.
+ *
+ * Two properties of this file are load-bearing and both are enforced by tests:
+ *
+ * 1. There is no DELETE. Not a delete method, not a delete helper, not a
+ *    request() call that could be handed the string. Retiring a workflow means
+ *    deactivate + archive, and every update snapshots the previous version
+ *    first. tests/no-delete.test.js greps this file and fails the build if the
+ *    word ever appears as an HTTP method.
+ *
+ * 2. Every state-changing call is read back. A 200 from n8n means the request
+ *    was accepted, not that the thing is true.
+ */
+
+/** Minimum gap between consecutive calls to the same path prefix.
+ *  n8n (and the proxies people put in front of it) will silently drop or
+ *  mis-order rapid consecutive writes to the same resource. 300ms costs
+ *  nothing on a workflow build and removes a whole class of phantom failure. */
+const MIN_GAP_MS = 300;
+
+const lastCallAt = new Map();
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function pace(key) {
+  const last = lastCallAt.get(key) ?? 0;
+  const wait = MIN_GAP_MS - (Date.now() - last);
+  if (wait > 0) await sleep(wait);
+  lastCallAt.set(key, Date.now());
+}
+
+export class N8nError extends Error {
+  constructor(message, { status = null, body = null, url = null } = {}) {
+    super(message);
+    this.name = 'N8nError';
+    this.status = status;
+    this.body = body;
+    this.url = url;
+  }
+}
+
+export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
+  if (!baseUrl) throw new Error('n8n base URL is required');
+  if (!apiKey) throw new Error('n8n API key is required');
+
+  const root = String(baseUrl).replace(/\/+$/, '');
+  const api = `${root}/api/v1`;
+
+  async function request(method, path, { body = null, query = null, timeoutMs = 20000 } = {}) {
+    if (method === 'DELETE') {
+      // Unreachable by construction — nothing in this module passes DELETE.
+      // Present as a tripwire in case someone adds a caller later.
+      throw new Error('This client never deletes. Deactivate and archive instead.');
+    }
+
+    const url = new URL(`${api}${path}`);
+    if (query) {
+      for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+      }
+    }
+
+    await pace(path.split('/')[1] ?? path);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    let res;
+    try {
+      res = await fetchImpl(url.toString(), {
+        method,
+        headers: {
+          'X-N8N-API-KEY': apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: body === null ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      throw new N8nError(`Request to ${path} failed: ${err.message}`, { url: url.toString() });
+    }
+    clearTimeout(timer);
+
+    const text = await res.text();
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { raw: text };
+    }
+
+    if (!res.ok) {
+      throw new N8nError(`n8n returned ${res.status} for ${method} ${path}: ${parsed?.message ?? text.slice(0, 300)}`, {
+        status: res.status,
+        body: parsed,
+        url: url.toString(),
+      });
+    }
+    return parsed;
+  }
+
+  // -------------------------------------------------------------------------
+  // reads
+
+  async function listWorkflows({ limit = 50, active = null, tags = null, cursor = null } = {}) {
+    return request('GET', '/workflows', { query: { limit, active, tags, cursor } });
+  }
+
+  async function getWorkflow(id) {
+    return request('GET', `/workflows/${encodeURIComponent(id)}`);
+  }
+
+  async function listCredentials() {
+    // The public API deliberately never returns credential secrets, only names,
+    // ids and types. That is exactly what we need and nothing more.
+    return request('GET', '/credentials');
+  }
+
+  async function listExecutions({ status = null, workflowId = null, limit = 20, cursor = null, includeData = false } = {}) {
+    return request('GET', '/executions', { query: { status, workflowId, limit, cursor, includeData } });
+  }
+
+  async function getExecution(id, { includeData = true } = {}) {
+    return request('GET', `/executions/${encodeURIComponent(id)}`, { query: { includeData } });
+  }
+
+  async function listTags() {
+    return request('GET', '/tags');
+  }
+
+  // -------------------------------------------------------------------------
+  // writes — each one reads back
+
+  async function createWorkflow(workflow) {
+    // Always created inactive. Activation is a separate, explicit act.
+    const payload = { ...workflow, active: false };
+    const created = await request('POST', '/workflows', { body: payload });
+
+    const readBack = await getWorkflow(created.id).catch(() => null);
+    return {
+      workflow: created,
+      confirmed: Boolean(readBack?.id),
+      readBack,
+    };
+  }
+
+  /**
+   * Update a workflow. The caller is responsible for having snapshotted the
+   * previous version first — see workflowStore.snapshot(). This function will
+   * refuse to run without proof that happened.
+   */
+  async function updateWorkflow(id, workflow, { snapshotId = null } = {}) {
+    if (!snapshotId) {
+      throw new Error(
+        'updateWorkflow requires a snapshotId. Snapshot the current version before overwriting it — the previous version must always be recoverable.',
+      );
+    }
+    const updated = await request('PUT', `/workflows/${encodeURIComponent(id)}`, { body: workflow });
+    const readBack = await getWorkflow(id).catch(() => null);
+    return { workflow: updated, confirmed: Boolean(readBack?.id), readBack, snapshotId };
+  }
+
+  /**
+   * Activate or deactivate. Read back and, if the read disagrees, try once
+   * more before reporting — a single disagreeing read is more often a race
+   * than a real failure.
+   */
+  async function setActive(id, active) {
+    const path = active ? `/workflows/${encodeURIComponent(id)}/activate` : `/workflows/${encodeURIComponent(id)}/deactivate`;
+    await request('POST', path);
+
+    let readBack = await getWorkflow(id).catch(() => null);
+    if (readBack && readBack.active !== active) {
+      await sleep(MIN_GAP_MS * 2);
+      readBack = await getWorkflow(id).catch(() => null);
+    }
+
+    return {
+      requested: active,
+      actual: readBack?.active ?? null,
+      confirmed: readBack?.active === active,
+      readBack,
+    };
+  }
+
+  /** Archive rather than delete. Preserves the workflow and its history. */
+  async function archiveWorkflow(id) {
+    try {
+      await request('POST', `/workflows/${encodeURIComponent(id)}/archive`);
+    } catch (err) {
+      // Older instances have no archive endpoint. Fall back to deactivating and
+      // tagging, which is reversible and destroys nothing.
+      if (err.status === 404 || err.status === 405) {
+        await setActive(id, false);
+        return { archived: false, deactivated: true, reason: 'This n8n has no archive endpoint; deactivated and left in place instead.' };
+      }
+      throw err;
+    }
+    const readBack = await getWorkflow(id).catch(() => null);
+    return { archived: readBack?.isArchived ?? null, confirmed: readBack?.isArchived === true, readBack };
+  }
+
+  /**
+   * Run a workflow through the public API.
+   *
+   * Reports disagree about whether POST /workflows/:id/run or /execute exists,
+   * and it varies by version — so probe rather than believe either. Whatever
+   * happens, the outcome distinguishes "ran" from "this instance won't let me
+   * run it from the API", which is not the same as "it's broken".
+   */
+  async function runWorkflow(id, { body = {} } = {}) {
+    const attempts = [
+      { method: 'POST', path: `/workflows/${encodeURIComponent(id)}/run` },
+      { method: 'POST', path: `/workflows/${encodeURIComponent(id)}/execute` },
+    ];
+    const tried = [];
+
+    for (const attempt of attempts) {
+      try {
+        const result = await request(attempt.method, attempt.path, { body, timeoutMs: 60000 });
+        return { ran: true, via: attempt.path, result, tried };
+      } catch (err) {
+        tried.push({ path: attempt.path, status: err.status ?? null, message: err.message });
+        // 404/405 means this endpoint isn't here; anything else is a real error
+        // about this workflow and should not be masked by trying the next path.
+        if (err.status !== 404 && err.status !== 405) {
+          return { ran: false, reason: 'error', error: err.message, tried };
+        }
+      }
+    }
+
+    return {
+      ran: false,
+      reason: 'unsupported',
+      error:
+        "This n8n's public API has no endpoint for running a workflow (tried /run and /execute). The workflow is saved and can be run from the n8n UI, or by calling its webhook if it has one. That is a limitation of the API, not a fault in the workflow.",
+      tried,
+    };
+  }
+
+  /** Most recent execution for a workflow — how we read back a manual run. */
+  async function latestExecution(workflowId) {
+    const list = await listExecutions({ workflowId, limit: 1, includeData: false });
+    const first = list?.data?.[0] ?? null;
+    if (!first) return null;
+    return getExecution(first.id, { includeData: true });
+  }
+
+  /** Probe the instance: is it reachable, and does the key work? */
+  async function ping() {
+    try {
+      const res = await listWorkflows({ limit: 1 });
+      return { ok: true, reachable: true, authorised: true, workflowCount: res?.data?.length ?? null };
+    } catch (err) {
+      if (err.status === 401 || err.status === 403) {
+        return { ok: false, reachable: true, authorised: false, error: 'n8n is reachable but rejected the API key.' };
+      }
+      return { ok: false, reachable: false, authorised: null, error: err.message };
+    }
+  }
+
+  return {
+    baseUrl: root,
+    request,
+    listWorkflows,
+    getWorkflow,
+    listCredentials,
+    listExecutions,
+    getExecution,
+    listTags,
+    createWorkflow,
+    updateWorkflow,
+    setActive,
+    archiveWorkflow,
+    runWorkflow,
+    latestExecution,
+    ping,
+  };
+}

@@ -1,0 +1,28 @@
+{
+  "name": "n8n-assistant",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "An assistant that designs, builds, tests and repairs n8n workflows. Headless core, web UI is one caller.",
+  "scripts": {
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "node scripts/stamp-build.mjs && node node_modules/vite/bin/vite.js build",
+    "test": "node --test tests/*.test.js",
+    "selftest": "node scripts/selftest.mjs",
+    "build:nodes": "node scripts/build-node-index.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^2.15.0",
+    "@n8n/workflow-sdk": "^0.25.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^6.2.3"
+  },
+  "comments": {
+    "no-npx": "Every script is invoked as `node <path>` rather than a bare CLI name, because .cmd/.bat shims are blocked by group policy on the target machine.",
+    "node-packages": "n8n-nodes-base and @n8n/n8n-nodes-langchain are deliberately NOT dependencies. They pull ~1.7GB of transitive deps and are only needed to regenerate vendor/. Install them with --no-save when regenerating; see README."
+  }
+}
