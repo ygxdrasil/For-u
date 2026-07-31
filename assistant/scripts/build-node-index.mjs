@@ -310,7 +310,7 @@ function buildNode({ pkgName, nodeDir, nodeName }) {
       // Path relative to the schemas root, so get_node_schema can find it.
       // `.txt` is appended to match what copyTree() emits — see the comment
       // there for why these are not shipped as .ts.
-      file: `${path.relative(versionDir, file).split(path.sep).join('/')}.txt`,
+      file: path.relative(versionDir, file).split(path.sep).join('/'),
     });
   }
 
@@ -324,6 +324,7 @@ function buildNode({ pkgName, nodeDir, nodeName }) {
     version,
     versionDir: versionDirName,
     pkg: pkgName,
+    key: `${pkgName}/${nodeName}/${versionDirName || 'v1'}`,
     credentials: [...credentials],
     operations,
   };
@@ -335,6 +336,8 @@ function buildNode({ pkgName, nodeDir, nodeName }) {
 function main() {
   const started = Date.now();
   const packages = {};
+  /** node key -> { relative file path -> definition text } */
+  const typedefs = {};
   /** @type {any[]} */
   const nodes = [];
 
@@ -382,7 +385,11 @@ function main() {
           // "nothing to check" — so validation passes everything and reports
           // itself healthy. Verified against tryLoadSchemaForNodeType().
           const destDir = path.join(OUT, 'schemas', 'nodes', pkgDirName, nodeName, entry.versionDir || 'v1');
-          copyTree(srcVersionDir, destDir);
+          // .schema.js files must stay as real files: the SDK resolves them by
+          // require()ing a path. The .ts documentation does not, so it is packed
+          // into one file instead of ~4,700 — file COUNT is what makes a deploy
+          // slow and a cold start sluggish, more than total size does.
+          copyTree(srcVersionDir, destDir, { key: entry.key, typedefs });
         }
       }
     }
@@ -408,6 +415,10 @@ function main() {
   if (!CATALOG_ONLY) {
     fs.mkdirSync(path.join(OUT, 'schemas'), { recursive: true });
     fs.writeFileSync(path.join(OUT, 'schemas', 'package.json'), JSON.stringify({ type: 'commonjs' }, null, 2));
+  }
+
+  if (!CATALOG_ONLY) {
+    fs.writeFileSync(path.join(OUT, 'typedefs.json'), JSON.stringify(typedefs));
   }
 
   fs.writeFileSync(path.join(OUT, 'catalog.json'), JSON.stringify(catalog));
@@ -437,11 +448,11 @@ function main() {
   console.log(`took:       ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 
-function copyTree(from, to) {
+function copyTree(from, to, ctx, prefix = '') {
   for (const e of fs.readdirSync(from, { withFileTypes: true })) {
     const src = path.join(from, e.name);
     if (e.isDirectory()) {
-      copyTree(src, path.join(to, e.name));
+      copyTree(src, path.join(to, e.name), ctx, `${prefix}${e.name}/`);
     } else if (e.name.endsWith('.ts')) {
       // Emitted as .ts.txt, NOT .ts.
       //
@@ -451,7 +462,7 @@ function copyTree(from, to) {
       // a .ts extension, every build system that scans the project tries to
       // type-check ~9,000 of them and drowns: the first Vercel deploy produced
       // more than 4MB of TS2304 errors before giving up.
-      copyFileEnsuring(src, path.join(to, `${e.name}.txt`));
+      (ctx.typedefs[ctx.key] ??= {})[`${prefix}${e.name}`] = fs.readFileSync(src, 'utf8');
     } else if (e.name.endsWith('.schema.js')) {
       // These must keep their .js extension — the SDK resolves them by
       // require()ing the path without an extension.

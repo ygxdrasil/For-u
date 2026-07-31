@@ -9,6 +9,7 @@
 import { createStore } from '../core/store.js';
 import { json, methodGuard, readBody } from '../core/http.js';
 import { describeServerConfig, saveServerConfig, savePrefs } from '../core/settings.js';
+import { activeFacts, remember, correct, retire } from '../core/memory.js';
 import { requireSession } from './auth.js';
 
 export default async function handler(req, res) {
@@ -22,6 +23,7 @@ export default async function handler(req, res) {
     return json(res, 200, {
       ok: true,
       settings: await describeServerConfig(store),
+      memory: await activeFacts(store),
       durable: store.durable,
       storeNote: store.note ?? null,
     });
@@ -34,6 +36,21 @@ export default async function handler(req, res) {
   const patch = {};
   for (const field of ['n8nBaseUrl', 'n8nApiKey', 'geminiApiKey', 'monthlyCapUsd']) {
     if (req.body[field] !== undefined) patch[field] = req.body[field];
+  }
+
+  // Memory actions. Correcting supersedes; retiring keeps the record. There is
+  // no path here that destroys a fact.
+  if (req.body.memory) {
+    const m = req.body.memory;
+    try {
+      if (m.action === 'add') await remember(store, m.text, { source: 'told' });
+      else if (m.action === 'correct') await correct(store, m.id, m.text);
+      else if (m.action === 'retire') await retire(store, m.id);
+      else return json(res, 400, { ok: false, error: `Unknown memory action "${m.action}".` });
+    } catch (err) {
+      return json(res, 400, { ok: false, error: err.message });
+    }
+    return json(res, 200, { ok: true, memory: await activeFacts(store) });
   }
 
   const hasPrefs = req.body.prefs && typeof req.body.prefs === 'object';

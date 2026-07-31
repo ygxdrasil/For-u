@@ -17,11 +17,14 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const API_DIR = path.join(ROOT, 'api');
 const CORE_DIR = path.join(ROOT, 'core');
 
+/** Comments are stripped so these checks test the code, not the prose about it. */
+const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
 const readAll = (dir) =>
   fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.endsWith('.js'))
-    .map((e) => ({ name: e.name, source: fs.readFileSync(path.join(dir, e.name), 'utf8') }));
+    .map((e) => ({ name: e.name, source: stripComments(fs.readFileSync(path.join(dir, e.name), 'utf8')) }));
 
 // ---------------------------------------------------------------------------
 
@@ -69,6 +72,22 @@ test('the tool registry is identical no matter who asks for it', () => {
   assert.equal(apiish, sweepish, 'The sweep was offered different tools.');
 });
 
+test('a protocol adapter exposes the identical registry', async () => {
+  // /api/mcp hands Jason's tools to other AIs. If it ever curated its own
+  // list, an external agent could have powers the browser does not, or be
+  // quietly denied ones it should have.
+  const { toolsForProtocol } = await import('../core/protocol.js');
+  const ctx = { store: createMemoryStore(), n8n: {}, approvals: [] };
+
+  const shape = (tools) =>
+    crypto
+      .createHash('sha256')
+      .update(JSON.stringify(tools.map((t) => ({ name: t.name, parameters: t.parameters, description: t.description })).sort((a, b) => a.name.localeCompare(b.name))))
+      .digest('hex');
+
+  assert.equal(shape(toolsForProtocol(ctx)), shape(buildToolRegistry(ctx)), 'the MCP adapter and the registry have diverged');
+});
+
 test('nothing can delete anything', () => {
   const tools = buildToolRegistry({ store: createMemoryStore(), n8n: {} });
 
@@ -80,6 +99,8 @@ test('nothing can delete anything', () => {
   }
 
   const client = fs.readFileSync(path.join(CORE_DIR, 'n8nClient.js'), 'utf8');
+  // This one deliberately reads the raw file: the tripwire assertion below
+  // checks for a comment, so stripping comments would defeat it.
   // The only permitted mention is the guard that throws.
   const deleteCalls = [...client.matchAll(/request\(\s*'DELETE'/g)];
   assert.equal(deleteCalls.length, 0, 'core/n8nClient.js issues a DELETE request. It must not.');
@@ -102,4 +123,51 @@ test('updating a workflow without a snapshot is refused', async () => {
     /snapshotId/,
     'updateWorkflow must refuse to overwrite a workflow without a snapshot of the previous version.',
   );
+});
+
+test('every module and entry point parses and imports', async () => {
+  // A syntax error in core/run.js once passed the whole unit suite, because
+  // nothing imported it — only the self-test caught it. This closes that gap:
+  // if a file cannot even be loaded, `npm test` fails.
+  const dirs = ['core', 'api'];
+  const failures = [];
+
+  for (const dir of dirs) {
+    for (const entry of fs.readdirSync(path.join(ROOT, dir))) {
+      if (!entry.endsWith('.js')) continue;
+      try {
+        await import(new URL(`../${dir}/${entry}`, import.meta.url).href);
+      } catch (err) {
+        failures.push(`${dir}/${entry}: ${err.message.split('\n')[0]}`);
+      }
+    }
+  }
+
+  assert.deepEqual(failures, [], `modules failed to import:\n${failures.join('\n')}`);
+});
+
+test('memory supersedes rather than deletes, and refuses duplicates', async () => {
+  const { remember, correct, retire, activeFacts, loadMemory, memoryPrompt } = await import('../core/memory.js');
+  const store = createMemoryStore();
+
+  await remember(store, 'The real Slack channel is #leads-uk');
+  const dup = await remember(store, 'the real slack channel is #leads-uk!');
+  assert.equal(dup.added, false, 'a restatement of the same fact must not be stored twice');
+
+  const first = (await activeFacts(store))[0];
+  await correct(store, first.id, 'The real Slack channel is #leads-eu');
+
+  const active = await activeFacts(store);
+  assert.equal(active.length, 1);
+  assert.match(active[0].text, /leads-eu/);
+
+  // The superseded fact is still on the record — nothing is destroyed.
+  const all = await loadMemory(store);
+  assert.equal(all.length, 2);
+  assert.equal(all.find((f) => f.id === first.id).supersededBy, active[0].id);
+
+  await retire(store, active[0].id);
+  assert.equal((await activeFacts(store)).length, 0);
+  assert.equal((await loadMemory(store)).length, 2, 'retiring keeps the record');
+  assert.equal(await memoryPrompt(store), '', 'no active facts means nothing added to the prompt');
 });

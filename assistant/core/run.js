@@ -17,6 +17,7 @@ import { createN8nClient } from './n8nClient.js';
 import { buildToolRegistry } from './tools.js';
 import { catalogMeta } from './nodeIndex.js';
 import { loadPrefs, DEFAULT_PREFS } from './settings.js';
+import { memoryPrompt } from './memory.js';
 import { BudgetExceededError } from './meter.js';
 
 /** Serverless kills the request at its limit and returns NOTHING — not an
@@ -51,6 +52,10 @@ HOW YOU WORK
 5. Save. New workflows are always created inactive.
 6. Test with dry_run_workflow, which disables every write-capable node and pins test data. Read the execution back.
 7. Only then tell the user what happened.
+
+SYSTEMS, NOT JUST WORKFLOWS
+
+Most requests describe a system, not a single workflow. "A lead pipeline" may be a form intake, a qualifier, a notifier and a weekly digest. Plan the whole thing, say in one or two lines what each part does, build them one at a time, and tag every workflow in the group with the same "system:<short-name>" tag so they stay findable as a unit. If one workflow genuinely covers it, build one — do not invent parts to look thorough.
 
 WHAT YOU MAY NOT DO
 
@@ -159,14 +164,25 @@ export async function run(input, hooks = {}) {
 
   // ---- prompt -------------------------------------------------------------
   const meta = catalogMeta();
+  let memoryBlock = '';
+  try {
+    memoryBlock = await memoryPrompt(store);
+  } catch {
+    // Memory is an enhancement, never a precondition for answering.
+  }
+
   const systemInstruction = [
     STATIC_RULES,
     '',
+    memoryBlock,
+    memoryBlock ? '' : null,
     `NODE INDEX: ${meta.nodeCount} nodes, ${meta.operationCount} operations, generated from n8n-nodes-base ${meta.packages['n8n-nodes-base']} and @n8n/n8n-nodes-langchain ${meta.packages['@n8n/n8n-nodes-langchain']}. Schema files ${meta.schemasBundledHere ? 'are' : 'are NOT'} available.`,
     n8nStatus.configured
       ? `N8N: connected to ${n8nStatus.baseUrl}.`
       : 'N8N: not configured. You can still search nodes and design a workflow, but you cannot read, save, ground or test anything. Say so plainly rather than pretending.',
-  ].join('\n');
+  ]
+    .filter((line) => line !== null && line !== undefined)
+    .join('\n');
 
   const session = input.sessionId ? await store.getSession(input.sessionId) : { id: null, messages: [] };
   const contents = [
@@ -240,7 +256,13 @@ export async function run(input, hooks = {}) {
         break;
       }
 
-      h.onToolStart({ name: call.name, args: call.args });
+      h.onToolStart({
+        name: call.name,
+        args: call.args,
+        // Plain English, taken from the tool itself so the interface can never
+        // drift from what the registry actually offers.
+        say: safeSay(tool, call.args),
+      });
       let out;
       try {
         out = await tool.handler(call.args ?? {});
@@ -248,7 +270,7 @@ export async function run(input, hooks = {}) {
         out = { ok: false, error: `${call.name} threw: ${err.message}` };
       }
       steps.push({ tool: call.name, args: call.args, ok: out.ok !== false, summary: summarise(out) });
-      h.onToolEnd({ name: call.name, result: out });
+      h.onToolEnd({ name: call.name, say: safeSay(tool, call.args), result: out });
       responseParts.push(fnResponse(call, out));
 
       // Once we've searched or fetched a schema, we are designing — move up a
@@ -279,6 +301,14 @@ export async function run(input, hooks = {}) {
   }
 
   return result({ status: 'ok', reply: reply || '(no answer produced)', spend: await meter.summary(), n8n: n8nStatus });
+}
+
+function safeSay(tool, args) {
+  try {
+    return tool?.say?.(args ?? {}) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function fnResponse(call, out) {

@@ -48,7 +48,7 @@ export default async function handler(req, res) {
 
     section('workflows', async () => {
       if (!n8n) return null;
-      const res = await n8n.listWorkflows({ limit: 50 });
+      const res = await n8n.listWorkflows({ limit: 30 });
       return (res?.data ?? []).map((w) => ({
         id: w.id,
         name: w.name,
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
 
     section('executions', async () => {
       if (!n8n) return null;
-      const res = await n8n.listExecutions({ limit: 100 });
+      const res = await n8n.listExecutions({ limit: 60 });
       return (res?.data ?? []).map((e) => ({
         id: e.id,
         workflowId: e.workflowId,

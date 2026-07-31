@@ -27,6 +27,18 @@ const ago = (iso) => {
 const clock = (iso) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '--:--');
 const dur = (a, b) => (a && b ? `${((new Date(b) - new Date(a)) / 1000).toFixed(1)}s` : '—');
 
+/** Status codes never reach the screen. The four outcomes stay distinct. */
+const PLAIN = {
+  ok: null,
+  continuing: 'ran out of time — ask me to carry on',
+  not_configured: 'I need a key before I can think',
+  misconfigured: 'my settings are wrong — I stopped before spending anything',
+  budget_exceeded: 'monthly spend cap reached',
+  empty_response: 'the model returned nothing',
+  model_error: 'the model call failed',
+  error: 'something broke on my side',
+};
+
 export default function App() {
   const [auth, setAuth] = useState(null);
   useEffect(() => {
@@ -107,7 +119,7 @@ function Jason({ onSignOut }) {
 
   const state = useMemo(() => {
     if (approval) return 'waiting';
-    if (busy) return /save|dry_run|ground|active|archive/.test(live[live.length - 1]?.text ?? '') ? 'acting' : 'thinking';
+    if (busy) return /saving|switching|fetching|testing|putting/.test(live[live.length - 1]?.text ?? '') ? 'acting' : 'thinking';
     if (data && data.vitals.n8n.configured && !data.vitals.n8n.reachable) return 'offline';
     if ([...messages].reverse().find((m) => m.role === 'jason')?.status === 'ok') return 'resolved';
     return 'idle';
@@ -119,7 +131,8 @@ function Jason({ onSignOut }) {
     r.dataset.accent = prefs?.accent ?? 'cyan';
     r.dataset.density = prefs?.density ?? 'compact';
     r.dataset.motion = prefs?.motion === false ? 'off' : 'on';
-  }, [state, prefs?.accent, prefs?.density, prefs?.motion]);
+    r.dataset.busy = busy ? 'yes' : 'no';
+  }, [state, prefs?.accent, prefs?.density, prefs?.motion, busy]);
 
   const stateLine = {
     idle: ['Idle', 'watching'],
@@ -154,11 +167,15 @@ function Jason({ onSignOut }) {
           const dl = f.split('\n').find((l) => l.startsWith('data: '));
           if (!ev || !dl) continue;
           let d; try { d = JSON.parse(dl.slice(6)); } catch { continue; }
-          if (ev === 'status') events.push({ kind: 'run', text: d.status });
-          if (ev === 'tool_start') events.push({ kind: 'run', text: d.name });
+          if (ev === 'status') events.push({ kind: 'run', text: d.status, key: `status:${events.length}` });
+          if (ev === 'tool_start') events.push({ kind: 'run', text: d.say ?? d.name, key: d.name, detail: d.name });
           if (ev === 'tool_end') {
-            const hit = [...events].reverse().find((e) => e.text.startsWith(d.name));
-            if (hit) { hit.kind = d.ok ? 'ok' : 'bad'; hit.text = d.ok ? d.name : `${d.name} — ${d.error ?? 'failed'}`; }
+            const hit = [...events].reverse().find((e) => e.key === d.name && e.kind === 'run');
+            if (hit) {
+              hit.kind = d.ok ? 'ok' : 'bad';
+              hit.text = d.say ?? d.name;
+              hit.error = d.ok ? null : d.error;
+            }
             if (d.needsApproval) setApproval({ action: d.needsApproval, detail: d.error });
           }
           if (ev === 'done') { setMessages((m) => [...m, { role: 'jason', text: d.reply, steps: [...events], status: d.status, spend: d.spend, elapsedMs: d.elapsedMs }]); refresh(); }
@@ -180,7 +197,6 @@ function Jason({ onSignOut }) {
         <Mark />
         <h1 className="wordmark">Jason<small>n8n contractor</small></h1>
         <div className="masthead-right">
-          <span className="meta mono">{data?.vitals?.build?.buildId?.slice(0, 12) ?? ''}</span>
           <button className="ghost" onClick={onSignOut}>Sign out</button>
         </div>
       </header>
@@ -189,7 +205,7 @@ function Jason({ onSignOut }) {
         <span className="dot" />
         <span className="label">{stateLine[0]}</span>
         <span className="detail">{stateLine[1]}</span>
-        <span className="since">{data?.vitals?.store?.durable ? 'pg' : 'mem'} · {workflows.length}wf · {findings.length}open</span>
+        <span className="since">{workflows.length} workflows{findings.length ? ` · ${findings.length} to look at` : ''}</span>
       </div>
 
       <nav className="nav">
@@ -240,6 +256,8 @@ function Dashboard({ data }) {
         <Stat k="Spend" v={spend ? `$${spend.monthToDateUsd.toFixed(3)}` : '—'} sub={spend ? `cap $${spend.capUsd}` : '—'} meter={pct} />
       </div>
 
+      <Noticed items={observations({ workflows: wf, executions: ex, findings: sections.findings.data ?? [], spend })} />
+
       <div className="grid cols-2">
         <div className="panel" style={{ margin: 0 }}>
           <h2>Activity<span className="rule" /><span className="meta">14d</span></h2>
@@ -275,6 +293,38 @@ function Dashboard({ data }) {
   );
 }
 
+/**
+ * Plain observations drawn from data already fetched. No model call, no cost —
+ * he is not thinking about you in the background, he is reading the same
+ * numbers you are and saying the obvious thing out loud.
+ */
+function observations({ workflows, executions, findings, spend }) {
+  const out = [];
+  const now = Date.now();
+  const day = 864e5;
+
+  for (const w of workflows) {
+    const mine = executions.filter((e) => e.workflowId === w.id);
+    const failed = mine.filter((e) => e.status === 'error');
+    if (failed.length >= 3) out.push({ tone: 'bad', text: `${w.name} has failed ${failed.length} times recently.` });
+    else if (w.active && mine.length === 0) out.push({ tone: 'unk', text: `${w.name} is switched on but hasn't run.` });
+    if (!w.active && !w.isArchived && mine.length === 0) out.push({ tone: 'off', text: `${w.name} has never run and is switched off.` });
+  }
+
+  const last = executions[0];
+  if (last && now - new Date(last.startedAt).getTime() > 7 * day) {
+    out.push({ tone: 'unk', text: 'Nothing has run anywhere in over a week.' });
+  }
+
+  if (spend && spend.monthToDateUsd > spend.capUsd * 0.8) {
+    out.push({ tone: 'bad', text: `You're at ${Math.round((spend.monthToDateUsd / spend.capUsd) * 100)}% of your monthly cap.` });
+  }
+
+  if (findings.length) out.push({ tone: 'bad', text: `${findings.length} thing${findings.length > 1 ? 's' : ''} broke and ${findings.length > 1 ? 'are' : 'is'} waiting for you.` });
+
+  return out.slice(0, 4);
+}
+
 const Stat = ({ k, v, sub, accent, meter, children }) => (
   <div className={`stat ${accent ? 'accent' : ''}`}>
     <div className="k">{k}</div>
@@ -284,6 +334,19 @@ const Stat = ({ k, v, sub, accent, meter, children }) => (
     {children}
   </div>
 );
+
+const Noticed = ({ items }) =>
+  items.length ? (
+    <div className="panel">
+      <h2>Noticed<span className="rule" /></h2>
+      {items.map((o, i) => (
+        <div key={i} className="row" style={{ gap: 8, padding: '3px 0' }}>
+          <span className={`dot-s ${o.tone}`} />
+          <span style={{ fontSize: 13 }}>{o.text}</span>
+        </div>
+      ))}
+    </div>
+  ) : null;
 
 function Activity({ executions }) {
   const days = 14;
@@ -338,20 +401,33 @@ function WorkflowCard({ w, ex = [] }) {
   );
 }
 
-const Vitals = ({ vitals }) => (
-  <div className="kv">
-    <div><span className="k">Build</span><span className="v">{vitals.build?.buildId ?? 'unstamped'}</span></div>
-    <div><span className="k">Nodes indexed</span><span className="v">{vitals.nodeIndex?.nodeCount ?? '—'} · {vitals.nodeIndex?.operationCount ?? '—'} ops</span></div>
-    <div><span className="k">Schemas</span><span className="v"><span className={`dot-s ${vitals.nodeIndex?.schemasBundledHere ? 'ok' : 'bad'}`} />{vitals.nodeIndex?.schemasBundledHere ? 'bundled' : 'missing'}</span></div>
-    <div><span className="k">n8n-nodes-base</span><span className="v">{vitals.nodeIndex?.packages?.['n8n-nodes-base'] ?? '—'}</span></div>
-    <div><span className="k">Your instance</span><span className="v"><span className="dot-s unk" />unconfirmed</span></div>
-    <div><span className="k">Store</span><span className="v"><span className={`dot-s ${vitals.store.durable ? 'ok' : 'bad'}`} />{vitals.store.kind}</span></div>
-    <div><span className="k">Key encryption</span><span className="v"><span className={`dot-s ${vitals.encryption?.source === 'env' ? 'ok' : 'unk'}`} />{vitals.encryption?.source ?? '—'}</span></div>
-    <div><span className="k">n8n</span><span className="v"><span className={`dot-s ${vitals.n8n.reachable ? 'ok' : vitals.n8n.configured ? 'bad' : 'off'}`} />{vitals.n8n.reachable ? 'reachable' : vitals.n8n.configured ? 'unreachable' : 'not set'}</span></div>
-    <div><span className="k">Chat model</span><span className="v">{vitals.models.chat}</span></div>
-    <div><span className="k">Design model</span><span className="v">{vitals.models.design}</span></div>
-  </div>
-);
+function Vitals({ vitals }) {
+  const [details, setDetails] = useState(false);
+  return (
+    <>
+      <div className="kv">
+        <div><span className="k">Your n8n</span><span className="v"><span className={`dot-s ${vitals.n8n.reachable ? 'ok' : vitals.n8n.configured ? 'bad' : 'off'}`} />{vitals.n8n.reachable ? 'connected' : vitals.n8n.configured ? "can't reach it" : 'not set up'}</span></div>
+        <div><span className="k">Nodes I know</span><span className="v">{vitals.nodeIndex?.nodeCount ?? '—'}</span></div>
+        <div><span className="k">Memory</span><span className="v"><span className={`dot-s ${vitals.store.durable ? 'ok' : 'bad'}`} />{vitals.store.durable ? 'saved' : 'not saved'}</span></div>
+        <div><span className="k">Your keys</span><span className="v"><span className={`dot-s ${vitals.encryption?.source === 'env' ? 'ok' : 'unk'}`} />{vitals.encryption?.source === 'env' ? 'locked away' : 'encrypted'}</span></div>
+      </div>
+      <button className="ghost" style={{ marginTop: 10, padding: '3px 9px', fontSize: 11 }} onClick={() => setDetails((d) => !d)}>
+        {details ? 'Hide details' : 'Details'}
+      </button>
+      {details && (
+        <div className="kv" style={{ marginTop: 8 }}>
+          <div><span className="k">Build</span><span className="v">{vitals.build?.buildId ?? 'unstamped'}</span></div>
+          <div><span className="k">Operations indexed</span><span className="v">{vitals.nodeIndex?.operationCount ?? '—'}</span></div>
+          <div><span className="k">Schemas in this function</span><span className="v">{vitals.nodeIndex?.schemasBundledHere ? 'yes' : 'no'}</span></div>
+          <div><span className="k">n8n-nodes-base</span><span className="v">{vitals.nodeIndex?.packages?.['n8n-nodes-base'] ?? '—'}</span></div>
+          <div><span className="k">Your instance version</span><span className="v"><span className="dot-s unk" />unconfirmed</span></div>
+          <div><span className="k">Store</span><span className="v">{vitals.store.kind}</span></div>
+          <div><span className="k">Models</span><span className="v">{vitals.models.chat} / {vitals.models.design}</span></div>
+        </div>
+      )}
+    </>
+  );
+}
 
 /* ------------------------------------------------------------- tabs */
 
@@ -399,7 +475,7 @@ function Talk({ messages, live, busy, approval, onSend, onDismiss, ready, showSt
           {m.text}
           {m.role === 'jason' && (
             <div className="row" style={{ marginTop: 8, gap: 10 }}>
-              {m.status && m.status !== 'ok' && <span className="verdict unconfirmed">{m.status.replace(/_/g, ' ')}</span>}
+              {m.status && PLAIN[m.status] && <span className="verdict unconfirmed">{PLAIN[m.status]}</span>}
               {m.spend && <span className="meta mono">${m.spend.monthToDateUsd.toFixed(4)}</span>}
               {m.elapsedMs ? <span className="meta mono">{(m.elapsedMs / 1000).toFixed(1)}s</span> : null}
             </div>
@@ -575,8 +651,43 @@ function Settings({ onSaved }) {
         <button onClick={async () => { const r = await post('/api/tokens', { action: 'mint', label: 'voice' }); if (r.ok) { setMinted(r.token); loadTokens(); } }}>Mint token</button>
       </div>
 
+      <MemoryPanel />
       <ChangePassword />
     </>
+  );
+}
+
+/** What he knows about you. Correcting supersedes; nothing is destroyed. */
+function MemoryPanel() {
+  const [facts, setFacts] = useState([]);
+  const [text, setText] = useState('');
+
+  const load = () => fetch('/api/settings').then((r) => r.json()).then((r) => setFacts(r.memory ?? []));
+  useEffect(() => { load(); }, []);
+
+  const act = async (memory) => {
+    const r = await post('/api/settings', { memory });
+    if (r.ok) setFacts(r.memory ?? []);
+  };
+
+  return (
+    <div className="panel">
+      <h2>What Jason knows about you<span className="rule" /><span className="meta">{facts.length}</span></h2>
+      {facts.length === 0 && <div className="empty">Nothing yet. He'll pick things up as you work, or you can tell him here.</div>}
+      {facts.map((f) => (
+        <div className="setting" key={f.id}>
+          <div><div className="name">{f.text}</div><div className="hint">{f.source === 'told' ? 'you told him' : 'he worked it out'}</div></div>
+          <div className="ctl">
+            <button className="ghost" style={{ padding: '3px 9px', fontSize: 11 }} onClick={() => act({ action: 'retire', id: f.id })}>Forget</button>
+          </div>
+        </div>
+      ))}
+      <div className="row" style={{ marginTop: 12 }}>
+        <input value={text} placeholder="the real Slack channel is #leads" onChange={(e) => setText(e.target.value)} style={{ flex: 1 }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) { act({ action: 'add', text }); setText(''); } }} />
+        <button disabled={!text.trim()} onClick={() => { act({ action: 'add', text }); setText(''); }}>Tell him</button>
+      </div>
+    </div>
   );
 }
 

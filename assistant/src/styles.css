@@ -380,3 +380,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   animation: none !important;
   transition: none !important;
 }
+
+/* He reacts while working: the core beats faster, the ring tightens. */
+:root[data-busy="yes"] .mark i { animation-duration: 1.1s; }
+:root[data-busy="yes"] .mark { box-shadow: 0 0 26px var(--state-glow), inset 0 0 16px var(--state-soft); }
+:root[data-busy="yes"] .statestrip .dot { animation-duration: .9s; }
+
+/* the failing / unknown / dormant dots used by Noticed */
+.dot-s.off { background: var(--dimmer); box-shadow: none; }

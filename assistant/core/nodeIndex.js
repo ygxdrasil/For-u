@@ -18,6 +18,20 @@ const VENDOR = path.resolve(HERE, '..', 'vendor');
 const SCHEMAS_DIR = path.join(VENDOR, 'schemas');
 
 let _catalog = null;
+let _typedefs = null;
+
+/**
+ * The type definitions, packed into one file rather than ~4,700 loose ones.
+ * Loaded lazily and cached: only the pipeline functions ever ask for them, and
+ * only when a node is actually being configured — so a request that never
+ * builds anything never pays for the parse.
+ */
+function loadTypedefs() {
+  if (_typedefs) return _typedefs;
+  const p = path.join(VENDOR, 'typedefs.json');
+  _typedefs = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : {};
+  return _typedefs;
+}
 
 export function loadCatalog() {
   if (_catalog) return _catalog;
@@ -44,7 +58,7 @@ export function catalogMeta() {
     // copying 9,600 files into every function turned a 1.4s build into a
     // three-minute deploy. A function without them can still search and
     // describe nodes from the catalog.
-    schemasBundledHere: fs.existsSync(SCHEMAS_DIR),
+    schemasBundledHere: fs.existsSync(SCHEMAS_DIR) && fs.existsSync(path.join(VENDOR, 'typedefs.json')),
   };
 }
 
@@ -161,15 +175,10 @@ export function getNodeSchema({ type, resource = null, operation = null }) {
     };
   }
 
+  const defs = loadTypedefs()[node.key] ?? {};
   const results = candidates.map((op) => {
-    const file = path.join(SCHEMAS_DIR, 'nodes', node.pkg, node.name, node.versionDir || 'v1', op.file);
-    let typeDefinition = null;
-    let readError = null;
-    try {
-      typeDefinition = fs.readFileSync(file, 'utf8');
-    } catch (err) {
-      readError = err.message;
-    }
+    const typeDefinition = defs[op.file] ?? null;
+    const readError = typeDefinition ? null : `No packed definition for ${node.key}/${op.file}`;
     return {
       resource: op.resource,
       operation: op.operation,

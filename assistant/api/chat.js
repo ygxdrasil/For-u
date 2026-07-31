@@ -60,10 +60,11 @@ export default async function handler(req, res) {
       },
       {
         onStatus: (status) => send('status', { status }),
-        onToolStart: ({ name, args }) => send('tool_start', { name, args }),
-        onToolEnd: ({ name, result: r }) =>
+        onToolStart: ({ name, args, say }) => send('tool_start', { name, args, say }),
+        onToolEnd: ({ name, say, result: r }) =>
           send('tool_end', {
             name,
+            say,
             ok: r?.ok !== false,
             // Full tool payloads can be large; the UI shows a summary and the
             // model gets the whole thing regardless.
