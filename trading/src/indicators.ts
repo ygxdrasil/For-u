@@ -181,3 +181,72 @@ export function avgVolume(bars: Bar[], period: number): number[] {
 }
 
 export const closes = (bars: Bar[]): number[] => bars.map((b) => b.close);
+
+// ---------------------------------------------------------------------------
+// Extended indicator set for the wide sweep
+// ---------------------------------------------------------------------------
+
+/** MACD line, signal line, histogram. All causal. */
+export function macd(values: number[], fast = 12, slow = 26, signal = 9) {
+  const f = ema(values, fast);
+  const s = ema(values, slow);
+  const line = values.map((_, i) => (Number.isFinite(f[i]) && Number.isFinite(s[i]) ? f[i] - s[i] : NaN));
+  // EMA of the MACD line, skipping its NaN prefix so the signal isn't shifted.
+  const firstValid = line.findIndex(Number.isFinite);
+  const sig = new Array<number>(values.length).fill(NaN);
+  if (firstValid >= 0) {
+    const tail = ema(line.slice(firstValid), signal);
+    for (let i = 0; i < tail.length; i++) sig[firstValid + i] = tail[i];
+  }
+  const hist = line.map((v, i) => (Number.isFinite(v) && Number.isFinite(sig[i]) ? v - sig[i] : NaN));
+  return { line, signal: sig, hist };
+}
+
+/** Keltner channels: EMA mid, ATR-scaled bands. */
+export function keltner(bars: Bar[], period = 20, mult = 2, atrPeriod = 14) {
+  const mid = ema(closes(bars), period);
+  const a = atr(bars, atrPeriod);
+  return {
+    mid,
+    upper: mid.map((m, i) => (Number.isFinite(m) && Number.isFinite(a[i]) ? m + mult * a[i] : NaN)),
+    lower: mid.map((m, i) => (Number.isFinite(m) && Number.isFinite(a[i]) ? m - mult * a[i] : NaN)),
+  };
+}
+
+/** Rolling z-score of price vs its own mean — mean-reversion signal. */
+export function zscore(values: number[], period = 20): number[] {
+  const m = sma(values, period);
+  const sd = stddev(values, period);
+  return values.map((v, i) => (Number.isFinite(m[i]) && sd[i] > 0 ? (v - m[i]) / sd[i] : NaN));
+}
+
+/** Rate of change over `period` bars, as a fraction. */
+export function roc(values: number[], period = 20): number[] {
+  return values.map((v, i) => (i >= period && values[i - period] > 0 ? v / values[i - period] - 1 : NaN));
+}
+
+/** Chandelier exit levels: highest-high minus k*ATR (and the short mirror). */
+export function chandelier(bars: Bar[], period = 22, mult = 3, atrPeriod = 22) {
+  const a = atr(bars, atrPeriod);
+  const longStop = new Array<number>(bars.length).fill(NaN);
+  const shortStop = new Array<number>(bars.length).fill(NaN);
+  for (let i = period - 1; i < bars.length; i++) {
+    let hh = -Infinity;
+    let ll = Infinity;
+    for (let j = i - period + 1; j <= i; j++) {
+      hh = Math.max(hh, bars[j].high);
+      ll = Math.min(ll, bars[j].low);
+    }
+    if (Number.isFinite(a[i])) {
+      longStop[i] = hh - mult * a[i];
+      shortStop[i] = ll + mult * a[i];
+    }
+  }
+  return { longStop, shortStop };
+}
+
+/** True range as a fraction of close — normalised volatility. */
+export function atrPct(bars: Bar[], period = 14): number[] {
+  const a = atr(bars, period);
+  return a.map((v, i) => (Number.isFinite(v) && bars[i].close > 0 ? v / bars[i].close : NaN));
+}
