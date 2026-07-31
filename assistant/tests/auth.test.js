@@ -206,3 +206,36 @@ test('preferences round-trip and default when unset', async () => {
   assert.equal((await loadPrefs(store)).allowProbes, false);
   assert.equal((await loadPrefs(store)).dryRunDisablesWrites, true, 'unrelated prefs keep their defaults');
 });
+
+test('a session lasts a year and renews itself in use', async () => {
+  const { issueSession, inspectSession, shouldRenew, sessionCookie, SESSION_TTL_DAYS } = await import('../core/secrets.js');
+
+  assert.ok(SESSION_TTL_DAYS >= 365, 'signing in should be a once-a-year chore, not monthly');
+
+  const token = issueSession('secret');
+  const { payload, reason } = inspectSession('secret', token);
+  assert.equal(reason, 'ok');
+  assert.ok(payload.exp - Date.now() > 300 * 24 * 60 * 60 * 1000);
+
+  // Fresh cookies are not re-issued on every request; day-old ones are.
+  assert.equal(shouldRenew(payload), false);
+  assert.equal(shouldRenew({ iat: Date.now() - 2 * 24 * 60 * 60 * 1000 }), true);
+
+  // A cookie the browser would drop on close is the "it forgot me" symptom.
+  const cookie = sessionCookie(token);
+  assert.match(cookie, /Max-Age=\d{7,}/);
+  assert.match(cookie, /Expires=/, 'some webviews only honour Expires');
+});
+
+test('being signed out reports which of the three causes it was', async () => {
+  const { issueSession, inspectSession } = await import('../core/secrets.js');
+
+  assert.equal(inspectSession('s', null).reason, 'no-cookie');
+  assert.equal(inspectSession('s', 'nonsense').reason, 'malformed');
+  // Signed with a different secret: what a rotated signing key looks like.
+  assert.equal(inspectSession('s', issueSession('a-different-secret')).reason, 'bad-signature');
+
+  const expiredBody = Buffer.from(JSON.stringify({ sub: 'owner', iat: 1, exp: Date.now() - 1000 })).toString('base64url');
+  const sig = crypto.createHmac('sha256', 's').update(expiredBody).digest('base64url');
+  assert.equal(inspectSession('s', `${expiredBody}.${sig}`).reason, 'expired');
+});

@@ -15,7 +15,12 @@ const scrypt = promisify(crypto.scrypt);
 // Deliberately slow. The whole point is that guessing costs something.
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
 
-export const SESSION_TTL_DAYS = 30;
+// A year, renewed on every authenticated request. Signing in is a chore you
+// should do about once; a month-long session that silently lapses feels
+// identical to being logged out at random.
+export const SESSION_TTL_DAYS = 365;
+/** Re-issue the cookie when it is more than a day old, so it never lapses in use. */
+export const SESSION_RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // password
@@ -63,36 +68,62 @@ export function issueSession(secret, { subject = 'owner' } = {}) {
   return `${body}.${sig}`;
 }
 
+/**
+ * Returns the payload, or null. `inspectSession` gives the same answer with a
+ * reason attached — "you were never sent a cookie" and "your cookie expired"
+ * and "the signing secret changed" are three different problems with three
+ * different fixes, and they are indistinguishable from a bare null.
+ */
 export function verifySession(secret, token) {
-  if (typeof token !== 'string' || !token.includes('.')) return null;
+  return inspectSession(secret, token).payload;
+}
+
+export function inspectSession(secret, token) {
+  if (typeof token !== 'string' || !token) return { payload: null, reason: 'no-cookie' };
+  if (!token.includes('.')) return { payload: null, reason: 'malformed' };
+
   const [body, sig] = token.split('.');
-  if (!body || !sig) return null;
+  if (!body || !sig) return { payload: null, reason: 'malformed' };
 
   const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    // Almost always means the signing secret changed underneath the cookie.
+    return { payload: null, reason: 'bad-signature' };
+  }
 
   let payload;
   try {
     payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
   } catch {
-    return null;
+    return { payload: null, reason: 'malformed' };
   }
-  if (!payload.exp || payload.exp < Date.now()) return null;
-  return payload;
+  if (!payload.exp || payload.exp < Date.now()) return { payload: null, reason: 'expired' };
+  return { payload, reason: 'ok' };
+}
+
+/** True once the cookie is old enough to be worth re-issuing. */
+export function shouldRenew(payload) {
+  return Boolean(payload?.iat) && Date.now() - payload.iat > SESSION_RENEW_AFTER_MS;
 }
 
 const COOKIE_NAME = 'n8na_sess';
 
 export function sessionCookie(token, { clear = false } = {}) {
+  const maxAge = SESSION_TTL_DAYS * 24 * 60 * 60;
   const attrs = [
     `${COOKIE_NAME}=${clear ? '' : token}`,
     'Path=/',
     'HttpOnly',
     'Secure',
     'SameSite=Lax',
-    clear ? 'Max-Age=0' : `Max-Age=${SESSION_TTL_DAYS * 24 * 60 * 60}`,
+    clear ? 'Max-Age=0' : `Max-Age=${maxAge}`,
+    // Max-Age alone is enough for current browsers, but some older ones and a
+    // few in-app webviews only honour Expires — and a cookie treated as a
+    // session cookie is gone the moment the app is closed, which is exactly
+    // the "it forgot me again" symptom.
+    clear ? 'Expires=Thu, 01 Jan 1970 00:00:00 GMT' : `Expires=${new Date(Date.now() + maxAge * 1000).toUTCString()}`,
   ];
   return attrs.join('; ');
 }

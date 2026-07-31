@@ -79,6 +79,11 @@ function Gate({ mode, auth, onDone }) {
       <Mark />
       <h1>Jason</h1>
       <p className="sub">{mode === 'setup' ? 'Set a password.' : 'Sign in.'}</p>
+      {mode === 'login' && auth.reason && auth.reason !== 'no-cookie' && (
+        <p className="sub" style={{ color: 'var(--unconfirmed)' }}>
+          {auth.reason === 'expired' ? 'Your session ran out.' : "Something changed on the server, so your session didn't carry over."}
+        </p>
+      )}
       <form className="panel" onSubmit={submit}>
         {mode === 'setup' && auth.durable === false && <div className="notice">No database. Add <code>DATABASE_URL</code>, redeploy.</div>}
         <label>Password</label>

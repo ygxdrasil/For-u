@@ -36,7 +36,7 @@ export default async function handler(req, res) {
   if (!methodGuard(req, res, ['GET'])) return;
 
   const store = await createStore();
-  const session = await requireSession(req, store);
+  const session = await requireSession(req, store, res);
   if (!session.ok) return json(res, 401, { ok: false, error: session.error });
 
   const config = await resolveConfig(req, store);

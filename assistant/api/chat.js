@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   // The browser entry point is behind the password. The site is public and
   // this route can read and write every workflow in the n8n instance.
   const store = await createStore();
-  const session = await requireSession(req, store);
+  const session = await requireSession(req, store, res);
   if (!session.ok) {
     res.statusCode = 401;
     res.setHeader('Content-Type', 'application/json');

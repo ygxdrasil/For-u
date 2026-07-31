@@ -23,14 +23,23 @@
 import { createStore } from '../core/store.js';
 import { json, methodGuard, readBody } from '../core/http.js';
 import { isPasswordSet, setupPassword, checkPassword, changePassword, sessionSecret } from '../core/settings.js';
-import { issueSession, verifySession, sessionCookie, readSessionCookie } from '../core/secrets.js';
+import { issueSession, inspectSession, shouldRenew, sessionCookie, readSessionCookie } from '../core/secrets.js';
 
 /** Shared by every route that serves a browser. */
-export async function requireSession(req, store) {
+export async function requireSession(req, store, res = null) {
   const secret = await sessionSecret(store);
-  const token = readSessionCookie(req);
-  const payload = token ? verifySession(secret, token) : null;
-  return payload ? { ok: true, session: payload } : { ok: false, error: 'Not signed in.' };
+  const { payload, reason } = inspectSession(secret, readSessionCookie(req));
+
+  if (!payload) return { ok: false, error: 'Not signed in.', reason };
+
+  // Sliding expiry: every authenticated request pushes the cookie out to a
+  // full year again, so a session in regular use never lapses. Without this,
+  // signing in once buys a fixed window that quietly runs out.
+  if (res && shouldRenew(payload)) {
+    res.setHeader('Set-Cookie', sessionCookie(issueSession(secret)));
+  }
+
+  return { ok: true, session: payload, reason };
 }
 
 export default async function handler(req, res) {
@@ -43,11 +52,15 @@ export default async function handler(req, res) {
   const passwordSet = await isPasswordSet(store);
 
   if (action === 'status') {
-    const session = await requireSession(req, store);
+    const session = await requireSession(req, store, res);
     return json(res, 200, {
       ok: true,
       passwordSet,
       signedIn: session.ok,
+      // Why you were signed out, when you were: no cookie reached us, the
+      // cookie expired, or the signing secret changed underneath it. Three
+      // different problems that a bare "signed out" cannot tell apart.
+      reason: session.ok ? 'ok' : session.reason,
       durable: store.durable,
       // Being honest about the consequence rather than letting them find out.
       warning: store.durable

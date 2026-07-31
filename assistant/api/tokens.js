@@ -21,7 +21,7 @@ export default async function handler(req, res) {
   // Signed in through the browser, OR holding the bootstrap AGENT_TOKEN. The
   // second path exists so you cannot lock yourself out when the session store
   // is unavailable.
-  const session = await requireSession(req, store);
+  const session = await requireSession(req, store, res);
   if (!session.ok) {
     const admin = authenticateAdmin(req);
     if (!admin.ok) return json(res, 401, { ok: false, error: `${session.error} ${admin.error}` });
