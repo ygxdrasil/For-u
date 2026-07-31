@@ -147,8 +147,23 @@ interface Tuned {
 
 const store = new Document<Tuned>('scenes', () => ({changes: {}}));
 
+/**
+ * Into range, and out of nonsense.
+ *
+ * The rounding-and-bounding half is obvious. The first line is the one that
+ * matters: `Math.max(1000, NaN)` is `NaN`, so a clamp without this quietly
+ * passes rubbish straight through everything downstream. It is reachable —
+ * "set work mode to bright" gives `Number('bright')`, which is NaN, which
+ * became a NaN kelvin, which became a colour with NaN channels, which was
+ * both sent to the light and *written into her saved settings*, where JSON
+ * turns it into null and the scene is broken for good.
+ *
+ * Falling back to the low end is deliberate. If she cannot tell how bright or
+ * how warm something was meant to be, the safe direction at two in the
+ * morning is dimmer and redder.
+ */
 const clamp = (value: number, low: number, high: number) =>
-  Math.max(low, Math.min(high, Math.round(value)));
+  Number.isFinite(value) ? Math.max(low, Math.min(high, Math.round(value))) : low;
 
 export async function allScenes(): Promise<Scene[]> {
   const {changes} = await store.read();

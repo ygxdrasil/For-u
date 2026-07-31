@@ -249,12 +249,58 @@ var Document = class {
       seal(JSON.stringify(value), config.secret, this.salt)
     );
   }
+  /**
+   * Read, change, write — with the three steps never interleaved.
+   *
+   * This was a plain read-modify-write, and twenty updates fired at once kept
+   * one of them. Every other change was read before it existed and overwritten
+   * after it landed. Nothing errored; the writes simply evaporated.
+   *
+   * It is not theoretical. Her voice splits a long reply into pieces and
+   * fetches the next while the current one plays, so two speech requests meter
+   * their cost concurrently and one of them is lost — she under-counts what
+   * she has spent, against a cap that exists to stop her. And the laptop
+   * bridge claims commands on a timer while she is adding them, so an
+   * instruction could be dropped between the two, which looks precisely like
+   * her saying she has done something and nothing happening.
+   *
+   * Serialised per key rather than globally: two unrelated documents have no
+   * reason to wait for each other, and holding one lock across all of them
+   * would put the whole of her behind whichever write is slowest.
+   *
+   * The queue is keyed by document *name* and shared between instances, not
+   * held on the instance. That distinction is the whole fix rather than a
+   * detail: the conversation log builds a fresh Document object on every
+   * single call, so a per-instance queue would have serialised nothing at all
+   * for the one document she writes to most. Compaction rewriting the log
+   * while a new message is being appended is exactly how a turn of a
+   * conversation would vanish.
+   *
+   * The honest limit: this covers one running copy of her. Two serverless
+   * instances updating the same document at the same instant can still
+   * collide, and closing that needs a compare-and-set in the store itself.
+   * That is a much larger change for a much rarer case — her writes are small
+   * and few, and the overwhelming majority of collisions are the ones above,
+   * which happen inside a single instance and are now impossible.
+   */
   async update(mutate) {
-    const next = mutate(await this.read());
-    await this.write(next);
-    return next;
+    const waitingOn = queues.get(this.key) ?? Promise.resolve();
+    const mine = waitingOn.then(async () => {
+      const next = mutate(await this.read());
+      await this.write(next);
+      return next;
+    });
+    queues.set(
+      this.key,
+      mine.then(
+        () => void 0,
+        () => void 0
+      )
+    );
+    return mine;
   }
 };
+var queues = /* @__PURE__ */ new Map();
 
 // server/actions.ts
 var DEFAULT_POLICIES = [
@@ -3869,7 +3915,7 @@ var DEFAULTS = [
 ];
 var SCENE_NAMES = DEFAULTS.map((scene) => scene.id);
 var store16 = new Document("scenes", () => ({ changes: {} }));
-var clamp = (value, low, high) => Math.max(low, Math.min(high, Math.round(value)));
+var clamp = (value, low, high) => Number.isFinite(value) ? Math.max(low, Math.min(high, Math.round(value))) : low;
 async function allScenes() {
   const { changes } = await store16.read();
   return DEFAULTS.map((scene) => {
