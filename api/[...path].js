@@ -5008,6 +5008,48 @@ function forgetAvailable() {
   cached4 = null;
 }
 
+// shared/headers.ts
+var POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob: data:",
+  "connect-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  // Nothing may put her in a frame. An assistant that spends money and works
+  // the lights, rendered invisibly over someone else's page, is a clickjacking
+  // target with unusually concrete consequences.
+  "frame-ancestors 'none'"
+].join("; ");
+var SECURITY_HEADERS = {
+  "Content-Security-Policy": POLICY,
+  /**
+   * Stops a browser second-guessing a Content-Type. Without it a file she
+   * stores and later serves can be sniffed into being script.
+   */
+  "X-Content-Type-Options": "nosniff",
+  /** The older half of frame-ancestors, for anything that predates CSP. */
+  "X-Frame-Options": "DENY",
+  /**
+   * Her URLs are plain, but a referrer still leaks that you use her at all,
+   * and to whom. Same-origin navigation keeps the full path; anything leaving
+   * gets the bare origin.
+   */
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  /**
+   * The microphone stays, because it is how you talk to her. Everything else
+   * a browser might hand out is refused outright — she has never needed a
+   * camera or your location, and a permission that is never requested is one
+   * that cannot be granted by mistake.
+   */
+  "Permissions-Policy": "microphone=(self), camera=(), geolocation=(), payment=(), usb=(), midi=()"
+};
+
 // shared/trim.ts
 var FLOOR = 150;
 var TAIL_MS = 60;
@@ -5674,6 +5716,12 @@ ${recent}`
 }
 function createApi() {
   const api = express();
+  api.use((_req, res, next) => {
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
+      res.setHeader(header, value);
+    }
+    next();
+  });
   api.use(express.json({ limit: "25mb" }));
   api.get(
     "/health",

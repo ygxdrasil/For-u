@@ -1,0 +1,80 @@
+/**
+ * The headers every response carries, and why each one is there.
+ *
+ * Kept in one place because they have to be set twice and must not drift: the
+ * API is served by Express, but on Vercel the page, the bundle and the icons
+ * come off a CDN that never touches this code — so vercel.json declares the
+ * same list, and a test proves the two agree.
+ *
+ * She sits behind a password and holds mail, a diary, a house's lights and an
+ * API key with a monthly bill attached. None of these headers is exotic; the
+ * point is that all of them are boring, and she had none of them.
+ */
+
+/**
+ * What a page is allowed to load, and from where.
+ *
+ * Each entry below is the narrowest that leaves her working. That was
+ * established by reading the built bundle rather than by guessing, which is
+ * how the two surprises turned up:
+ *
+ *   - There is exactly one inline script, four lines that set the theme
+ *     before the first paint so daylight mode does not begin with a black
+ *     flash. React cannot do that job — by the time it mounts the frame is
+ *     already drawn. It needs `unsafe-inline`, which is a real weakening and
+ *     an honest trade: it permits inline script, while `'self'` still stops
+ *     any script being loaded from somewhere else. She renders no HTML from
+ *     mail or the web, so the usual way that weakness gets exploited is not
+ *     open to begin with.
+ *   - Her typefaces are imported from Google inside the stylesheet, so the
+ *     style and font sources have to name them or she loses her lettering.
+ *
+ * `blob:` for media is her own voice: speech arrives as base64, becomes a
+ * Blob, and is played from a blob URL.
+ */
+const POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob: data:",
+  "connect-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  // Nothing may put her in a frame. An assistant that spends money and works
+  // the lights, rendered invisibly over someone else's page, is a clickjacking
+  // target with unusually concrete consequences.
+  "frame-ancestors 'none'",
+].join('; ');
+
+export const SECURITY_HEADERS: Record<string, string> = {
+  'Content-Security-Policy': POLICY,
+
+  /**
+   * Stops a browser second-guessing a Content-Type. Without it a file she
+   * stores and later serves can be sniffed into being script.
+   */
+  'X-Content-Type-Options': 'nosniff',
+
+  /** The older half of frame-ancestors, for anything that predates CSP. */
+  'X-Frame-Options': 'DENY',
+
+  /**
+   * Her URLs are plain, but a referrer still leaks that you use her at all,
+   * and to whom. Same-origin navigation keeps the full path; anything leaving
+   * gets the bare origin.
+   */
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+
+  /**
+   * The microphone stays, because it is how you talk to her. Everything else
+   * a browser might hand out is refused outright — she has never needed a
+   * camera or your location, and a permission that is never requested is one
+   * that cannot be granted by mistake.
+   */
+  'Permissions-Policy':
+    'microphone=(self), camera=(), geolocation=(), payment=(), usb=(), midi=()',
+};

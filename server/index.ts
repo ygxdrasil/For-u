@@ -3,6 +3,7 @@ import {existsSync} from 'node:fs';
 import path from 'node:path';
 import {createApi} from './api';
 import {config, isConfigured} from './config';
+import {SECURITY_HEADERS} from '../shared/headers';
 
 /**
  * Production entry point. In development the same router is mounted straight
@@ -15,6 +16,18 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const app = express();
+
+// On Vercel the page and the bundle come off a CDN that never reaches this
+// code, so vercel.json declares the same list. Here so that running her
+// locally is the same shape as running her deployed, rather than a laxer one
+// where a mistake would go unnoticed until production.
+app.use((_req, res, next) => {
+  for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
+    res.setHeader(header, value);
+  }
+  next();
+});
+
 app.use('/api', createApi());
 
 const dist = path.resolve(process.cwd(), 'dist');

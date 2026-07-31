@@ -49,6 +49,7 @@ import {outstanding} from './tools/reminders';
 import {allTools, auditTools, declarations, runTool} from './tools/index';
 import {forgetAvailable} from './available';
 import {forgetLights} from './lights';
+import {SECURITY_HEADERS} from '../shared/headers';
 import {trimTrailingSilence} from '../shared/trim';
 import {research} from './research';
 import {takeTurn} from './turn';
@@ -159,6 +160,15 @@ async function listeningContext(): Promise<string> {
  */
 export function createApi(): Express {
   const api = express();
+
+  // Also set here, not only on the outer app: on Vercel this router is the
+  // whole of the function, and the outer server never runs.
+  api.use((_req, res, next) => {
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
+      res.setHeader(header, value);
+    }
+    next();
+  });
   // Recorded speech arrives as base64 in a JSON body, so the default 100kb
   // ceiling would reject anything longer than a sentence or two.
   api.use(express.json({limit: '25mb'}));
