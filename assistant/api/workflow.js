@@ -78,6 +78,15 @@ export default async function handler(req, res) {
       if (req.body.id) {
         // Snapshot before overwriting. Your hand-edit is as recoverable as his.
         const current = await n8n.getWorkflow(req.body.id);
+
+        // n8n's PUT replaces the whole workflow, so anything you did not paste
+        // back would be gone. Pinned test data and stored state are carried
+        // over unless your edit changes them — the same rule his own saves
+        // follow, because this is the same net with your hands on the keyboard.
+        for (const key of ['pinData', 'staticData']) {
+          const next = workflow[key] ?? current?.[key];
+          if (next !== undefined) payload[key] = next;
+        }
         const snap = await store.snapshot({
           workflowId: req.body.id,
           name: current?.name ?? null,

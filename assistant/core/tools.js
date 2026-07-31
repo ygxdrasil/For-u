@@ -222,11 +222,16 @@ export function buildToolRegistry(ctx) {
           mode: { type: 'string', description: '"create" or "update".' },
           id: { type: 'string', description: 'Required when mode is "update".' },
           workflow: { type: 'object' },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Tag names to attach, created if they do not exist. Use "system:<short-name>" for every workflow belonging to the same system.',
+          },
           reason: { type: 'string', description: 'Why this change is being made — recorded with the snapshot.' },
         },
         required: ['mode', 'workflow'],
       },
-      handler: async ({ mode, id, workflow, reason }) => {
+      handler: async ({ mode, id, workflow, tags, reason }) => {
         if (!n8n) return needsN8n();
 
         const validation = await validateWorkflow(workflow);
@@ -242,16 +247,29 @@ export function buildToolRegistry(ctx) {
           settings: workflow.settings ?? {},
         };
 
+        /** Tagging is reported separately: the save can succeed and this not. */
+        const applyTags = async (workflowId) => {
+          const wanted = tags ?? workflow.tags;
+          if (!wanted?.length || !workflowId) return null;
+          try {
+            return await n8n.setWorkflowTags(workflowId, wanted);
+          } catch (e) {
+            return { tags: [], confirmed: false, error: `Saved, but tagging failed: ${e.message}` };
+          }
+        };
+
         try {
           if (mode === 'create') {
             onStatus('Creating workflow (inactive)…');
             const res = await n8n.createWorkflow(payload);
+            const tagged = await applyTags(res.workflow?.id);
             return ok({
               created: true,
               id: res.workflow?.id,
               confirmed: res.confirmed,
               active: false,
               validation,
+              tagged,
               note: res.confirmed
                 ? 'Created and read back from n8n. It is inactive until you approve activating it.'
                 : "Created, but reading it back did not confirm it — I can't yet promise it is there.",
@@ -268,13 +286,27 @@ export function buildToolRegistry(ctx) {
               workflow: current,
               reason: reason ?? 'before update',
             });
-            const res = await n8n.updateWorkflow(id, payload, { snapshotId: snap.id });
+
+            // n8n's PUT replaces the whole workflow. Anything the caller did not
+            // resend is gone — so pinned test data and stored state are carried
+            // over unless they are being deliberately changed. Losing them is a
+            // quiet form of deleting something.
+            const carried = { ...payload };
+            for (const key of ['pinData', 'staticData']) {
+              const next = workflow[key] ?? current?.[key];
+              if (next !== undefined) carried[key] = next;
+            }
+
+            const res = await n8n.updateWorkflow(id, carried, { snapshotId: snap.id });
+            const tagged = await applyTags(id);
             return ok({
               updated: true,
               id,
               snapshotId: snap.id,
               confirmed: res.confirmed,
               validation,
+              tagged,
+              keptFromPreviousVersion: ['pinData', 'staticData'].filter((k) => carried[k] !== undefined && workflow[k] === undefined),
               note: `Previous version saved as snapshot ${snap.id}; it can be restored at any time.`,
             });
           }

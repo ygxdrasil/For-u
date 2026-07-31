@@ -303,6 +303,71 @@ test('a list that was cut short says so', async () => {
   }
 });
 
+test('he can do the system tagging he is instructed to do', async () => {
+  // The prompt tells him to tag every workflow in a system with the same
+  // "system:<name>" tag. Nothing could set a tag, so that instruction produced
+  // either a silent omission or a claim that was not true.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const p = new URL(url).pathname.replace('/api/v1', '');
+    const method = init?.method ?? 'GET';
+    calls.push(`${method} ${p}`);
+    const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (method === 'GET' && p === '/tags') return reply({ data: [] });
+    if (method === 'POST' && p === '/tags') return reply({ id: 'tag1', name: JSON.parse(init.body).name });
+    if (method === 'POST' && p === '/workflows') return reply({ id: 'new1', name: 'Leads' });
+    if (method === 'GET' && p.startsWith('/workflows/')) return reply({ id: 'new1', name: 'Leads', tags: [{ name: 'system:leads' }] });
+    return reply({});
+  };
+
+  const tools = buildToolRegistry({ n8n: createN8nClient({ baseUrl: 'https://x.invalid', apiKey: 'k', fetchImpl }), store: createMemoryStore(), approvals: [] });
+  const save = tools.find((t) => t.name === 'save_workflow');
+  assert.ok(Object.keys(save.parameters.properties).includes('tags'), 'save_workflow cannot be given a tag');
+
+  const wf = { name: 'Leads', nodes: [{ id: '1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }], connections: {} };
+  const out = await save.handler({ mode: 'create', workflow: wf, tags: ['system:leads'] });
+  assert.equal(out.ok, true, out.error);
+  assert.equal(out.tagged.confirmed, true, 'the tag was not read back on the workflow');
+  assert.ok(calls.some((c) => c.startsWith('PUT') && c.endsWith('/tags')), 'no tag was ever applied');
+});
+
+test('updating a workflow keeps the pinned data it did not resend', async () => {
+  // n8n's PUT replaces the whole workflow, so anything not resent is gone.
+  // Losing someone's pinned test data is a quiet way of deleting something.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const existing = {
+    id: 'wf1', name: 'Leads',
+    nodes: [{ id: '1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+    connections: {},
+    pinData: { Start: [{ json: { email: 'sam@example.com' } }] },
+    staticData: { lastRun: '2030-01-01' },
+  };
+
+  let sent = null;
+  const fetchImpl = async (url, init) => {
+    const method = init?.method ?? 'GET';
+    const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (method === 'PUT') { sent = JSON.parse(init.body); return reply(existing); }
+    return reply(existing);
+  };
+
+  const tools = buildToolRegistry({ n8n: createN8nClient({ baseUrl: 'https://x.invalid', apiKey: 'k', fetchImpl }), store: createMemoryStore(), approvals: [] });
+  const out = await tools.find((t) => t.name === 'save_workflow').handler({
+    mode: 'update', id: 'wf1',
+    workflow: { name: 'Leads renamed', nodes: existing.nodes, connections: {} },
+  });
+
+  assert.equal(out.ok, true, out.error);
+  assert.deepEqual(sent.pinData, existing.pinData, 'the pinned test data was wiped');
+  assert.deepEqual(sent.staticData, existing.staticData, 'stored state was wiped');
+  assert.deepEqual(out.keptFromPreviousVersion.sort(), ['pinData', 'staticData']);
+});
+
 test('a model with no price cannot be saved as a preference', async () => {
   // It saved happily and the next request then refused to run at all, because
   // the meter will not guess a rate — correctly, but the trap was set on save.

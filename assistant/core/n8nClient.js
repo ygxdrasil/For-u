@@ -131,6 +131,38 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     return request('GET', '/tags');
   }
 
+  /**
+   * Attach tags by NAME, creating any that do not exist yet.
+   *
+   * The API takes tag ids, not names, so this resolves them first. Tagging is
+   * how a group of workflows stays findable as one system — the assistant is
+   * told to do it, so it has to be something it can actually do.
+   */
+  async function setWorkflowTags(id, names) {
+    const wanted = [...new Set((names ?? []).map((n) => String(n).trim()).filter(Boolean))];
+    if (!wanted.length) return { tags: [], confirmed: true };
+
+    const existing = (await listTags())?.data ?? [];
+    const byName = new Map(existing.map((t) => [t.name, t.id]));
+
+    const ids = [];
+    for (const name of wanted) {
+      if (byName.has(name)) {
+        ids.push(byName.get(name));
+        continue;
+      }
+      const created = await request('POST', '/tags', { body: { name } });
+      if (created?.id) ids.push(created.id);
+    }
+
+    await request('PUT', `/workflows/${encodeURIComponent(id)}/tags`, { body: ids.map((tagId) => ({ id: tagId })) });
+
+    // Read back rather than trust the write.
+    const readBack = await getWorkflow(id).catch(() => null);
+    const applied = (readBack?.tags ?? []).map((t) => t.name ?? t);
+    return { tags: applied, confirmed: wanted.every((n) => applied.includes(n)), requested: wanted };
+  }
+
   // -------------------------------------------------------------------------
   // writes — each one reads back
 
@@ -278,6 +310,7 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     listExecutions,
     getExecution,
     listTags,
+    setWorkflowTags,
     createWorkflow,
     updateWorkflow,
     setActive,

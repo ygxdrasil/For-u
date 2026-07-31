@@ -96,6 +96,9 @@ function fakeN8n(behaviour = {}) {
       });
     }
     if (method === 'GET' && p === '/credentials') return reply({ data: [{ id: 'cred1', name: 'Slack', type: 'slackApi' }] });
+    if (method === 'GET' && p === '/tags') return reply({ data: [{ id: 'tag1', name: 'existing' }] });
+    if (method === 'POST' && p === '/tags') { const t = JSON.parse(init.body); return reply({ id: `tag_${t.name}`, name: t.name }); }
+    if (method === 'PUT' && /\/tags$/.test(p)) return reply([{ id: 'tag_system:leads', name: 'system:leads' }]);
     return reply({ message: `no route for ${method} ${p}` }, 404);
   };
 
@@ -896,6 +899,61 @@ await check('a minted token works once and is never shown again', async () => {
   const id = (listed.body.tokens ?? []).find((t) => t.label === 'another ai')?.id;
   await callRoute('tokens.js', { method: 'POST', headers: { authorization: 'Bearer stress-agent-token' }, body: { action: 'retire', id } });
   assert.equal((await authenticate({ headers: { authorization: `Bearer ${token}` } }, store)).ok, false, 'a retired token still works');
+});
+
+/* ============================== 12. promises the tools have to keep */
+
+section('12. Promises the tools have to keep');
+
+await check('he can actually do the system tagging he is told to do', async () => {
+  // The prompt tells him to tag every workflow in a group with the same
+  // "system:<name>" tag so they stay findable as a unit. If no tool can do
+  // that, the instruction produces either a silent omission or a claim that
+  // is not true.
+  const { tools } = registryFor(fakeN8n());
+  const saveWorkflow = tools.find((t) => t.name === 'save_workflow');
+  const canTag =
+    tools.some((t) => /tag/i.test(t.name)) ||
+    Object.keys(saveWorkflow.parameters.properties ?? {}).includes('tags');
+  assert.ok(canTag, 'nothing in the registry can set a tag, but the prompt instructs him to tag every workflow in a system');
+});
+
+await check('a tag asked for is actually applied to the workflow', async () => {
+  const fake = fakeN8n();
+  const { byName } = registryFor(fake);
+  const out = await byName('save_workflow').handler({ mode: 'create', workflow: { ...WORKFLOW, id: undefined }, tags: ['system:leads'] });
+  assert.equal(out.ok, true, out.error);
+  assert.ok(
+    fake.log.some((l) => /\/tags/.test(l)),
+    `no tag call was made, so the tag was silently dropped. Calls: ${fake.log.join(', ')}`,
+  );
+});
+
+await check('updating a workflow does not silently throw away its pinned data', async () => {
+  // n8n's PUT replaces the whole workflow. Sending it back without pinData
+  // wipes the test data someone pinned, without a word about it.
+  const withPins = {
+    ...WORKFLOW,
+    pinData: { Start: [{ json: { email: 'sam@example.com' } }] },
+    staticData: { lastRun: '2030-01-01' },
+  };
+  let sent = null;
+  const fetchImpl = async (url, init) => {
+    const p = new URL(url).pathname.replace('/api/v1', '');
+    const method = init?.method ?? 'GET';
+    const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (method === 'PUT') { sent = JSON.parse(init.body); return reply(withPins); }
+    if (method === 'GET' && p.startsWith('/workflows/')) return reply(withPins);
+    return reply({ data: [] });
+  };
+  const store = createMemoryStore();
+  const n8n = createN8nClient({ baseUrl: 'https://n8n.invalid', apiKey: 'k', fetchImpl });
+  const tools = buildToolRegistry({ n8n, store, approvals: [], prefs: {}, onStatus: () => {} });
+
+  const out = await tools.find((t) => t.name === 'save_workflow').handler({ mode: 'update', id: 'wf1', workflow: { name: 'Leads', nodes: WORKFLOW.nodes, connections: WORKFLOW.connections } });
+  assert.equal(out.ok, true, out.error);
+  assert.ok(sent, 'nothing was sent');
+  assert.deepEqual(sent.pinData, withPins.pinData, 'the pinned test data was wiped by the update');
 });
 
 /* ============================================================ report */
