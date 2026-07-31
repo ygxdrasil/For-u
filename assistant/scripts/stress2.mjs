@@ -956,6 +956,41 @@ await check('updating a workflow does not silently throw away its pinned data', 
   assert.deepEqual(sent.pinData, withPins.pinData, 'the pinned test data was wiped by the update');
 });
 
+/* ============================== 13. what a tool result costs */
+
+section('13. What a tool result costs');
+
+await check('no tool result is large enough to distort the bill', async () => {
+  // Every result stays in the conversation and is re-sent on each later turn,
+  // so an oversized one is not paid for once — it is paid for repeatedly. This
+  // pins the current worst case so a future change cannot quietly multiply it.
+  const { tools, byName } = registryFor(fakeN8n());
+  const sizes = [];
+
+  for (const [label, args] of [
+    ['search_nodes wide', { query: 'google', limit: 50 }],
+    ['search_nodes silly', { query: 'a', limit: 999 }],
+  ]) {
+    sizes.push([label, JSON.stringify(await byName('search_nodes').handler(args)).length]);
+  }
+
+  for (const type of ['n8n-nodes-base.httpRequest', 'n8n-nodes-base.notion', 'n8n-nodes-base.slack', 'n8n-nodes-base.googleSheets', '@n8n/n8n-nodes-langchain.agent']) {
+    sizes.push([`schema ${type}`, JSON.stringify(await byName('get_node_schema').handler({ nodeType: type })).length]);
+  }
+
+  const worst = sizes.sort((a, b) => b[1] - a[1])[0];
+  assert.ok(worst[1] < 60_000, `${worst[0]} returns ${(worst[1] / 1024).toFixed(1)}KB — roughly ${Math.round(worst[1] / 4000)}k tokens, re-billed on every turn after it`);
+});
+
+await check('a conversation cannot grow without limit', async () => {
+  const store = createMemoryStore();
+  for (let i = 0; i < 60; i++) {
+    await run({ text: `turn ${i}`, sessionId: 'long', config: cfg, store, llmClientFactory: scripted([{ text: 'ok' }]) }, {});
+  }
+  const messages = (await store.getSession('long')).messages;
+  assert.ok(messages.length <= 40, `the session holds ${messages.length} messages, all re-sent and re-billed every turn`);
+});
+
 /* ============================================================ report */
 
 process.stdout.write('\n');
