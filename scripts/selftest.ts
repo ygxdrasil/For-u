@@ -459,6 +459,35 @@ try {
   }
   ok('every model she uses is priced, so the meter is not guessing');
 
+  /*
+   * A retired model must not make her deaf.
+   *
+   * Hearing runs on a cheaper model than thinking, so it can be retired on its
+   * own while everything else still works. Google retires models on published
+   * dates and sometimes ahead of them. The symptom would be the worst kind:
+   * she stops understanding anything said aloud, and nothing on screen says why.
+   */
+  const heard: string[] = [];
+  const deaf = new GeminiProvider('unused', 'gemini-2.5-flash');
+  (deaf as unknown as {client: unknown}).client = {
+    models: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      generateContent: async (params: any) => {
+        heard.push(params.model);
+        if (params.model !== 'gemini-2.5-flash') {
+          throw new Error('models/whatever is not found for API version v1beta');
+        }
+        return {text: 'the words that were said', usageMetadata: {}};
+      },
+    },
+  };
+
+  const rescued = await deaf.transcribe({audio: SPOKEN_AUDIO, mimeType: 'audio/wav'});
+  assert.equal(rescued, 'the words that were said', 'she must still hear');
+  assert.equal(heard.length, 2, 'one attempt, then one fallback — not a loop');
+  assert.equal(heard[1], 'gemini-2.5-flash', 'falling back to the model that is alive');
+  ok('a retired transcription model falls back rather than making her deaf');
+
   // ---- how hard she thinks, per sentence ---------------------------------
   // One flat budget for everything meant a question worth thinking about got
   // exactly as much thought as a light switch. These are the sentences the

@@ -271,10 +271,49 @@ export class GeminiProvider implements LlmProvider {
     return response.text ?? '';
   }
 
+  /**
+   * A model that has been retired must not make her deaf.
+   *
+   * Google retires models on published dates and sometimes ahead of them —
+   * the whole 2.0 line went in June, and the 2.5 line has a shutdown date
+   * pencilled in with reports of it answering 404 early. Hearing runs on a
+   * different, cheaper model than thinking, so it can vanish on its own while
+   * everything else still works, and the symptom is the worst kind: she stops
+   * understanding anything said aloud and there is nothing on screen to say
+   * why.
+   *
+   * So a "no such model" is caught once and the attempt repeated with the
+   * model she thinks with — which is demonstrably alive, because she is
+   * answering. Slower and dearer for that turn, and she keeps her hearing.
+   * Loud in the log, because this should be fixed rather than absorbed.
+   */
+  private goneMissing(error: unknown): boolean {
+    const detail = (error as Error)?.message ?? '';
+    return /404|NOT_FOUND|not found|no longer available|is not supported/i.test(detail);
+  }
+
   async transcribe(request: TranscribeRequest): Promise<string> {
+    try {
+      return await this.transcribeWith(config.transcribeModel, request);
+    } catch (error) {
+      if (!this.goneMissing(error) || config.transcribeModel === this.model) throw error;
+
+      console.error(
+        `[grace] the transcription model ${config.transcribeModel} is gone ` +
+          `(${(error as Error).message}); falling back to ${this.model}. ` +
+          'Set GRACE_TRANSCRIBE_MODEL to something current.',
+      );
+      return this.transcribeWith(this.model, request);
+    }
+  }
+
+  private async transcribeWith(
+    model: string,
+    request: TranscribeRequest,
+  ): Promise<string> {
     await budget.requireBudget();
     const response = await this.client.models.generateContent({
-      model: config.transcribeModel,
+      model,
       contents: [
         {
           role: 'user',
@@ -297,7 +336,9 @@ export class GeminiProvider implements LlmProvider {
       },
     });
 
-    meter(config.transcribeModel, response.usageMetadata);
+    // Billed against whichever model actually did the work, not whichever one
+    // was configured — a fallback that meters the wrong one hides its own cost.
+    meter(model, response.usageMetadata);
     return (response.text ?? '').trim();
   }
 
