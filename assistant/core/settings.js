@@ -120,13 +120,42 @@ export async function savePrefs(store, patch) {
   return next;
 }
 
-/** The session signing secret, created once and then stable. */
+/**
+ * The session signing secret. It must be identical on every request forever:
+ * if it changes, every cookie ever issued stops verifying at once and you are
+ * asked for the password again with nothing to explain why.
+ *
+ * SESSION_SECRET in the environment wins when set, because that is stable by
+ * construction and survives anything happening to the database. Otherwise it
+ * is created once and read back from storage.
+ */
 export async function sessionSecret(store) {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+
   const existing = await store.getKv(KEY_SESSION_SECRET);
   if (existing?.secret) return existing.secret;
+
   const secret = crypto.randomBytes(32).toString('hex');
   await store.setKv(KEY_SESSION_SECRET, { secret, createdAt: new Date().toISOString() });
+
+  // Read back rather than trusting the write. If storage silently dropped it,
+  // the next request mints a different secret and every session dies — so it
+  // is better to know that here than to be puzzled by it later.
+  const readBack = await store.getKv(KEY_SESSION_SECRET);
+  if (readBack?.secret !== secret) {
+    console.error('[auth] session secret did not survive a write/read round trip — sessions will not persist');
+  }
   return secret;
+}
+
+/**
+ * A short, non-reversible fingerprint of the signing secret. Safe to expose:
+ * it identifies WHICH secret is in force without revealing it, so a changing
+ * fingerprint between requests proves the secret is unstable.
+ */
+export async function sessionKeyId(store) {
+  const secret = await sessionSecret(store);
+  return crypto.createHash('sha256').update(secret).digest('hex').slice(0, 12);
 }
 
 async function resolveEncryption(store) {

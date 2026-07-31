@@ -22,7 +22,7 @@
 
 import { createStore } from '../core/store.js';
 import { json, methodGuard, readBody } from '../core/http.js';
-import { isPasswordSet, setupPassword, checkPassword, changePassword, sessionSecret } from '../core/settings.js';
+import { isPasswordSet, setupPassword, checkPassword, changePassword, sessionSecret, sessionKeyId } from '../core/settings.js';
 import { issueSession, inspectSession, shouldRenew, sessionCookie, readSessionCookie } from '../core/secrets.js';
 
 /** Shared by every route that serves a browser. */
@@ -61,6 +61,10 @@ export default async function handler(req, res) {
       // cookie expired, or the signing secret changed underneath it. Three
       // different problems that a bare "signed out" cannot tell apart.
       reason: session.ok ? 'ok' : session.reason,
+      // Identifies which signing key is in force without revealing it. If this
+      // changes between two requests, the secret is unstable and that alone
+      // explains being asked for the password every time.
+      sessionKeyId: await sessionKeyId(store),
       durable: store.durable,
       // Being honest about the consequence rather than letting them find out.
       warning: store.durable
