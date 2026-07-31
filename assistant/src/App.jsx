@@ -4,15 +4,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
  * Jason's HUD.
  *
  * ONE CALLER of the pipeline, not the pipeline. Capability belongs in
- * core/tools.js — never here.
+ * core/tools.js — never here. The terminal's Save button posts to
+ * /api/workflow, which runs the same validator and takes the same snapshot as
+ * Jason's own edits; editing by hand is the same net with different hands on
+ * the keyboard, not a way around it.
  *
- * Layout: chat is the page and is always mounted, so switching what you are
- * looking at never interrupts a conversation in flight. Everything else lives
- * in a side panel that folds away.
+ * Layout: the work surface owns the screen — canvas or terminal — and chat is
+ * docked along the bottom where you type. The panel folds to a strip that still
+ * carries live numbers, because a fold that leaves the screen blank is what
+ * made the last version feel dead.
  *
  * Rules held to: no anthropomorphism, no hidden uncertainty ("couldn't confirm"
  * is violet everywhere and is never rounded to a tick or a cross), nothing
- * labelled Delete, and no wall of text where a number does.
+ * labelled Delete, and no wall of text where a number does. Every icon is drawn
+ * here as SVG — the previous version used Unicode symbols that arrived as empty
+ * boxes on the machine this runs on.
  */
 
 const post = async (url, body) => {
@@ -28,7 +34,7 @@ const ago = (iso) => {
   if (s < 86400) return `${Math.round(s / 3600)}h`;
   return `${Math.round(s / 86400)}d`;
 };
-const clock = (iso) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '--:--');
+const clock = (iso) => (iso ? new Date(iso).toTimeString().slice(0, 8) : '--:--:--');
 const dur = (a, b) => (a && b ? `${((new Date(b) - new Date(a)) / 1000).toFixed(1)}s` : '—');
 
 /** Status codes never reach the screen; the four outcomes stay distinct. */
@@ -43,6 +49,39 @@ const PLAIN = {
   error: 'something broke on my side',
 };
 
+/* =================================================================== icons */
+
+const Svg = ({ children }) => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {children}
+  </svg>
+);
+
+const ICONS = {
+  gauge: <><path d="M2.5 12a5.8 5.8 0 1 1 11 0" /><path d="M8 12 10.6 7" /></>,
+  nodes: <><rect x="1.5" y="5.5" width="4" height="5" rx="1" /><rect x="10.5" y="2.5" width="4" height="4" rx="1" /><rect x="10.5" y="9.5" width="4" height="4" rx="1" /><path d="M5.5 8h2.5v-3.5h2.5M8 8v3.5h2.5" /></>,
+  alert: <><path d="M8 2.2 14.4 13.3H1.6z" /><path d="M8 6.4v3.1M8 11.4h.01" /></>,
+  chip: <><rect x="4.5" y="4.5" width="7" height="7" rx="1" /><path d="M6.5 2v2.5M9.5 2v2.5M6.5 11.5V14M9.5 11.5V14M2 6.5h2.5M2 9.5h2.5M11.5 6.5H14M11.5 9.5H14" /></>,
+  gear: <><circle cx="8" cy="8" r="2.2" /><path d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" /></>,
+  power: <><path d="M8 1.6v5.6" /><path d="M4.4 3.8a5.2 5.2 0 1 0 7.2 0" /></>,
+  panel: <><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M10 2.5v11" /></>,
+  command: <><path d="M5.5 3.2a1.7 1.7 0 1 0 1.7 1.7v6.2a1.7 1.7 0 1 0 1.7-1.7H3.8a1.7 1.7 0 1 0 1.7 1.7V4.9a1.7 1.7 0 1 0-1.7 1.7h8.4a1.7 1.7 0 1 0-1.7-1.7" /></>,
+  external: <><path d="M9 2.5h4.5V7" /><path d="M13.5 2.5 7.5 8.5" /><path d="M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" /></>,
+  arrow: <path d="M3 8h10M9 4l4 4-4 4" />,
+};
+
+const Mark = () => (
+  <svg className="mark" viewBox="0 0 24 24" aria-hidden="true">
+    <circle className="ring" cx="12" cy="12" r="8.6" opacity=".22" />
+    <g className="spin">
+      <path className="ring" d="M12 3.4a8.6 8.6 0 0 1 8.6 8.6" />
+    </g>
+    <circle className="core" cx="12" cy="12" r="3.3" />
+  </svg>
+);
+
+/* ==================================================================== gate */
+
 export default function App() {
   const [auth, setAuth] = useState(null);
   useEffect(() => {
@@ -50,13 +89,11 @@ export default function App() {
     post('/api/auth', { action: 'status' }).then(setAuth);
   }, []);
 
-  if (auth === null) return <div className="gate"><p className="sub">Waking…</p></div>;
+  if (auth === null) return <div className="gate"><Mark /><p className="sub">Waking…</p></div>;
   if (!auth.passwordSet) return <Gate mode="setup" auth={auth} onDone={setAuth} />;
   if (!auth.signedIn) return <Gate mode="login" auth={auth} onDone={setAuth} />;
   return <Jason onSignOut={() => post('/api/auth', { action: 'logout' }).then(() => setAuth({ ...auth, signedIn: false }))} />;
 }
-
-const Mark = () => <div className="mark"><i /></div>;
 
 function Gate({ mode, auth, onDone }) {
   const [password, setPassword] = useState('');
@@ -112,34 +149,58 @@ function Gate({ mode, auth, onDone }) {
   );
 }
 
-/* ====================================================================== */
+/* =================================================================== shell */
 
 const SECTIONS = [
-  { id: 'overview', glyph: '◵', label: 'Overview' },
-  { id: 'workflows', glyph: '⣿', label: 'Workflows' },
-  { id: 'broke', glyph: '△', label: 'Needs a look' },
-  { id: 'memory', glyph: '◈', label: 'Memory' },
-  { id: 'settings', glyph: '⚙', label: 'Settings' },
+  { id: 'overview', icon: 'gauge', label: 'Overview' },
+  { id: 'workflows', icon: 'nodes', label: 'Workflows' },
+  { id: 'broke', icon: 'alert', label: 'Needs a look' },
+  { id: 'memory', icon: 'chip', label: 'Memory' },
+  { id: 'settings', icon: 'gear', label: 'Settings' },
 ];
+
+const BLANK_WORKFLOW = JSON.stringify(
+  {
+    name: 'Untitled',
+    nodes: [{ id: '1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+    connections: {},
+  },
+  null,
+  2,
+);
 
 function Jason({ onSignOut }) {
   const [section, setSection] = useState('overview');
-  const [folded, setFolded] = useState(() => window.innerWidth < 780);
+  const [folded, setFolded] = useState(() => window.innerWidth < 860);
+  const [tab, setTab] = useState('canvas');
   const [data, setData] = useState(null);
+  const [checkedAt, setCheckedAt] = useState(null);
   const [messages, setMessages] = useState([]);
   const [live, setLive] = useState([]);
   const [busy, setBusy] = useState(false);
   const [approval, setApproval] = useState(null);
   const [canvas, setCanvas] = useState(null);
+  const [calls, setCalls] = useState([]);
+  const [palette, setPalette] = useState(false);
+
+  // The terminal's buffer lives up here so switching tabs never loses an edit.
+  const [code, setCode] = useState(BLANK_WORKFLOW);
+  const [codeId, setCodeId] = useState('');
+  const codeDirty = useRef(false);
+
   // Held in a ref as well as state: the 'done' frame needs the latest drawing
   // synchronously, and reading state there would capture a stale closure.
   const lastCanvas = useRef(null);
   const sessionId = useRef(`s_${Math.random().toString(36).slice(2)}`);
 
   const prefs = data?.sections?.settings?.data?.prefs;
+  const n8nBaseUrl = data?.sections?.settings?.data?.n8nBaseUrl ?? null;
 
   const refresh = useCallback(() => {
-    fetch('/api/dashboard').then((r) => r.json()).then((d) => d.ok && setData(d)).catch(() => {});
+    fetch('/api/dashboard')
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) { setData(d); setCheckedAt(new Date().toISOString()); } })
+      .catch(() => {});
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -169,6 +230,15 @@ function Jason({ onSignOut }) {
     r.dataset.busy = busy ? 'yes' : 'no';
   }, [state, busy, prefs?.theme, prefs?.accent, prefs?.motion]);
 
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette((p) => !p); }
+      if (e.key === 'Escape') setPalette(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const said = {
     idle: 'Idle',
     thinking: live[live.length - 1]?.text ?? 'Thinking',
@@ -177,6 +247,13 @@ function Jason({ onSignOut }) {
     resolved: 'Done',
     offline: "Can't reach your n8n",
   }[state];
+
+  /** Pull the workflow he is writing into the terminal, unless you've edited it. */
+  const offerCode = (workflow, id) => {
+    if (!workflow?.nodes || codeDirty.current) return;
+    setCode(JSON.stringify(workflow, null, 2));
+    if (id) setCodeId(String(id));
+  };
 
   async function send(text, approvals = []) {
     if (!text.trim() || busy) return;
@@ -202,14 +279,31 @@ function Jason({ onSignOut }) {
           const dl = f.split('\n').find((l) => l.startsWith('data: '));
           if (!ev || !dl) continue;
           let d; try { d = JSON.parse(dl.slice(6)); } catch { continue; }
+
           if (ev === 'status') events.push({ kind: 'run', text: d.status, key: `s${events.length}` });
-          if (ev === 'tool_start') events.push({ kind: 'run', text: d.say ?? d.name, key: d.name });
+
+          if (ev === 'tool_start') {
+            events.push({ kind: 'run', text: d.say ?? d.name, key: d.name });
+            // The terminal is the point of this: you see the JSON he wrote,
+            // not a description of it.
+            offerCode(d.args?.workflow, d.args?.id);
+            setCalls((c) => [...c.slice(-199), { at: new Date().toISOString(), name: d.name, say: d.say, args: d.args, kind: 'run' }]);
+          }
+
           if (ev === 'tool_end') {
             const hit = [...events].reverse().find((e) => e.key === d.name && e.kind === 'run');
             if (hit) { hit.kind = d.ok ? 'ok' : 'bad'; hit.text = d.say ?? d.name; hit.error = d.ok ? null : d.error; }
             if (d.preview) { lastCanvas.current = d.preview; setCanvas(d.preview); }
             if (d.needsApproval) setApproval({ action: d.needsApproval, detail: d.error });
+            setCalls((c) => {
+              const i = c.map((x) => x.name).lastIndexOf(d.name);
+              if (i < 0) return c;
+              const next = [...c];
+              next[i] = { ...next[i], kind: d.ok ? 'ok' : 'bad', error: d.error, detail: d.detail ?? null, endedAt: new Date().toISOString() };
+              return next;
+            });
           }
+
           if (ev === 'done') { setMessages((m) => [...m, { role: 'jason', text: d.reply, steps: [...events], status: d.status, spend: d.spend, elapsedMs: d.elapsedMs, canvas: lastCanvas.current }]); refresh(); }
           if (ev === 'error') setMessages((m) => [...m, { role: 'jason', text: d.error, status: 'error' }]);
           setLive([...events]);
@@ -220,36 +314,88 @@ function Jason({ onSignOut }) {
     } finally { setBusy(false); setLive([]); }
   }
 
+  const wf = data?.sections?.workflows?.data ?? [];
+  const ex = data?.sections?.executions?.data ?? [];
   const findings = data?.sections?.findings?.data ?? [];
+  const spend = data?.sections?.spend?.data;
   const ready = data?.sections?.settings?.data?.geminiApiKey?.set;
+  const failed24h = ex.filter((e) => e.status === 'error' && Date.now() - new Date(e.startedAt).getTime() < 864e5).length;
+
+  /** Which nodes actually ran, from the most recent execution he read back. */
+  const runState = useMemo(() => {
+    const withExec = [...calls].reverse().find((c) => c.detail?.execution?.nodes?.length);
+    if (!withExec) return {};
+    return Object.fromEntries(withExec.detail.execution.nodes.map((n) => [n.node, n.status]));
+  }, [calls]);
+
+  const openInN8n = (id) => {
+    if (!n8nBaseUrl || !id) return;
+    window.open(`${n8nBaseUrl.replace(/\/$/, '')}/workflow/${id}`, '_blank', 'noopener');
+  };
+
+  const loadIntoTerminal = async (id) => {
+    setTab('terminal');
+    const r = await post('/api/workflow', { action: 'get', id });
+    if (r.ok) { setCode(JSON.stringify(r.workflow, null, 2)); setCodeId(String(id)); codeDirty.current = false; }
+  };
+
+  const commands = useMemo(() => [
+    { label: 'Canvas', hint: 'view', run: () => setTab('canvas') },
+    { label: 'Terminal', hint: 'view', run: () => setTab('terminal') },
+    ...SECTIONS.map((s) => ({ label: s.label, hint: 'panel', run: () => { setSection(s.id); setFolded(false); } })),
+    { label: folded ? 'Show panel' : 'Hide panel', hint: 'panel', run: () => setFolded((f) => !f) },
+    ...wf.map((w) => ({ label: `Open ${w.name} in n8n`, hint: 'n8n', run: () => openInN8n(w.id) })),
+    ...wf.map((w) => ({ label: `Edit ${w.name} here`, hint: 'terminal', run: () => loadIntoTerminal(w.id) })),
+    { label: 'Sign out', hint: '', run: onSignOut },
+  ], [wf, folded, n8nBaseUrl]);
 
   return (
     <div className="app">
-      <header className="top">
+      <header className="bar">
         <Mark />
-        <span className="name">Jason</span>
-        <span className="pill"><b /><span>{said}</span></span>
-        <div className="top-right">
-          <button className="bare" title="Sign out" onClick={onSignOut}>⏻</button>
-          <button className="bare" title={folded ? 'Show panel' : 'Hide panel'} onClick={() => setFolded((f) => !f)}>{folded ? '☰' : '✕'}</button>
+        <span className="brand">Jason</span>
+        <div className="state"><i className="led" /><span>{said}</span></div>
+
+        <div className="bar-right">
+          <div className="stat-chip" title="Workflows in your n8n"><b>{wf.length}</b>flows</div>
+          <div className={`stat-chip ${failed24h ? 'alert' : ''}`} title="Failed runs in the last 24 hours"><b>{failed24h}</b>failed</div>
+          <div className="stat-chip" title="This month, against your cap">
+            <b>{spend ? `$${spend.monthToDateUsd.toFixed(2)}` : '$—'}</b>/ ${spend?.capUsd ?? '—'}
+          </div>
+          <button className="icon-btn" title="Commands" onClick={() => setPalette(true)}><Svg>{ICONS.command}</Svg></button>
+          <span className="kbd">⌘K</span>
+          <button className="icon-btn" title={folded ? 'Show panel' : 'Hide panel'} onClick={() => setFolded((f) => !f)}><Svg>{ICONS.panel}</Svg></button>
+          <button className="icon-btn" title="Sign out" onClick={onSignOut}><Svg>{ICONS.power}</Svg></button>
         </div>
       </header>
 
-      <div className="body">
-        <Chat
-          messages={messages}
-          live={live}
-          busy={busy}
-          approval={approval}
-          onSend={send}
-          onDismiss={() => setApproval(null)}
-          canvas={canvas}
-          ready={ready}
-          showStream={prefs?.showToolStream !== false}
-        />
+      <div className="middle">
+        <main className="work">
+          <div className="tabs">
+            <button aria-selected={tab === 'canvas'} onClick={() => setTab('canvas')}>Canvas</button>
+            <button aria-selected={tab === 'terminal'} onClick={() => setTab('terminal')}>Terminal</button>
+            <span className="grow" />
+            <span className="tag">{tab === 'canvas' ? (canvas?.name ?? 'nothing drawn') : `${calls.length} calls`}</span>
+          </div>
 
-        <aside className={`side ${folded ? 'folded' : ''}`}>
-          <nav className="side-tabs">
+          <div className="surface">
+            {tab === 'canvas' ? (
+              <CanvasView preview={canvas} runState={runState} busy={busy} ready={ready} onSend={send} />
+            ) : (
+              <Terminal
+                code={code}
+                setCode={(v) => { codeDirty.current = true; setCode(v); }}
+                id={codeId}
+                setId={setCodeId}
+                calls={calls}
+                onSaved={() => { codeDirty.current = false; refresh(); }}
+              />
+            )}
+          </div>
+        </main>
+
+        <aside className={`panel ${folded ? 'folded' : ''}`}>
+          <nav className="panel-tabs">
             {SECTIONS.map((s) => (
               <button
                 key={s.id}
@@ -257,26 +403,71 @@ function Jason({ onSignOut }) {
                 title={s.label}
                 onClick={() => { setSection(s.id); setFolded(false); }}
               >
-                <span className="glyph">{s.glyph}</span>
-                <span className="label">{s.label}</span>
-                {s.id === 'broke' && findings.length ? <span className="badge">{findings.length}</span> : null}
+                <Svg>{ICONS[s.icon]}</Svg>
+                <span className="lbl">{s.label}</span>
+                {s.id === 'broke' && findings.length ? <span className="n">{findings.length}</span> : null}
+                {s.id === 'workflows' && wf.length ? <span className="n">{wf.length}</span> : null}
               </button>
             ))}
           </nav>
-          <div className="side-content">
+
+          {/* Folded still carries numbers. A fold that empties the screen is
+              exactly what made the previous version feel dead. */}
+          <div className="strip">
+            <div><div className="v">{wf.length}</div><div className="k">flows</div></div>
+            <div><div className={`v ${failed24h ? 'bad' : ''}`}>{failed24h}</div><div className="k">failed</div></div>
+            <div><div className="v">{ex.length}</div><div className="k">runs</div></div>
+            <div><div className="v">{spend ? spend.monthToDateUsd.toFixed(2) : '—'}</div><div className="k">usd</div></div>
+          </div>
+
+          <div className="panel-body">
             {section === 'overview' && <Overview data={data} />}
-            {section === 'workflows' && <Workflows data={data} />}
+            {section === 'workflows' && <Workflows data={data} onOpen={openInN8n} onEdit={loadIntoTerminal} canOpen={Boolean(n8nBaseUrl)} />}
             {section === 'broke' && <Broke findings={findings} />}
             {section === 'memory' && <Memory />}
             {section === 'settings' && <Settings onSaved={refresh} />}
           </div>
         </aside>
       </div>
+
+      <Dock
+        messages={messages}
+        live={live}
+        busy={busy}
+        ready={ready}
+        approval={approval}
+        onSend={send}
+        onDismiss={() => setApproval(null)}
+        showStream={prefs?.showToolStream !== false}
+      />
+
+      <footer className="status">
+        <i className={`heart ${checkedAt && Date.now() - new Date(checkedAt).getTime() > (prefs?.refreshSeconds ?? 30) * 2500 ? 'stale' : ''}`} />
+        <span>checked {ago(checkedAt)} ago</span>
+        <i className="sep" />
+        <span>{data?.vitals?.nodeIndex?.nodeCount ?? '—'} nodes known</span>
+        <i className="sep" />
+        <div className="ticker">
+          {ex.slice(0, 8).map((e) => (
+            <span className="run" key={e.id}>
+              <span>{clock(e.startedAt)}</span>
+              <span className={e.status === 'error' ? 'bad' : 'ok'}>{e.status === 'error' ? '✕' : '✓'}</span>
+              <span>{e.workflowName ?? e.workflowId}</span>
+              <span>{dur(e.startedAt, e.stoppedAt)}</span>
+            </span>
+          ))}
+          {!ex.length && <span className="run"><span>no runs recorded</span></span>}
+        </div>
+        <i className="sep" />
+        <span>{data?.vitals?.build?.buildId ?? 'unstamped'}</span>
+      </footer>
+
+      {palette && <Palette commands={commands} onClose={() => setPalette(false)} />}
     </div>
   );
 }
 
-/* ==================================================================== chat */
+/* ================================================================== canvas */
 
 const STARTERS = [
   'What do I have running?',
@@ -284,36 +475,245 @@ const STARTERS = [
   'Build me a contact form that posts good leads to Slack',
 ];
 
-function Chat({ messages, live, busy, approval, onSend, onDismiss, canvas, ready, showStream }) {
+/**
+ * The workflow, drawn as it is built. Columns are distance from the trigger,
+ * which is the only layout that matches how the thing actually runs.
+ *
+ * A node switched off for a dry run is dashed and faded, so "nothing was sent"
+ * is something you can see rather than only be told. A wire animates only when
+ * the node feeding it has genuinely run and the one after it has not — it is
+ * execution state, not decoration.
+ */
+function CanvasView({ preview, runState, busy, ready, onSend }) {
+  if (!preview?.nodes?.length) {
+    // Still inside the grid. An empty bench should read as an empty workbench,
+    // not as a blank page — that difference is most of what "it feels dead" was.
+    return (
+      <div className="canvas-wrap">
+        <div className="blank">
+          <div>
+            <h2>Nothing on the bench.</h2>
+            <p>Describe the outcome below. Whatever he builds gets drawn here as he builds it.</p>
+            <div className="row" style={{ justifyContent: 'center' }}>
+              {STARTERS.map((s) => <button key={s} className="ghost" disabled={!ready} onClick={() => onSend(s)}>{s}</button>)}
+            </div>
+            {!ready && <p style={{ marginTop: 14, color: 'var(--invisible)' }}>No Gemini key yet — Settings, in the panel.</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const depths = [...new Set(preview.nodes.map((n) => n.depth))].sort((a, b) => a - b);
+  const at = (d) => preview.nodes.filter((n) => n.depth === d);
+  const ranAt = (d) => at(d).some((n) => runState[n.name]);
+
+  return (
+    <div className="canvas-wrap">
+      <div className="flow">
+        {depths.map((d, i) => (
+          <span key={d} style={{ display: 'contents' }}>
+            {i > 0 && <span className={`wire ${busy && ranAt(depths[i - 1]) && !ranAt(d) ? 'hot' : ''}`} />}
+            <div className="col">
+              {at(d).map((n) => (
+                <div key={n.name} className={`step ${n.trigger ? 'trigger' : ''} ${n.muted ? 'muted' : ''} ${runState[n.name] === 'ok' ? 'ran' : ''} ${runState[n.name] === 'error' ? 'failed' : ''}`}>
+                  <div className="st-head">
+                    {runState[n.name] && <span className={`dot ${runState[n.name] === 'error' ? 'bad' : 'ok'}`} />}
+                    <span className="st-name" title={n.name}>{n.name}</span>
+                  </div>
+                  <div className="st-kind">{n.short}</div>
+                </div>
+              ))}
+            </div>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================ terminal */
+
+const TERM_VIEWS = [
+  { id: 'json', label: 'workflow.json' },
+  { id: 'calls', label: 'calls' },
+  { id: 'output', label: 'output' },
+];
+
+/**
+ * The terminal: what he wrote, what he called, and what came back.
+ *
+ * The JSON here is editable and Save posts it to /api/workflow, which runs the
+ * same three-layer validator and takes the same snapshot before overwriting.
+ * Check is entirely local, so you can validate an edit with n8n unreachable.
+ */
+function Terminal({ code, setCode, id, setId, calls, onSaved }) {
+  const [view, setView] = useState('json');
+  const [note, setNote] = useState(null);
+  const [problems, setProblems] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const parse = () => {
+    try {
+      return { ok: true, workflow: JSON.parse(code) };
+    } catch (err) {
+      return { ok: false, error: `That isn't valid JSON: ${err.message}` };
+    }
+  };
+
+  const act = async (action) => {
+    const p = parse();
+    if (!p.ok) { setProblems(null); return setNote({ tone: 'bad', text: p.error }); }
+    setBusy(true);
+    const r = await post('/api/workflow', { action, workflow: p.workflow, id: id || undefined });
+    setBusy(false);
+    setProblems(r.validation ?? null);
+
+    if (action === 'check') {
+      const errs = r.validation?.errors?.length ?? 0;
+      const warns = r.validation?.warnings?.length ?? 0;
+      return setNote(
+        errs
+          ? { tone: 'bad', text: `${errs} thing${errs > 1 ? 's' : ''} would fail. Listed below.` }
+          : { tone: warns ? 'warn' : 'ok', text: warns ? `Valid, with ${warns} to look at.` : 'Valid.' },
+      );
+    }
+    if (!r.ok) return setNote({ tone: 'bad', text: r.error });
+    if (r.id) setId(String(r.id));
+    setNote({ tone: r.confirmed ? 'ok' : 'unknown', text: r.note });
+    onSaved?.();
+  };
+
+  const load = async () => {
+    if (!id) return setNote({ tone: 'warn', text: 'Which workflow? Put its id in the box.' });
+    setBusy(true);
+    const r = await post('/api/workflow', { action: 'get', id });
+    setBusy(false);
+    if (!r.ok) return setNote({ tone: 'bad', text: r.error });
+    setCode(JSON.stringify(r.workflow, null, 2));
+    setNote({ tone: 'ok', text: `Loaded ${r.workflow?.name ?? id}.` });
+  };
+
+  return (
+    <div className="term">
+      <div className="term-tabs">
+        {TERM_VIEWS.map((v) => (
+          <button key={v.id} aria-selected={view === v.id} onClick={() => setView(v.id)}>{v.label}</button>
+        ))}
+        {view === 'json' && (
+          <div className="actions">
+            <input value={id} placeholder="workflow id" style={{ width: 104 }} onChange={(e) => setId(e.target.value.trim())} />
+            <button className="ghost" disabled={busy} onClick={load}>Load</button>
+            <button className="ghost" disabled={busy} onClick={() => act('check')}>Check</button>
+            <button disabled={busy} onClick={() => act('save')}>{id ? 'Save' : 'Create'}</button>
+          </div>
+        )}
+      </div>
+
+      <div className="term-body">
+        {view === 'json' && (
+          <>
+            {note && <div className={`notice ${note.tone === 'bad' ? 'bad' : note.tone === 'unknown' ? 'unknown' : note.tone === 'warn' ? 'warn' : ''}`} style={{ margin: 8 }}>{note.text}</div>}
+            {problems?.errors?.map((e, i) => (
+              <div className="notice bad" key={`e${i}`} style={{ margin: '0 8px 6px' }}>
+                <span className="mono">{e.node ? `${e.node} · ` : ''}{e.code}</span><br />{e.message}
+              </div>
+            ))}
+            {problems?.warnings?.map((w, i) => (
+              <div className="notice warn" key={`w${i}`} style={{ margin: '0 8px 6px' }}>
+                <span className="mono">{w.node ? `${w.node} · ` : ''}{w.code}</span><br />{w.message}
+              </div>
+            ))}
+            <textarea className="code" spellCheck={false} value={code} onChange={(e) => setCode(e.target.value)} />
+          </>
+        )}
+
+        {view === 'calls' && (
+          <div className="log">
+            {!calls.length && <div className="empty">Nothing called yet. Every tool he uses shows up here with its arguments.</div>}
+            {calls.map((c, i) => (
+              <div key={i}>
+                <div className={`line ${c.kind === 'bad' ? 'bad' : ''}`}>
+                  <span className="t">{clock(c.at)}</span>
+                  <span className="n">{c.name}</span>
+                  <span className="d">{c.error ?? c.say ?? ''}</span>
+                </div>
+                {c.args && Object.keys(c.args).length > 0 && (
+                  <details className="result">
+                    <summary>arguments</summary>
+                    <pre>{JSON.stringify(c.args, null, 2)}</pre>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {view === 'output' && <Output calls={calls} />}
+      </div>
+    </div>
+  );
+}
+
+/** What each node actually produced, per run he read back. */
+function Output({ calls }) {
+  const runs = calls.filter((c) => c.detail?.execution?.nodes?.length);
+  if (!runs.length) return <div className="empty">Nothing has run yet. Once he tests something, each step's output lands here.</div>;
+
+  return (
+    <div className="log">
+      {runs.map((c, i) => (
+        <div key={i}>
+          <div className="line">
+            <span className="t">{clock(c.endedAt ?? c.at)}</span>
+            <span className="n">{c.name}</span>
+            <span className="d">
+              execution {c.detail.execution.id ?? '—'} · {c.detail.execution.status ?? 'unknown'}
+              {c.detail.disabledWriteNodes ? ` · switched off: ${c.detail.disabledWriteNodes.join(', ')}` : ''}
+            </span>
+          </div>
+          {c.detail.execution.nodes.map((n, j) => (
+            <div key={j}>
+              <div className={`line ${n.status === 'error' ? 'bad' : ''}`}>
+                <span className="t">{n.status === 'error' ? '✕' : '✓'}</span>
+                <span className="n">{n.node}</span>
+                <span className="d">{n.error ?? `${n.itemCount ?? 0} item${n.itemCount === 1 ? '' : 's'}`}</span>
+              </div>
+              {n.firstItem && (
+                <details className="result">
+                  <summary>first item out of {n.node}</summary>
+                  <pre>{n.firstItem}</pre>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ==================================================================== dock */
+
+function Dock({ messages, live, busy, ready, approval, onSend, onDismiss, showStream }) {
   const [input, setInput] = useState('');
   const bottom = useRef(null);
   useEffect(() => bottom.current?.scrollIntoView({ behavior: 'smooth' }), [messages, live]);
 
   const submit = () => { onSend(input); setInput(''); };
+  const hasThread = messages.length > 0 || live.length > 0 || approval;
 
   return (
-    <main className="chat">
-      <div className="thread">
-        <div className="thread-inner">
-          {!ready && <div className="notice warn">No Gemini key yet — Settings, in the panel.</div>}
-
-          {messages.length === 0 && !busy && (
-            <div className="empty-chat">
-              <h2>What do you want built?</h2>
-              <div>Describe the outcome. I'll work out the workflows.</div>
-              <div className="suggest">
-                {STARTERS.map((s) => <button key={s} className="ghost" onClick={() => onSend(s)} disabled={!ready}>{s}</button>)}
-              </div>
-            </div>
-          )}
-
+    <div className="dock">
+      {hasThread && (
+        <div className="dock-thread">
           {messages.map((m, i) => (
             <div key={i} className={`msg ${m.role}`}>
+              <div className="who">{m.role === 'user' ? 'you' : 'jason'}</div>
               {m.role === 'jason' && showStream && m.steps?.length > 0 && (
                 <div className="steps">{m.steps.map((s, j) => <div key={j} className={s.kind}>{s.text}</div>)}</div>
               )}
-              {m.canvas && <Canvas preview={m.canvas} />}
-              <div className="bubble">{m.text}</div>
+              <div className="body">{m.text}</div>
               {m.role === 'jason' && (
                 <div className="after">
                   {m.status && PLAIN[m.status] && <span className="verdict unconfirmed">{PLAIN[m.status]}</span>}
@@ -324,10 +724,10 @@ function Chat({ messages, live, busy, approval, onSend, onDismiss, canvas, ready
             </div>
           ))}
 
-          {(live.length > 0 || canvas) && (
+          {live.length > 0 && showStream && (
             <div className="msg jason">
-              {showStream && live.length > 0 && <div className="steps">{live.map((s, j) => <div key={j} className={s.kind}>{s.text}</div>)}</div>}
-              {canvas && <Canvas preview={canvas} live />}
+              <div className="who">jason</div>
+              <div className="steps">{live.map((s, j) => <div key={j} className={s.kind}>{s.text}</div>)}</div>
             </div>
           )}
 
@@ -342,62 +742,60 @@ function Chat({ messages, live, busy, approval, onSend, onDismiss, canvas, ready
           )}
           <div ref={bottom} />
         </div>
-      </div>
+      )}
 
-      <div className="composer">
-        <div className="composer-inner">
-          <textarea
-            value={input}
-            rows={1}
-            placeholder="Describe what you want…"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
-          />
-          <button className="send" onClick={submit} disabled={busy || !ready || !input.trim()}>{busy ? '…' : 'Send'}</button>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/**
- * The workflow, drawn as it is built. Columns are distance from the trigger.
- * A node switched off for the dry run is drawn dashed and faded, so "nothing
- * was sent" is something you can see rather than only be told.
- */
-function Canvas({ preview, live }) {
-  if (!preview?.nodes?.length) return null;
-  const depths = [...new Set(preview.nodes.map((n) => n.depth))].sort((a, b) => a - b);
-  const muted = preview.nodes.filter((n) => n.muted).length;
-
-  return (
-    <div className="canvas">
-      <div className="cap">
-        <span>{preview.name ?? 'workflow'}</span>
-        <span>· {preview.nodes.length} steps</span>
-        {muted > 0 && <span style={{ color: 'var(--invisible)' }}>· {muted} switched off for the test</span>}
-        {live && <span style={{ color: 'var(--state)' }}>· building</span>}
-      </div>
-      <div className="lanes">
-        {depths.map((d, i) => (
-          <span key={d} style={{ display: 'contents' }}>
-            {i > 0 && <span className="link">→</span>}
-            <div className="lane">
-              {preview.nodes.filter((n) => n.depth === d).map((n) => (
-                <div key={n.name} className={`node ${n.trigger ? 'trigger' : ''} ${n.muted ? 'muted' : ''}`}>
-                  <div className="t">{n.name}</div>
-                  <div className="k">{n.short}</div>
-                </div>
-              ))}
-            </div>
-          </span>
-        ))}
+      <div className="dock-line">
+        <span className="caret">›</span>
+        <textarea
+          value={input}
+          rows={1}
+          placeholder={ready ? 'Describe what you want built…' : 'Add a Gemini key in Settings first.'}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
+        />
+        <button onClick={submit} disabled={busy || !ready || !input.trim()}>{busy ? '…' : 'Send'}</button>
       </div>
     </div>
   );
 }
 
-/* ================================================================== panel */
+/* ================================================================= palette */
+
+function Palette({ commands, onClose }) {
+  const [q, setQ] = useState('');
+  const [i, setI] = useState(0);
+  const hits = commands.filter((c) => c.label.toLowerCase().includes(q.toLowerCase())).slice(0, 40);
+  const pick = (c) => { c?.run(); onClose(); };
+
+  return (
+    <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="palette">
+        <input
+          autoFocus
+          value={q}
+          placeholder="Jump to, or open a workflow in n8n…"
+          onChange={(e) => { setQ(e.target.value); setI(0); }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setI((n) => Math.min(n + 1, hits.length - 1)); }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setI((n) => Math.max(n - 1, 0)); }
+            if (e.key === 'Enter') { e.preventDefault(); pick(hits[i]); }
+          }}
+        />
+        <ul>
+          {hits.map((c, n) => (
+            <li key={c.label} aria-selected={n === i} onMouseEnter={() => setI(n)} onMouseDown={() => pick(c)}>
+              {c.label}
+              {c.hint && <span className="hint">{c.hint}</span>}
+            </li>
+          ))}
+          {!hits.length && <li>Nothing matches.</li>}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/* =================================================================== panel */
 
 function Overview({ data }) {
   if (!data) return <div className="empty">Reading…</div>;
@@ -446,7 +844,7 @@ function Overview({ data }) {
         <h3>Recent runs<span className="rule" /></h3>
         {ex.slice(0, 12).map((e) => (
           <div key={e.id} className="row" style={{ gap: 8, padding: '2px 0', fontSize: 12, flexWrap: 'nowrap' }}>
-            <span className="mono" style={{ color: 'var(--dimmer)' }}>{clock(e.startedAt)}</span>
+            <span className="mono" style={{ color: 'var(--dimmer)' }}>{clock(e.startedAt).slice(0, 5)}</span>
             <span className={`dot ${e.status === 'error' ? 'bad' : e.status === 'success' ? 'ok' : 'unk'}`} />
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dim)' }}>{e.workflowName ?? e.workflowId}</span>
             <span className="mono" style={{ color: 'var(--dimmer)' }}>{dur(e.startedAt, e.stoppedAt)}</span>
@@ -514,30 +912,37 @@ function Activity({ executions }) {
   );
 }
 
-const WorkflowItem = ({ w, ex }) => {
-  const last = ex.find((e) => e.workflowId === w.id);
-  return (
-    <div className="item">
-      <div className="head">
-        <span className={`dot ${w.isArchived ? 'off' : w.active ? 'ok' : 'unk'}`} />
-        <span className="title">{w.name}</span>
-        <span className="when">{last ? ago(last.startedAt) : 'never'}</span>
-      </div>
-      <div className="chain">
-        {w.chain.map((n, i) => (
-          <span key={i} style={{ display: 'contents' }}>{i > 0 && <span className="a">→</span>}<span className="n">{n.short}</span></span>
-        ))}
-        {w.nodeCount > w.chain.length && <span className="a">+{w.nodeCount - w.chain.length}</span>}
-      </div>
-    </div>
-  );
-};
-
-const Workflows = ({ data }) => {
+const Workflows = ({ data, onOpen, onEdit, canOpen }) => {
   const wf = data?.sections?.workflows?.data ?? [];
   const ex = data?.sections?.executions?.data ?? [];
   if (!wf.length) return <div className="empty">{data?.sections?.workflows?.error ?? 'Nothing here yet.'}</div>;
-  return <>{wf.map((w) => <WorkflowItem key={w.id} w={w} ex={ex} />)}</>;
+
+  return (
+    <>
+      {wf.map((w) => {
+        const last = ex.find((e) => e.workflowId === w.id);
+        return (
+          <div className="item" key={w.id}>
+            <div className="head">
+              <span className={`dot ${w.isArchived ? 'off' : w.active ? 'ok' : 'unk'}`} />
+              <span className="title">{w.name}</span>
+              <span className="when">{last ? ago(last.startedAt) : 'never'}</span>
+            </div>
+            <div className="chain">
+              {w.chain.map((n, i) => (
+                <span key={i} style={{ display: 'contents' }}>{i > 0 && <span className="a">→</span>}<span className="n">{n.short}</span></span>
+              ))}
+              {w.nodeCount > w.chain.length && <span className="a">+{w.nodeCount - w.chain.length}</span>}
+            </div>
+            <div className="row" style={{ marginTop: 6 }}>
+              <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => onEdit(w.id)}>Edit here</button>
+              <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} disabled={!canOpen} onClick={() => onOpen(w.id)}>Open in n8n</button>
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
 };
 
 const Broke = ({ findings }) =>
@@ -616,7 +1021,7 @@ function Memory() {
   );
 }
 
-/* =============================================================== settings */
+/* ================================================================ settings */
 
 const MODELS = ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-pro', 'gemini-3.1-pro-preview'];
 const ACCENTS = { cyan: '#0891b2', violet: '#7c3aed', amber: '#b45309', green: '#0f8a5f', magenta: '#be185d' };

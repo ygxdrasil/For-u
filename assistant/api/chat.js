@@ -71,6 +71,7 @@ export default async function handler(req, res) {
             // model gets the whole thing regardless.
             error: r?.ok === false ? String(r.error).slice(0, 400) : null,
             needsApproval: r?.needsApproval ?? null,
+            detail: detailFor(r),
           }),
         onText: (chunk) => send('text', { chunk }),
       },
@@ -91,4 +92,24 @@ export default async function handler(req, res) {
   } finally {
     res.end();
   }
+}
+
+/**
+ * The part of a tool result worth putting on screen.
+ *
+ * The terminal shows what actually came back per node, which is the difference
+ * between "it ran" and "it ran and here is what came out of step three". The
+ * model still receives the whole result — this is a view, not a filter on the
+ * pipeline.
+ */
+function detailFor(r) {
+  if (!r || typeof r !== 'object') return null;
+  const detail = {};
+  if (r.execution) detail.execution = r.execution;
+  if (r.assessment) detail.assessment = r.assessment;
+  if (r.validation) detail.validation = r.validation;
+  if (Array.isArray(r.disabledWriteNodes) && r.disabledWriteNodes.length) detail.disabledWriteNodes = r.disabledWriteNodes;
+  if (r.values) detail.values = r.values.slice(0, 25);
+  if (r.id) detail.id = r.id;
+  return Object.keys(detail).length ? detail : null;
 }
