@@ -88,6 +88,16 @@ function Gate({ mode, auth, onDone }) {
           {auth.reason === 'expired' ? 'Your session ran out.' : "Something changed on the server, so your session didn't carry over."}
         </p>
       )}
+      {/* Cookies are per-hostname. This deployment answers on three addresses,
+          and signing in on one leaves you signed out on the others — which is
+          indistinguishable from "it forgot me" unless the address is on screen. */}
+      <p className="sub" style={{ marginTop: -12, marginBottom: 16 }}>
+        <span className="mono">{window.location.host}</span>
+        {window.location.host !== 'for-u-peach.vercel.app' && (
+          <><br /><span style={{ color: 'var(--invisible)' }}>Sessions don't carry between addresses — use for-u-peach.vercel.app</span></>
+        )}
+      </p>
+
       <form className="card" onSubmit={submit}>
         {mode === 'setup' && auth.durable === false && <div className="notice warn">No database yet. Add DATABASE_URL, redeploy.</div>}
         <label>Password</label>
