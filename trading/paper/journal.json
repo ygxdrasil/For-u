@@ -1,0 +1,83 @@
+{
+  "createdAt": "2026-07-31T00:29:47.131Z",
+  "strategy": "TSM(252) + >2ATR from SMA200, 3xATR stop, exit on momentum flip",
+  "signals": [
+    {
+      "id": "BTC-USD-1785456000",
+      "openedAt": "2026-07-31T00:29:47.131Z",
+      "market": "Bitcoin",
+      "symbol": "BTC-USD",
+      "source": "coinbase",
+      "cls": "crypto",
+      "side": "short",
+      "entry": 64703.88,
+      "stop": 69390.95355192047,
+      "riskPerUnit": 4687.073551920468,
+      "reason": "252d momentum -24%, -4.3 ATR from SMA200",
+      "status": "open"
+    },
+    {
+      "id": "ETH-USD-1785456000",
+      "openedAt": "2026-07-31T00:29:47.131Z",
+      "market": "Ethereum",
+      "symbol": "ETH-USD",
+      "source": "coinbase",
+      "cls": "crypto",
+      "side": "short",
+      "entry": 1915.36,
+      "stop": 2103.411228952081,
+      "riskPerUnit": 188.05122895208092,
+      "reason": "252d momentum -31%, -3.1 ATR from SMA200",
+      "status": "open"
+    },
+    {
+      "id": "^GSPC-1785418200",
+      "openedAt": "2026-07-31T00:29:47.131Z",
+      "market": "S&P 500",
+      "symbol": "^GSPC",
+      "source": "yahoo",
+      "cls": "equity",
+      "side": "long",
+      "entry": 7437.6298828125,
+      "stop": 7174.707691664655,
+      "riskPerUnit": 262.9221911478453,
+      "reason": "252d momentum 17%, 4.8 ATR from SMA200",
+      "status": "open"
+    },
+    {
+      "id": "^NDX-1785418200",
+      "openedAt": "2026-07-31T00:29:47.131Z",
+      "market": "Nasdaq 100",
+      "symbol": "^NDX",
+      "source": "yahoo",
+      "cls": "equity",
+      "side": "long",
+      "entry": 28106.345703125,
+      "stop": 26225.93839030407,
+      "riskPerUnit": 1880.407312820931,
+      "reason": "252d momentum 21%, 2.6 ATR from SMA200",
+      "status": "open"
+    },
+    {
+      "id": "HG=F-1785456051",
+      "openedAt": "2026-07-31T00:29:47.131Z",
+      "market": "Copper",
+      "symbol": "HG=F",
+      "source": "yahoo",
+      "cls": "commodity",
+      "side": "long",
+      "entry": 6.501500129699707,
+      "stop": 6.158793976568033,
+      "riskPerUnit": 0.3427061531316742,
+      "reason": "252d momentum 16%, 6.3 ATR from SMA200",
+      "status": "open"
+    }
+  ],
+  "runs": [
+    {
+      "at": "2026-07-31T00:29:47.131Z",
+      "opened": 5,
+      "closed": 0
+    }
+  ]
+}
