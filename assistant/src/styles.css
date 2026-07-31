@@ -64,7 +64,12 @@ body {
 
 /* ================================================================== shell */
 
-.app { display: grid; grid-template-rows: 38px 1fr auto 22px; height: 100dvh; }
+/* minmax(0,1fr) and the min-width below are load-bearing: a grid item sizes to
+   its content by default, so a wide canvas (120 nodes across) stretched the
+   whole column and took the top bar off the right-hand edge of the screen. The
+   canvas must scroll inside .surface, never move the furniture. */
+.app { display: grid; grid-template-rows: 38px 1fr auto 22px; grid-template-columns: minmax(0, 1fr); height: 100dvh; }
+.app > * { min-width: 0; }
 
 /* ---- top bar: always-on state, failures, spend --------------------------- */
 
@@ -122,7 +127,7 @@ body {
 
 /* ---- middle: work surface + panel ---------------------------------------- */
 
-.middle { display: flex; min-height: 0; }
+.middle { display: flex; min-height: 0; min-width: 0; }
 .work { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 
 .tabs { display: flex; align-items: stretch; gap: 0; border-bottom: 1px solid var(--line); background: var(--surface); flex: none; }
@@ -137,7 +142,7 @@ body {
 .tabs .grow { flex: 1; border-right: 0; }
 .tabs .tag { font-family: var(--mono); font-size: 10.5px; color: var(--dimmer); padding-right: 10px; align-self: center; }
 
-.surface { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.surface { flex: 1; min-height: 0; min-width: 0; overflow: auto; position: relative; }
 
 /* the canvas: a real grid, so it reads as a workspace not a page */
 .canvas-wrap {

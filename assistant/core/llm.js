@@ -60,6 +60,15 @@ export function assertThinkingBudgets(tiers = TIERS) {
   return true;
 }
 
+export class ModelTimeoutError extends Error {
+  constructor(model, ms) {
+    super(`${model} did not answer within ${Math.round(ms / 1000)}s, so I stopped waiting rather than letting the request die silently.`);
+    this.name = 'ModelTimeoutError';
+    this.model = model;
+    this.timeoutMs = ms;
+  }
+}
+
 export class NoModelAvailableError extends Error {
   constructor(tried) {
     super(`Every model in this tier failed: ${tried.map((t) => `${t.model} (${t.error})`).join('; ')}`);
@@ -94,7 +103,7 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
    * @param {string} opts.systemInstruction
    * @param {object[]} [opts.functionDeclarations]
    */
-  async function generate({ tier = 'chat', contents, systemInstruction, functionDeclarations = null, label = null }) {
+  async function generate({ tier = 'chat', contents, systemInstruction, functionDeclarations = null, label = null, timeoutMs = null }) {
     const spec = tiers[tier];
     if (!spec) throw new Error(`Unknown tier "${tier}"`);
 
@@ -121,10 +130,36 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
         config.tools = [{ functionDeclarations }];
       }
 
+      // A model call with no time limit is the serverless killer: the platform
+      // stops the function at ITS limit and returns nothing at all — no error,
+      // no partial answer, nothing. Bounding the call here means a slow model
+      // costs a truthful "I ran out of time" instead of silence.
+      const deadline = timeoutMs && timeoutMs > 0 ? timeoutMs : null;
+      const callModel = async (cfg) => {
+        if (!deadline) return client.models.generateContent({ model, contents, config: cfg });
+
+        const controller = new AbortController();
+        let timer;
+        const expired = new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new ModelTimeoutError(model, deadline));
+          }, deadline);
+        });
+        try {
+          // The signal is passed as well as raced: aborting stops us waiting,
+          // but the request itself is still billed, so the race is what
+          // guarantees we return in time.
+          return await Promise.race([client.models.generateContent({ model, contents, config: { ...cfg, abortSignal: controller.signal } }), expired]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
       try {
         let res;
         try {
-          res = await client.models.generateContent({ model, contents, config });
+          res = await callModel(config);
         } catch (err) {
           // Not every model accepts a thinking budget, and the cheapest tiers
           // are the most likely to reject one. Retry once without it rather
@@ -132,7 +167,7 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
           // happened rather than silently degrading.
           if (!/thinking|thought/i.test(String(err?.message ?? '')) || config.thinkingConfig === undefined) throw err;
           const { thinkingConfig, ...withoutThinking } = config;
-          res = await client.models.generateContent({ model, contents, config: withoutThinking });
+          res = await callModel(withoutThinking);
         }
 
         const usage = res.usageMetadata ?? {};

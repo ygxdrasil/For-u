@@ -1,0 +1,105 @@
+/**
+ * Defects found by scripts/stress.mjs, each reproduced here so `npm test`
+ * catches it if it comes back. Every one of these was live in a version that
+ * passed the whole suite and looked completely healthy.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { searchNodes } from '../core/nodeIndex.js';
+import { validateWorkflow } from '../core/validate.js';
+import { savePrefs } from '../core/settings.js';
+import { readBody } from '../core/http.js';
+import { createMemoryStore } from '../core/store.js';
+import { run } from '../core/run.js';
+import { PRICES } from '../core/meter.js';
+
+const stubModel = (script) => {
+  let i = 0;
+  return () => ({ models: { generateContent: async ({ config }) => {
+    const step = script[Math.min(i++, script.length - 1)];
+    if (step.delayMs) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, step.delayMs);
+        config?.abortSignal?.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('aborted')); });
+      });
+    }
+    return { text: step.text ?? '', functionCalls: step.calls ?? [], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50 } };
+  } } });
+};
+
+const cfg = { geminiApiKey: 'stub', monthlyCapUsd: 100 };
+
+test('searching a run-together name finds the node', () => {
+  // "openAi" splits to "open ai", so whole-word matching on "openai" returned
+  // NOTHING from an index containing five OpenAI nodes.
+  for (const [query, expected] of [
+    ['openai', '@n8n/n8n-nodes-langchain.openAi'],
+    ['googlesheets', 'n8n-nodes-base.googleSheets'],
+    ['langchain', '@n8n/n8n-nodes-langchain.agent'],
+  ]) {
+    const hits = searchNodes(query, { limit: 25 }).map((r) => r.type);
+    assert.ok(hits.includes(expected), `searching "${query}" did not find ${expected}`);
+  }
+
+  // And the substring trap must still be closed.
+  const forms = searchNodes('form', { limit: 40 }).map((r) => r.type);
+  assert.ok(!forms.includes('n8n-nodes-base.aiTransform'), 'run-together matching reintroduced substring matching');
+});
+
+test('junk in the nodes list is reported, not thrown', async () => {
+  // A model returning `nodes: [null]` made the validator throw, so the model
+  // was told "validate_workflow threw" instead of what was wrong.
+  for (const nodes of [[null], [undefined], [5], ['a node'], [null, { id: '1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }]]) {
+    const r = await validateWorkflow({ name: 'X', nodes, connections: {} });
+    assert.equal(typeof r.valid, 'boolean');
+    assert.ok(r.errors.some((e) => e.code === 'NOT_A_NODE'), `no NOT_A_NODE error for ${JSON.stringify(nodes)}`);
+  }
+});
+
+test('a body of literal null does not take a route down', async () => {
+  // JSON.parse("null") is null, and every route then read .action off it —
+  // an unhandled 500 with a stack trace instead of "I did not understand that".
+  const asStream = (payload) => ({ [Symbol.asyncIterator]: async function* () { yield Buffer.from(payload); } });
+  for (const payload of ['null', '[1,2,3]', '42', '"text"', 'not json at all', '']) {
+    const body = await readBody(asStream(payload));
+    assert.equal(typeof body, 'object');
+    assert.ok(body !== null && !Array.isArray(body), `readBody(${payload}) returned ${JSON.stringify(body)}`);
+    assert.doesNotThrow(() => body.action);
+  }
+});
+
+test('a model that will not stop calling tools is reported, not passed off as done', async () => {
+  // Running out of steps returned status "ok" whose entire answer was
+  // "(no answer produced)" — a successful-looking turn that said nothing.
+  const store = createMemoryStore();
+  const r = await run(
+    { text: 'build something', config: cfg, store, deadlineMs: 40_000, llmClientFactory: stubModel([{ calls: [{ name: 'search_nodes', args: { query: 'slack' } }] }]) },
+    {},
+  );
+  assert.equal(r.status, 'continuing');
+  assert.doesNotMatch(r.reply, /no answer produced/);
+  assert.ok(await store.getJob(r.jobId), 'the unfinished work was not saved to resume');
+});
+
+test('a model that hangs is cut off before the platform kills the request', async () => {
+  // Serverless returns NOTHING at its limit — no error, no partial answer. An
+  // unbounded model call meant a slow model produced silence.
+  const started = Date.now();
+  const r = await run(
+    { text: 'hello', config: cfg, store: createMemoryStore(), deadlineMs: 11_000, llmClientFactory: stubModel([{ delayMs: 60_000, text: 'far too late' }]) },
+    {},
+  );
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 14_000, `ran ${(elapsed / 1000).toFixed(1)}s past an 11s deadline`);
+  assert.equal(r.status, 'continuing');
+});
+
+test('a model with no price cannot be saved as a preference', async () => {
+  // It saved happily and the next request then refused to run at all, because
+  // the meter will not guess a rate — correctly, but the trap was set on save.
+  const saved = await savePrefs(createMemoryStore(), { chatModel: 'gemini-9-imaginary', designModel: 'gemini-2.5-pro' });
+  assert.ok(PRICES[saved.chatModel], `an unpriced model "${saved.chatModel}" was accepted`);
+  assert.equal(saved.designModel, 'gemini-2.5-pro', 'a priced model must still be accepted');
+});

@@ -73,14 +73,23 @@ export function methodGuard(req, res, allowed) {
   return false;
 }
 
-/** Body parsing, for runtimes that do not do it for us. */
+/**
+ * Body parsing, for runtimes that do not do it for us.
+ *
+ * Always an ordinary object. `JSON.parse("null")` is null, and every route then
+ * reads `req.body.action` off it and throws — which in a serverless function is
+ * an unhandled 500 with a stack trace instead of "I didn't understand that".
+ * The same goes for a bare array or number. Rubbish in, empty object out.
+ */
+const asObject = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+
 export async function readBody(req) {
-  if (req.body && typeof req.body === 'object') return req.body;
+  if (req.body !== undefined) return asObject(req.body);
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   if (!chunks.length) return {};
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return asObject(JSON.parse(Buffer.concat(chunks).toString('utf8')));
   } catch {
     return {};
   }

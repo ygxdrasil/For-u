@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PRICES } from '../core/meter.js';
 
 /**
  * Jason's HUD.
@@ -1023,7 +1024,12 @@ function Memory() {
 
 /* ================================================================ settings */
 
-const MODELS = ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-pro', 'gemini-3.1-pro-preview'];
+// Derived from the price table, not typed out again. A model listed here but
+// unpriced would be saved happily and then refused on the next request.
+const MODELS = Object.entries(PRICES)
+  .map(([id, p]) => ({ id, perMillion: p.input + p.output }))
+  .sort((a, b) => a.perMillion - b.perMillion)
+  .map((m) => m.id);
 const ACCENTS = { cyan: '#0891b2', violet: '#7c3aed', amber: '#b45309', green: '#0f8a5f', magenta: '#be185d' };
 
 const Setting = ({ n, h, children }) => (

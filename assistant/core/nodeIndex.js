@@ -89,6 +89,26 @@ function words(text) {
 }
 
 /**
+ * The run-together forms, as whole tokens.
+ *
+ * Splitting "openAi" into "open ai" is right for matching "ai", and wrong for
+ * matching what people actually type: "openai" found NOTHING, in an index that
+ * contains five OpenAI nodes. Same for "googlesheets" and "langchain".
+ *
+ * These are compared by exact token equality, never as substrings, so the
+ * whole-word guarantee is untouched — "day" still does not match "today".
+ */
+function squashedTokens(...texts) {
+  const out = new Set();
+  for (const text of texts) {
+    for (const chunk of String(text || '').split(/[^A-Za-z0-9]+/)) {
+      if (chunk) out.add(chunk.toLowerCase());
+    }
+  }
+  return out;
+}
+
+/**
  * Search the catalog. Returns nodes with their resource/operation
  * discriminators, which is what the caller needs before asking for a schema.
  */
@@ -97,15 +117,22 @@ export function searchNodes(query, { limit = 12 } = {}) {
   const terms = words(query).split(/\s+/).filter(Boolean);
   if (!terms.length) return [];
 
+  // "open ai", "openAi" and "openai" are the same search as far as the person
+  // typing is concerned.
+  const squashedQuery = String(query).replace(/[^A-Za-z0-9]+/g, '').toLowerCase();
+
   const scored = [];
   for (const node of c.nodes) {
     const haystackName = words(`${node.name} ${node.displayName}`);
     const haystackDesc = words(node.description || '');
     const haystackOps = words(node.operations.map((o) => `${o.resource || ''} ${o.operation || ''}`).join(' '));
+    const squashed = squashedTokens(node.name, node.displayName, node.type);
 
     let score = 0;
+    if (squashedQuery && squashed.has(squashedQuery)) score += 10;
     for (const t of terms) {
       if (wordMatches(t, haystackName)) score += 10;
+      else if (squashed.has(t.toLowerCase())) score += 8;
       else if (wordMatches(t, haystackDesc)) score += 4;
       else if (wordMatches(t, haystackOps)) score += 2;
     }

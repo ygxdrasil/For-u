@@ -12,7 +12,7 @@
 
 import { createStore } from './store.js';
 import { createMeter } from './meter.js';
-import { createLlm, TIERS } from './llm.js';
+import { createLlm, TIERS, ModelTimeoutError } from './llm.js';
 import { createN8nClient } from './n8nClient.js';
 import { buildToolRegistry } from './tools.js';
 import { catalogMeta } from './nodeIndex.js';
@@ -220,10 +220,24 @@ export async function run(input, hooks = {}) {
     let response;
     try {
       h.onStatus(step === 0 ? 'Thinking…' : 'Working…');
-      response = await llm.generate({ tier, contents, systemInstruction, functionDeclarations, label: `step${step}` });
+      response = await llm.generate({
+        tier,
+        contents,
+        systemInstruction,
+        functionDeclarations,
+        label: `step${step}`,
+        // The model gets whatever time is left, less the margin needed to write
+        // the answer back. Without this a single slow call runs past the
+        // platform limit and the caller receives nothing at all.
+        timeoutMs: Math.max(1000, timeLeft() - 3000),
+      });
     } catch (err) {
       if (err instanceof BudgetExceededError) {
         return result({ status: 'budget_exceeded', reply: err.message, spend: await meter.summary() });
+      }
+      if (err instanceof ModelTimeoutError) {
+        stoppedBecause = 'deadline';
+        break;
       }
       return result({ status: 'model_error', reply: `The model call failed: ${err.message}`, spend: await meter.summary() });
     }
@@ -299,17 +313,25 @@ export async function run(input, hooks = {}) {
 
     contents.push({ role: 'user', parts: responseParts });
     if (stoppedBecause === 'deadline') break;
+
+    // Falling out of the loop having used every step is running out of road,
+    // exactly like running out of time. Reported as 'ok' it produced a
+    // successful-looking turn whose entire answer was "(no answer produced)".
+    if (step === prefs.maxSteps - 1) stoppedBecause = 'steps';
   }
 
-  if (stoppedBecause === 'deadline') {
+  if (stoppedBecause === 'deadline' || stoppedBecause === 'steps') {
     const jobId = `job_${Date.now().toString(36)}`;
     await store.saveJob({ id: jobId, sessionId: input.sessionId ?? null, contents, createdAt: new Date().toISOString(), status: 'paused' });
+    const ran = steps.map((s) => s.tool).join(', ') || 'nothing yet';
     return result({
       status: 'continuing',
       jobId,
       reply:
         (reply ? `${reply}\n\n` : '') +
-        `I ran out of time on this request before finishing. Here is what I completed: ${steps.map((s) => s.tool).join(', ') || 'nothing yet'}. Ask me to continue and I will pick up from here.`,
+        (stoppedBecause === 'deadline'
+          ? `I ran out of time on this request before finishing. Here is what I completed: ${ran}. Ask me to continue and I will pick up from here.`
+          : `I used all ${prefs.maxSteps} steps allowed in one request before finishing. Here is what I completed: ${ran}. Ask me to continue and I will pick up from here.`),
       spend: await meter.summary(),
     });
   }

@@ -15,7 +15,11 @@ import {
   hashPassword,
   verifyPassword,
 } from './secrets.js';
+import { PRICES } from './meter.js';
 import crypto from 'node:crypto';
+
+/** The only models that may be selected: the ones we can actually price. */
+export const PRICEABLE_MODELS = Object.keys(PRICES);
 
 const KEY_AUTH = 'auth:owner';
 const KEY_SESSION_SECRET = 'auth:session_secret';
@@ -79,6 +83,11 @@ const ENUMS = {
   theme: ['light', 'dark', 'auto'],
   accent: ['cyan', 'violet', 'amber', 'green', 'magenta'],
   density: ['compact', 'roomy'],
+  // Derived from the price table, never typed out again. Saving a model with
+  // no price used to be accepted, and the next request then refused to run at
+  // all — the meter will not guess a rate, and it is right not to.
+  chatModel: PRICEABLE_MODELS,
+  designModel: PRICEABLE_MODELS,
 };
 
 function clampPrefs(input) {

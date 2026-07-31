@@ -60,9 +60,21 @@ export async function validateWorkflow(workflow) {
     return { valid: false, errors: [err('NO_WORKFLOW', 'No workflow object supplied.')], warnings, layers };
   }
 
-  const nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
-  if (!nodes.length) {
+  const rawNodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
+  if (!rawNodes.length) {
     return { valid: false, errors: [err('NO_NODES', 'The workflow has no nodes.')], warnings, layers };
+  }
+
+  // Junk in the nodes list is reported and then dropped, once, before any layer
+  // sees it. A model returning `nodes: [null]` used to make this throw, and a
+  // validator that throws tells the caller "validate_workflow threw" instead of
+  // what is actually wrong with their workflow.
+  const nodes = rawNodes.filter((n) => n && typeof n === 'object');
+  for (const junk of rawNodes.filter((n) => !n || typeof n !== 'object')) {
+    errors.push(err('NOT_A_NODE', `The nodes list contains ${junk === null ? 'null' : typeof junk}, which is not a node object.`));
+  }
+  if (!nodes.length) {
+    return { valid: false, errors, warnings, layers };
   }
 
   // ---------------------------------------------------------------- layer 2
