@@ -224,7 +224,7 @@ function Jason({ onSignOut }) {
   const state = useMemo(() => {
     if (approval) return 'waiting';
     if (busy) return /saving|switching|fetching|testing|putting/.test(live[live.length - 1]?.text ?? '') ? 'acting' : 'thinking';
-    if (data && data.vitals.n8n.configured && !data.vitals.n8n.reachable) return 'offline';
+    if (data?.vitals?.n8n?.configured && !data.vitals.n8n.reachable) return 'offline';
     if ([...messages].reverse().find((m) => m.role === 'jason')?.status === 'ok') return 'resolved';
     return 'idle';
   }, [busy, live, approval, data, messages]);
@@ -832,8 +832,8 @@ function Overview({ data }) {
 
   return (
     <>
-      {vitals.n8n.configured && !vitals.n8n.reachable && <div className="notice unknown">Can't reach your n8n. State unknown, not broken.</div>}
-      {!vitals.n8n.configured && <div className="notice warn">No n8n connected yet — Settings.</div>}
+      {vitals.n8n?.configured && !vitals.n8n?.reachable && <div className="notice unknown">Can't reach your n8n. State unknown, not broken.</div>}
+      {!vitals.n8n?.configured && <div className="notice warn">No n8n connected yet — Settings.</div>}
 
       <div className="card">
         <div className="tiles">
@@ -988,9 +988,9 @@ function Vitals({ vitals }) {
   return (
     <>
       <div className="kv">
-        <div><span className="k">Your n8n</span><span className="v"><span className={`dot ${vitals.n8n.reachable ? 'ok' : vitals.n8n.configured ? 'bad' : 'off'}`} />{vitals.n8n.reachable ? 'connected' : vitals.n8n.configured ? "can't reach" : 'not set up'}</span></div>
+        <div><span className="k">Your n8n</span><span className="v"><span className={`dot ${vitals.n8n?.reachable ? 'ok' : vitals.n8n?.configured ? 'bad' : 'off'}`} />{vitals.n8n?.reachable ? 'connected' : vitals.n8n?.configured ? "can't reach" : 'not set up'}</span></div>
         <div><span className="k">Nodes I know</span><span className="v">{vitals.nodeIndex?.nodeCount ?? '—'}</span></div>
-        <div><span className="k">Memory</span><span className="v"><span className={`dot ${vitals.store.durable ? 'ok' : 'bad'}`} />{vitals.store.durable ? 'saved' : 'not saved'}</span></div>
+        <div><span className="k">Memory</span><span className="v"><span className={`dot ${vitals.store?.durable ? 'ok' : 'bad'}`} />{vitals.store?.durable ? 'saved' : 'not saved'}</span></div>
         <div><span className="k">Your keys</span><span className="v"><span className={`dot ${vitals.encryption?.source === 'env' ? 'ok' : 'unk'}`} />{vitals.encryption?.source === 'env' ? 'locked away' : 'encrypted'}</span></div>
       </div>
       <button className="ghost" style={{ marginTop: 9, padding: '3px 9px', fontSize: 11 }} onClick={() => setMore((m) => !m)}>{more ? 'Less' : 'Details'}</button>
