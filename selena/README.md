@@ -66,6 +66,35 @@ anything, or spends past the cap.
 
 ---
 
+## Signing in
+
+The first time you open a fresh deployment it asks you to **set a password**.
+That is the whole setup: pick one, and you are signed in on that browser for
+**180 days**. No token to paste, nothing to re-enter.
+
+The session is an HttpOnly cookie carrying a signed value, not a random one
+looked up in a table — so signing in survives a cold start and costs no
+database read per request. The signature covers which password issued it, so
+**changing the password signs every other browser out**, which is the only
+thing that makes changing it worth doing.
+
+Setting a password also **closes the API**, immediately and without a redeploy.
+Before one is set, a deployment with no `SELENA_TOKEN` answers anyone who finds
+the URL, and says so on screen.
+
+| | |
+|---|---|
+| Password storage | scrypt with a per-password salt. The password itself is never stored. |
+| Wrong guesses | 10 in 15 minutes locks the door for 15 minutes. |
+| Who else can claim it | If `SELENA_TOKEN` is set, creating the first password requires it. If it is not, it is first-come — the setup screen warns you. |
+| Jason | Unaffected. He keeps using his bearer token; the cookie is only for you. |
+
+`SESSION_SECRET` can be set to pin the signing key. If it is not, one is
+generated and kept in the store — which is durable only as far as your database
+is, so a memory-only deployment signs you out when it sleeps.
+
+---
+
 ## Deploying
 
 1. **Import `selena/` as its own Vercel project.** Set the root directory to
@@ -79,7 +108,8 @@ anything, or spends past the cap.
    |---|---|---|
    | `GEMINI_API_KEY` | Reading the web | She runs, shows her state, and refuses to produce findings she cannot source |
    | `DATABASE_URL` | Durable storage (Neon, free tier) | Memory only — survives within a warm instance, lost on cold start. Banner says so |
-   | `SELENA_TOKEN` | Auth on every route | **The API answers anyone who finds the URL.** Red banner until set |
+   | `SELENA_TOKEN` | Jason's bearer token, and proof of ownership when setting the first password | Anyone reaching the URL first can claim the password |
+   | `SESSION_SECRET` | Pins the sign-in signing key | Generated once and kept in the store; lost if storage is not durable |
    | `ETSY_API_KEY` | The strongest evidence source, as `keystring:shared_secret` | Etsy is dark; everything else still works |
    | `JASON_ENDPOINT` | Where handoff packets are POSTed | Packets are prepared and recorded, not sent |
    | `JASON_TOKEN` | Bearer token for that endpoint | Sent without auth |
@@ -171,7 +201,7 @@ If Node cannot verify HTTPS behind corporate TLS interception, use
 ## Tests
 
 ```
-npm test          # 91 unit tests
+npm test          # 104 unit tests
 npm run selftest  # 17 end-to-end checks, whole pipeline, network stubbed
 npm run stress    # 29 hostile-input cases; keeps going and reports every one
 npm run dbtest    # 18 checks driving the REAL Postgres store against a real Postgres
@@ -193,6 +223,8 @@ things they hold in place:
 - every API route is a single path segment
 - `vercel.json` headers match `core/headers.js` exactly
 - no `DELETE FROM` exists anywhere in the source
+- a password is never stored, sessions cannot be forged, and changing the
+  password invalidates the ones issued before it
 - the scheduler workflow is valid YAML and every npm script points at a real file
 
 ---

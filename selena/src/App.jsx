@@ -12,7 +12,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, getToken } from './api.js';
-import { LiveDot, Banner } from './components.jsx';
+import { LiveDot, Banner, Empty } from './components.jsx';
+import Gate from './pages/Gate.jsx';
 
 import Dashboard from './pages/Dashboard.jsx';
 import Findings from './pages/Findings.jsx';
@@ -59,6 +60,16 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(null);
 
+  // Who are you? Asked once on load, and again only when something changes it.
+  // Nothing else renders until this is known, so the HUD never flashes a
+  // half-loaded dashboard at someone who is not signed in.
+  const [auth, setAuth] = useState(null);
+  const refreshAuth = useCallback(async () => {
+    const res = await api.authStatus();
+    setAuth(res.ok ? res.data : { hasPassword: false, signedIn: false, unreachable: res.error });
+    return res.ok ? res.data : null;
+  }, []);
+
   const refresh = useCallback(async () => {
     // Never stack polls. A slow response used to mean three requests racing
     // and the oldest one winning, which shows stale data that looks fresh.
@@ -79,6 +90,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    refreshAuth();
+  }, [refreshAuth]);
+
+  const locked = auth && !auth.unreachable && (!auth.hasPassword || !auth.signedIn);
+
+  useEffect(() => {
+    // Do not poll behind the sign-in screen: every request would 401, and the
+    // activity feed would fill with rejections instead of research.
+    if (auth === null || locked) return undefined;
     refresh();
     const timer = setInterval(refresh, POLL_MS);
     // Polling a background tab is spending money to render nothing.
@@ -90,9 +110,23 @@ export default function App() {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [refresh]);
+  }, [refresh, auth, locked]);
 
   const Page = useMemo(() => PAGES.find((p) => p.id === route.id)?.component ?? Dashboard, [route.id]);
+
+  if (auth === null) return <Empty>…</Empty>;
+
+  if (locked) {
+    return (
+      <Gate
+        status={auth}
+        onSignedIn={async () => {
+          await refreshAuth();
+          refresh();
+        }}
+      />
+    );
+  }
 
   const needsToken = error && /401|token/i.test(String(error)) && !getToken();
 
@@ -158,7 +192,7 @@ export default function App() {
           </Banner>
         ) : null}
 
-        <Page data={data} refresh={refresh} param={route.param} busy={busy} />
+        <Page data={data} refresh={refresh} param={route.param} busy={busy} auth={auth} refreshAuth={refreshAuth} />
       </main>
     </div>
   );

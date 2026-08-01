@@ -69,21 +69,50 @@ export function authenticateAdmin(req) {
 }
 
 /**
- * The gate every route calls.
+ * The gate every route calls. Three ways in, checked in this order:
  *
- * When SELENA_TOKEN is unset the API runs OPEN, on purpose: it means you can
- * deploy with no keys at all and immediately see Selena working, which is how
- * you find out whether the deploy is healthy. It is not a safe long-term
- * state, so open mode is reported on every response and the HUD shows a red
- * banner until a token is set. A quiet insecure default is the bad kind; a
- * loud one is a to-do.
+ *   1. A bearer token — Jason, the scheduler, curl.
+ *   2. A session cookie — you, in a browser, having signed in once.
+ *   3. Open, and ONLY when neither a password nor SELENA_TOKEN exists.
+ *
+ * Open mode exists so a first deploy with no configuration at all still comes
+ * up and shows you it is working, which is how you find out the deploy is
+ * healthy. It is not a safe resting state, so it is reported on every response
+ * and the HUD shows a banner. Setting a password ends it — that is the point
+ * of setting one, and it takes effect without redeploying anything.
  */
 export async function gateRequest(req, store) {
-  if (!process.env.SELENA_TOKEN) {
-    return { ok: true, open: true, warning: 'SELENA_TOKEN is not set, so this API is answering anyone who finds the URL. Set it in the Vercel environment variables.' };
+  // A presented token is a deliberate claim; judge it on its own merits rather
+  // than falling through to a cookie, or a wrong token would be masked by a
+  // browser session and you would never learn Jason's credential is stale.
+  if (extractToken(req)) {
+    const result = await authenticate(req, store);
+    return { ...result, open: false, via: result.via ?? 'token' };
   }
-  const result = await authenticate(req, store);
-  return { ...result, open: false };
+
+  const { PASSWORD_KEY, SESSION_COOKIE, parseCookies, verifySession, getSessionSecret } = await import('./password.js');
+
+  const record = await store.getKv(PASSWORD_KEY);
+  if (record?.hash) {
+    const presented = parseCookies(req)[SESSION_COOKIE];
+    if (!presented) {
+      return { ok: false, open: false, needsLogin: true, error: 'Sign in to use Selena.' };
+    }
+    const secret = await getSessionSecret(store);
+    const result = verifySession(presented, { secret, passwordVersion: record.version ?? 1 });
+    if (result.ok) return { ok: true, open: false, via: 'session' };
+    return { ok: false, open: false, needsLogin: true, error: `That sign-in is no longer valid: ${result.reason}. Sign in again.` };
+  }
+
+  if (!process.env.SELENA_TOKEN) {
+    return {
+      ok: true,
+      open: true,
+      warning: 'No password is set and SELENA_TOKEN is empty, so this API is answering anyone who finds the URL. Set a password on the sign-in screen — it takes effect immediately, with no redeploy.',
+    };
+  }
+
+  return { ok: false, open: false, error: 'No token. Send Authorization: Bearer <token>, or set a password and sign in.' };
 }
 
 /** Rotation, built with the token rather than after it. */

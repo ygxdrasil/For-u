@@ -22,12 +22,37 @@ function Flag({ on, label, why }) {
   );
 }
 
-export default function Settings({ data }) {
+export default function Settings({ data, auth, refreshAuth }) {
   const [token, setTokenState] = useState(getToken());
   const [health, setHealth] = useState(null);
   const [tokens, setTokens] = useState(null);
   const [minted, setMinted] = useState(null);
   const [error, setError] = useState(null);
+
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMessage, setPwMessage] = useState(null);
+
+  const changePassword = async () => {
+    setPwBusy(true);
+    setPwMessage(null);
+    const res = await api.authChange({ currentPassword: current, newPassword: next });
+    setPwBusy(false);
+    if (res.ok) {
+      setCurrent('');
+      setNext('');
+      setPwMessage({ tone: '', title: 'Changed', body: 'Every other browser has been signed out. This one stays signed in.' });
+      refreshAuth?.();
+    } else {
+      setPwMessage({ tone: 'warn', title: 'Not changed', body: res.error });
+    }
+  };
+
+  const signOut = async () => {
+    await api.authLogout();
+    window.location.reload();
+  };
 
   useEffect(() => {
     api.health().then((res) => (res.ok ? setHealth(res.data) : setError(res.error)));
@@ -69,26 +94,55 @@ export default function Settings({ data }) {
 
       <div className="grid g2">
         <div className="card">
-          <h3>Your access token</h3>
+          <h3>Your sign-in</h3>
           <p className="small muted" style={{ marginTop: -4 }}>
-            Kept in this browser only. Paste the value of SELENA_TOKEN from the Vercel environment variables.
+            You are signed in on this browser for {auth?.sessionDays ?? 180} days. Changing the password signs every other
+            browser out, which is the only thing that makes changing it worth doing.
           </p>
+
           <div className="field">
-            <input type="password" value={token} onChange={(ev) => setTokenState(ev.target.value)} placeholder="sel_…" />
+            <label>Current password</label>
+            <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
           </div>
+          <div className="field">
+            <label>New password</label>
+            <input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" />
+          </div>
+
+          {pwMessage ? <Banner tone={pwMessage.tone} title={pwMessage.title}>{pwMessage.body}</Banner> : null}
+
           <div className="row">
-            <button className="primary" onClick={save}>
-              Save and reload
+            <button className="primary" onClick={changePassword} disabled={pwBusy || !current || !next}>
+              {pwBusy ? 'Changing…' : 'Change password'}
             </button>
-            <button
-              onClick={() => {
-                setToken('');
-                setTokenState('');
-              }}
-            >
-              Clear
-            </button>
+            <button onClick={signOut}>Sign out</button>
           </div>
+
+          <details className="raw">
+            <summary>Advanced: a bearer token for this browser</summary>
+            <p className="small muted">
+              Not needed. The sign-in cookie is what the HUD uses. This exists only if you want this browser to
+              authenticate as Jason does — for instance to try an endpoint by hand.
+            </p>
+            <div className="field">
+              <input type="password" value={token} onChange={(ev) => setTokenState(ev.target.value)} placeholder="sel_…" />
+            </div>
+            <div className="row">
+              <button className="small" onClick={save}>
+                Save and reload
+              </button>
+              <button
+                className="small"
+                onClick={() => {
+                  setToken('');
+                  setTokenState('');
+                  window.location.reload();
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </details>
         </div>
 
         <div className="card">

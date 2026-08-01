@@ -26,14 +26,19 @@ export function setToken(value) {
   }
 }
 
-async function call(path, { method = 'GET', body = null, signal = null } = {}) {
+async function call(path, { method = 'GET', body = null, signal = null, token = null } = {}) {
   const headers = {};
-  const token = getToken();
-  if (token) headers.authorization = `Bearer ${token}`;
+  // The session cookie is the normal way in and is sent automatically. A
+  // bearer token is only used if one was deliberately stored — it exists for
+  // people driving the API by hand, not for the HUD.
+  const bearer = token ?? getToken();
+  if (bearer) headers.authorization = `Bearer ${bearer}`;
   if (body) headers['content-type'] = 'application/json';
 
   try {
-    const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : null, signal });
+    // same-origin credentials are the default, but say so: the whole sign-in
+    // design rests on this cookie being sent.
+    const res = await fetch(path, { method, headers, credentials: 'same-origin', body: body ? JSON.stringify(body) : null, signal });
     const text = await res.text();
 
     let data = null;
@@ -59,6 +64,14 @@ async function call(path, { method = 'GET', body = null, signal = null } = {}) {
 
 export const api = {
   health: () => call('/api/health'),
+
+  authStatus: () => call('/api/auth'),
+  authSetup: ({ password, token }) => call('/api/auth', { method: 'POST', body: { action: 'setup', password }, token }),
+  authLogin: ({ password }) => call('/api/auth', { method: 'POST', body: { action: 'login', password } }),
+  authLogout: () => call('/api/auth', { method: 'POST', body: { action: 'logout' } }),
+  authChange: ({ currentPassword, newPassword }) =>
+    call('/api/auth', { method: 'POST', body: { action: 'change', currentPassword, newPassword } }),
+
   dashboard: (signal) => call('/api/dashboard', { signal }),
 
   findings: (params = {}) => {
