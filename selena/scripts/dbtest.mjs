@@ -57,10 +57,16 @@ function eq(a, b, message) {
  * also what proves the parameter placeholders line up.
  */
 function pgliteSql(db) {
-  return async function sql(strings, ...values) {
+  const sql = async function sql(strings, ...values) {
+    // The real Neon driver THROWS here. The first version of this double
+    // accepted a plain string too, which is how core/store.neon.js shipped
+    // calling sql(statement) for its schema and passing all eighteen checks
+    // while being incapable of opening a real connection. A double that is
+    // more permissive than the real thing does not test the real thing.
     if (typeof strings === 'string') {
-      const res = await db.query(strings);
-      return res.rows ?? [];
+      throw new Error(
+        'This function can now be called only as a tagged-template function: sql`SELECT ${value}`, not sql("SELECT $1", [value], options). For a conventional function call with value placeholders ($1, $2, etc.), use sql.query("SELECT $1", [value], options).',
+      );
     }
     let text = '';
     strings.forEach((chunk, i) => {
@@ -70,6 +76,15 @@ function pgliteSql(db) {
     const res = await db.query(text, values);
     return res.rows ?? [];
   };
+
+  // The driver's escape hatch for a plain string, which is what the schema
+  // statements need.
+  sql.query = async (text, params = []) => {
+    const res = await db.query(text, params);
+    return res.rows ?? [];
+  };
+
+  return sql;
 }
 
 function makeFinding(id, overrides = {}) {

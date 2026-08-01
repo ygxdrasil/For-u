@@ -100,8 +100,26 @@ export async function createNeonStore({ databaseUrl, now = nowIso, sqlFactory = 
     sql = neon(databaseUrl);
   }
 
+  // The Neon driver is a tagged-template function and REFUSES a plain call:
+  //
+  //   "This function can now be called only as a tagged-template function"
+  //
+  // The schema statements carry no interpolated values, so they are not
+  // template literals — they go through sql.query(), which is the driver's
+  // documented escape hatch for a plain string.
+  //
+  // This was shipped broken. The test double accepted BOTH shapes, so eighteen
+  // database checks passed against a store that could never open a real
+  // connection. A stand-in that is more permissive than the real thing does not
+  // test the real thing; it tests the stand-in. The double now refuses exactly
+  // what the driver refuses, so this cannot happen again.
+  if (typeof sql.query !== 'function') {
+    throw new Error(
+      'The SQL driver has no .query() method. core/store.neon.js needs it for the schema statements, which have no interpolated values and so cannot be tagged templates.',
+    );
+  }
   for (const statement of SCHEMA) {
-    await sql(statement);
+    await sql.query(statement);
   }
 
   const iso = (v) => (v instanceof Date ? v.toISOString() : v ?? null);

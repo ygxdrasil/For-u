@@ -171,7 +171,7 @@ If Node cannot verify HTTPS behind corporate TLS interception, use
 ## Tests
 
 ```
-npm test          # 87 unit tests
+npm test          # 91 unit tests
 npm run selftest  # 17 end-to-end checks, whole pipeline, network stubbed
 npm run stress    # 29 hostile-input cases; keeps going and reports every one
 npm run dbtest    # 18 checks driving the REAL Postgres store against a real Postgres

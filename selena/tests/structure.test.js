@@ -116,9 +116,15 @@ test('the store interface is the same shape in memory and in Postgres', async ()
   const { createNeonStore } = await import('../core/store.neon.js');
 
   const memory = createMemoryStore();
-  // A fake sql tag that records nothing and returns nothing, so the factory
-  // can build its object without a database.
-  const fakeSql = async () => [];
+  // A fake driver that behaves like the real one, including refusing a plain
+  // call and exposing .query. The previous version of this fake accepted
+  // anything, which is precisely how the store shipped calling sql(statement)
+  // and failing on first contact with a real database.
+  const fakeSql = async (strings) => {
+    if (typeof strings === 'string') throw new Error('This function can now be called only as a tagged-template function');
+    return [];
+  };
+  fakeSql.query = async () => [];
   const neon = await createNeonStore({ databaseUrl: 'postgres://fake', sqlFactory: () => fakeSql });
 
   const memoryMethods = Object.keys(memory).filter((k) => typeof memory[k] === 'function').sort();
