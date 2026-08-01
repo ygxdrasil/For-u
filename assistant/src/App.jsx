@@ -69,6 +69,9 @@ const ICONS = {
   command: <><path d="M5.5 3.2a1.7 1.7 0 1 0 1.7 1.7v6.2a1.7 1.7 0 1 0 1.7-1.7H3.8a1.7 1.7 0 1 0 1.7 1.7V4.9a1.7 1.7 0 1 0-1.7 1.7h8.4a1.7 1.7 0 1 0-1.7-1.7" /></>,
   external: <><path d="M9 2.5h4.5V7" /><path d="M13.5 2.5 7.5 8.5" /><path d="M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" /></>,
   arrow: <path d="M3 8h10M9 4l4 4-4 4" />,
+  sun: <><circle cx="8" cy="8" r="3.1" /><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3.05 3.05l1.13 1.13M11.82 11.82l1.13 1.13M12.95 3.05l-1.13 1.13M4.18 11.82l-1.13 1.13" /></>,
+  moon: <path d="M13.4 9.6A5.8 5.8 0 0 1 6.4 2.6a5.8 5.8 0 1 0 7 7z" />,
+  auto: <><circle cx="8" cy="8" r="5.8" /><path d="M8 2.2v11.6a5.8 5.8 0 0 0 0-11.6z" fill="currentColor" stroke="none" /></>,
 };
 
 const Mark = () => (
@@ -229,15 +232,39 @@ function Jason({ onSignOut }) {
     return 'idle';
   }, [busy, live, approval, data, messages]);
 
+  // Held locally as well as saved, so the toggle lands instantly instead of
+  // waiting on a round trip to the server and back through the dashboard.
+  const [theme, setTheme] = useState(null);
+  const chosenTheme = theme ?? prefs?.theme ?? 'light';
+
   useEffect(() => {
     const r = document.documentElement;
-    const theme = prefs?.theme ?? 'light';
-    r.dataset.theme = theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const paint = () => {
+      r.dataset.theme = chosenTheme === 'auto' ? (media.matches ? 'dark' : 'light') : chosenTheme;
+    };
+    paint();
+    // On "auto", follow the system when it changes — otherwise the setting only
+    // takes effect on a reload, which reads as it not working.
+    media.addEventListener?.('change', paint);
+    return () => media.removeEventListener?.('change', paint);
+  }, [chosenTheme]);
+
+  useEffect(() => {
+    const r = document.documentElement;
     r.dataset.state = state;
     r.dataset.accent = prefs?.accent ?? 'cyan';
     r.dataset.motion = prefs?.motion === false ? 'off' : 'on';
     r.dataset.busy = busy ? 'yes' : 'no';
-  }, [state, busy, prefs?.theme, prefs?.accent, prefs?.motion]);
+  }, [state, busy, prefs?.accent, prefs?.motion]);
+
+  /** Day → night → follow the system, and round again. */
+  const cycleTheme = () => {
+    const order = ['light', 'dark', 'auto'];
+    const next = order[(order.indexOf(chosenTheme) + 1) % order.length];
+    setTheme(next);
+    post('/api/settings', { prefs: { theme: next } }).then(refresh);
+  };
 
   useEffect(() => {
     const onKey = (e) => {
@@ -373,6 +400,14 @@ function Jason({ onSignOut }) {
           </div>
           <button className="icon-btn" title="Commands" onClick={() => setPalette(true)}><Svg>{ICONS.command}</Svg></button>
           <span className="kbd">⌘K</span>
+          <button
+            className="icon-btn"
+            title={{ light: 'Day — click for night', dark: 'Night — click to follow your system', auto: 'Following your system — click for day' }[chosenTheme]}
+            aria-label={`Theme: ${chosenTheme}`}
+            onClick={cycleTheme}
+          >
+            <Svg>{ICONS[chosenTheme === 'dark' ? 'moon' : chosenTheme === 'auto' ? 'auto' : 'sun']}</Svg>
+          </button>
           <button className="icon-btn" title={folded ? 'Show panel' : 'Hide panel'} onClick={() => setFolded((f) => !f)}><Svg>{ICONS.panel}</Svg></button>
           <button className="icon-btn" title="Sign out" onClick={onSignOut}><Svg>{ICONS.power}</Svg></button>
         </div>

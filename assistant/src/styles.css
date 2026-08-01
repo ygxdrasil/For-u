@@ -6,10 +6,12 @@
  * side panel folds to a strip that still carries live numbers, because a fold
  * that leaves blank space is how the whole thing came to feel dead.
  *
- * Light throughout, sharp: hairline rules, tight corners, monospace for every
- * number and identifier. Colour still carries state, and the one rule that
- * outranks aesthetics is unchanged — "couldn't confirm" is violet and must
- * never be mistakable for failure red.
+ * Sharp either way: hairline rules, tight corners, monospace for every number
+ * and identifier. Two themes, day and night, both built from the same tokens —
+ * every colour in here is a variable, so nothing needs saying twice. Colour
+ * still carries state, and the one rule that outranks aesthetics is unchanged
+ * on both — "couldn't confirm" is violet and must never be mistakable for
+ * failure red.
  *
  * Nothing here polls, spends or loads a library. All motion is CSS.
  */
@@ -33,6 +35,12 @@
   --unconfirmed: #6d28d9;
   --failed: #c22b1f;
 
+  /* Text that sits ON the state colour. White works on the dark inks used in
+     the light theme; on the bright inks the night theme needs, it does not. */
+  --on-state: #ffffff;
+  --scrim: rgba(13, 17, 23, .28);
+  --lift: 0 16px 48px rgba(13, 17, 23, .18);
+
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light;
@@ -48,6 +56,62 @@
 :root[data-accent="amber"][data-state="idle"]   { --state: #a35a08; --state-soft: #fcf1e2; --state-line: #eecfa2; }
 :root[data-accent="green"][data-state="idle"]   { --state: #0b7a53; --state-soft: #e4f4ed; --state-line: #a4dcc5; }
 :root[data-accent="magenta"][data-state="idle"] { --state: #a81a5b; --state-soft: #fbe9f1; --state-line: #f2b6d0; }
+
+/* ================================================================== night
+ *
+ * Not the light theme with the lightness flipped. Dark backgrounds swallow the
+ * deep inks the light theme uses — #0b7a53 on near-black is a smudge — so every
+ * state colour is a brighter member of the same hue family, and the soft/line
+ * tints are mixed from it against the surface rather than hand-picked twice.
+ *
+ * The one rule that outranks aesthetics survives intact: "couldn't confirm" is
+ * violet and must never be mistakable for failure red. Those two hues are the
+ * furthest apart of the four, on both themes.
+ */
+
+:root[data-theme="dark"] {
+  --bg: #080b11;
+  --surface: #0f141d;
+  --sunk: #0b1017;
+  --ink: #e7edf6;
+  --dim: #9aabc2;
+  --dimmer: #67788f;
+  --line: #1c2431;
+  --line-hard: #2b3646;
+
+  --worked: #34d399;
+  --invisible: #fbbf24;
+  --unconfirmed: #a78bfa;
+  --failed: #f87171;
+
+  --on-state: #06121a;
+  --scrim: rgba(0, 0, 0, .6);
+  --lift: 0 18px 52px rgba(0, 0, 0, .6);
+
+  color-scheme: dark;
+
+  /* Derived, so a new state colour needs one line rather than three. */
+  --state: #22d3ee;
+  --state-soft: color-mix(in srgb, var(--state) 16%, var(--surface));
+  --state-line: color-mix(in srgb, var(--state) 42%, var(--surface));
+}
+
+:root[data-theme="dark"][data-state="thinking"] { --state: #a78bfa; }
+:root[data-theme="dark"][data-state="acting"]   { --state: #fbbf24; }
+:root[data-theme="dark"][data-state="waiting"]  { --state: #fb923c; }
+:root[data-theme="dark"][data-state="resolved"] { --state: #34d399; }
+:root[data-theme="dark"][data-state="offline"]  { --state: #94a3b8; }
+
+:root[data-theme="dark"][data-accent="violet"][data-state="idle"]  { --state: #a78bfa; }
+:root[data-theme="dark"][data-accent="amber"][data-state="idle"]   { --state: #fbbf24; }
+:root[data-theme="dark"][data-accent="green"][data-state="idle"]   { --state: #34d399; }
+:root[data-theme="dark"][data-accent="magenta"][data-state="idle"] { --state: #f472b6; }
+
+/* A dot grid tuned for light disappears on black; this one is the same idea at
+   a weight that reads against it. */
+:root[data-theme="dark"] .canvas-wrap {
+  background-image: radial-gradient(circle at 1px 1px, #223049 1px, transparent 0);
+}
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -199,7 +263,7 @@ body {
 .term-tabs button[aria-selected="true"] { color: var(--state); background: var(--state-soft); }
 .term-tabs .actions { margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 3px 8px; border: 0; }
 .term-tabs .actions input { padding: 3px 6px; font-family: var(--mono); font-size: 11px; }
-.term-tabs .actions button { border: 1px solid var(--state); border-radius: 3px; padding: 3px 9px; font-family: inherit; font-size: 11.5px; color: #fff; background: var(--state); }
+.term-tabs .actions button { border: 1px solid var(--state); border-radius: 3px; padding: 3px 9px; font-family: inherit; font-size: 11.5px; color: var(--on-state); background: var(--state); }
 .term-tabs .actions button.ghost { background: var(--surface); color: var(--dim); border-color: var(--line-hard); }
 .term-tabs .actions button:disabled { opacity: .45; cursor: not-allowed; }
 
@@ -311,8 +375,8 @@ body {
 
 /* ---- palette ------------------------------------------------------------- */
 
-.scrim { position: fixed; inset: 0; background: rgba(13, 17, 23, .28); z-index: 60; display: grid; place-items: start center; padding-top: 14vh; }
-.palette { width: min(560px, 92vw); background: var(--surface); border: 1px solid var(--line-hard); border-radius: 6px; box-shadow: 0 16px 48px rgba(13,17,23,.18); overflow: hidden; }
+.scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 60; display: grid; place-items: start center; padding-top: 14vh; }
+.palette { width: min(560px, 92vw); background: var(--surface); border: 1px solid var(--line-hard); border-radius: 6px; box-shadow: var(--lift); overflow: hidden; }
 .palette input { width: 100%; border: 0; border-bottom: 1px solid var(--line); padding: 12px 14px; font: inherit; font-size: 14px; }
 .palette input:focus { outline: none; }
 .palette ul { list-style: none; margin: 0; padding: 4px; max-height: 46vh; overflow-y: auto; }
@@ -359,7 +423,7 @@ body {
 .bars .b .bad { background: var(--failed); }
 
 button {
-  background: var(--state); color: #fff; border: 1px solid var(--state);
+  background: var(--state); color: var(--on-state); border: 1px solid var(--state);
   border-radius: 3px; padding: 5px 11px; font: inherit; font-size: 12px; font-weight: 560; cursor: pointer;
 }
 button:hover:not(:disabled) { filter: brightness(1.08); }
@@ -436,7 +500,7 @@ input:focus, select:focus { outline: none; border-color: var(--state); }
 /* ---- responsive ---------------------------------------------------------- */
 
 @media (max-width: 860px) {
-  .panel { position: fixed; inset: 38px 0 22px auto; width: min(84vw, 316px); z-index: 30; box-shadow: -6px 0 24px rgba(13,17,23,.12); }
+  .panel { position: fixed; inset: 38px 0 22px auto; width: min(84vw, 316px); z-index: 30; box-shadow: -6px 0 24px var(--scrim); }
   .panel.folded { width: min(84vw, 316px); transform: translateX(100%); }
   .panel.folded .lbl, .panel.folded .panel-body { display: revert; }
   .panel.folded .strip, .panel.folded .panel-tabs .n { display: none; }
