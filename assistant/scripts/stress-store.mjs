@@ -34,10 +34,20 @@ const check = async (label, fn) => {
   catch (err) { failures.push({ label, message: err.message.split('\n').slice(0, 3).join(' ') }); process.stdout.write(`\n  FAIL ${label}\n       ${err.message.split('\n')[0]}\n`); }
 };
 
-/** A Neon-shaped tagged template over a real embedded Postgres. */
+/**
+ * A Neon-shaped tagged template over a real embedded Postgres.
+ *
+ * Deliberately as STRICT as the real driver: @neondatabase/serverless refuses a
+ * plain sql('...') call outright. A double that accepts more than the real thing
+ * does not test the real thing — it tests the double, and it will happily
+ * certify code that cannot open a connection.
+ */
 async function postgresStore() {
   const db = new pglite.PGlite();
   const sql = async (strings, ...values) => {
+    if (!Array.isArray(strings) || !Array.isArray(strings.raw)) {
+      throw new Error('This function can now be called only as a tagged-template function: sql`SELECT ...`');
+    }
     const text = strings.reduce((acc, s, i) => acc + s + (i < values.length ? `$${i + 1}` : ''), '');
     const res = await db.query(text, values);
     return res.rows;
