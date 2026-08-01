@@ -2,24 +2,30 @@
 #
 # GitHub Actions rather than Vercel Cron, for two reasons: a deep dig is many
 # round trips and does not fit inside a 60s function, and Vercel's Hobby cron
-# fires roughly once a day. Here the Action calls /api/cron repeatedly, and each
-# call runs a couple of watches and returns — so every individual request stays
-# comfortably inside the function limit and one slow watch cannot take the rest
-# of the sweep down with it.
+# fires roughly once a day. The sweep calls /api/cron repeatedly, a couple of
+# watches at a time, so every individual request stays comfortably inside the
+# function limit and one slow watch cannot take the rest of the sweep down.
 #
 # Set two repository secrets before this does anything:
 #   SELENA_URL    https://your-selena-deployment.vercel.app
 #   SELENA_TOKEN  the same value as the SELENA_TOKEN env var on Vercel
 #
-# With those unset the job exits cleanly and says so, rather than failing every
+# With SELENA_URL unset the job exits 0 and says so, rather than failing every
 # morning and training you to ignore the red cross.
+#
+# All the logic is in selena/scripts/sweep.mjs and none of it is in this file.
+# The first version embedded a multi-line Python block in a `run:` scalar; its
+# lines sat at column zero, which silently made this whole file invalid YAML —
+# GitHub would have rejected the workflow and the watches would never have run.
+# A script in the repo can be executed against a live server before it is
+# trusted. This one was.
 
 name: Selena watches
 
 on:
   schedule:
-    # 06:10 and 18:10 UTC. Not on the hour: everything else in the world runs
-    # on the hour, and a queued Action can be delayed by many minutes.
+    # 06:10 and 18:10 UTC. Not on the hour: everything in the world runs on the
+    # hour and a queued Action can be delayed by many minutes.
     - cron: '10 6 * * *'
     - cron: '10 18 * * *'
   workflow_dispatch:
@@ -34,99 +40,24 @@ concurrency:
   group: selena-watches
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   sweep:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Check configuration
-        id: config
-        env:
-          SELENA_URL: ${{ secrets.SELENA_URL }}
-          SELENA_TOKEN: ${{ secrets.SELENA_TOKEN }}
-        run: |
-          if [ -z "$SELENA_URL" ]; then
-            echo "SELENA_URL is not set, so there is nothing to call. Add it as a repository secret."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          fi
+      - uses: actions/checkout@v4
 
-      - name: Report what is due
-        if: steps.config.outputs.ready == 'true'
-        env:
-          SELENA_URL: ${{ secrets.SELENA_URL }}
-          SELENA_TOKEN: ${{ secrets.SELENA_TOKEN }}
-        run: |
-          curl -sS --fail-with-body \
-            -H "Authorization: Bearer $SELENA_TOKEN" \
-            "$SELENA_URL/api/cron" | tee due.json
-          echo
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      - name: Run the sweep
-        if: steps.config.outputs.ready == 'true'
+      - name: Sweep
+        working-directory: selena
         env:
           SELENA_URL: ${{ secrets.SELENA_URL }}
           SELENA_TOKEN: ${{ secrets.SELENA_TOKEN }}
           PASSES: ${{ github.event.inputs.passes || '4' }}
-        run: |
-          set -o pipefail
-          remaining=1
-          for i in $(seq 1 "$PASSES"); do
-            if [ "$remaining" -eq 0 ]; then
-              echo "Nothing left due. Stopping after $((i-1)) pass(es)."
-              break
-            fi
-
-            echo "--- pass $i ---"
-            # --fail-with-body so a 4xx/5xx fails the step but still shows what
-            # the server said. A silent failure here is a watch that quietly
-            # stopped running weeks ago.
-            response=$(curl -sS --fail-with-body --max-time 120 \
-              -X POST \
-              -H "Authorization: Bearer $SELENA_TOKEN" \
-              -H "content-type: application/json" \
-              -d '{"limit":2}' \
-              "$SELENA_URL/api/cron")
-
-            echo "$response" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print(f"ran {len(d.get(\"ran\", []))}, {d.get(\"remainingDue\", 0)} still due, {len(d.get(\"reported\", []))} to report")
-for r in d.get("ran", []):
-    print(f"  - {r.get(\"name\")}: {r.get(\"status\", \"skipped\")} ({r.get(\"reason\", r.get(\"error\", \"\"))})")
-for r in d.get("reported", []):
-    print(f"  NEW/CHANGED [{r.get(\"strength\")}] {r.get(\"watch\")}: {r.get(\"oneLine\")}")
-for r in d.get("rechecked", []):
-    print(f"  re-checked {r.get(\"id\")}: {r.get(\"summary\", r.get(\"error\"))}")
-'
-            remaining=$(echo "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("remainingDue", 0))')
-
-            # Space the passes out. External services drop rapid requests, and
-            # nothing here is urgent.
-            sleep 5
-          done
-
-      - name: Summarise
-        if: steps.config.outputs.ready == 'true'
-        env:
-          SELENA_URL: ${{ secrets.SELENA_URL }}
-          SELENA_TOKEN: ${{ secrets.SELENA_TOKEN }}
-        run: |
-          curl -sS -H "Authorization: Bearer $SELENA_TOKEN" "$SELENA_URL/api/dashboard" \
-            | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-h, m = d.get("headline", {}), d.get("money", {})
-print(f"### Selena", file=sys.stderr)
-lines = [
-  f"| metric | value |",
-  f"| --- | --- |",
-  f"| real openings (level 4+) | {h.get(\"realOpenings\", 0)} |",
-  f"| active findings | {h.get(\"activeFindings\", 0)} |",
-  f"| Jason can build | {h.get(\"buildable\", 0)} |",
-  f"| spent this month | ${m.get(\"monthToDateUsd\", 0):.4f} of ${m.get(\"capUsd\", 0):.2f} |",
-  f"| free searches used today | {m.get(\"searchesToday\", 0)} |",
-]
-print("\n".join(lines))
-' >> "$GITHUB_STEP_SUMMARY"
+        run: node scripts/sweep.mjs

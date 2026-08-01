@@ -176,3 +176,57 @@ test('prompts are assembled from the live tables, not from a stale copy', async 
   assert.match(prompt, /Never invent a figure/);
   assert.match(prompt, /risks/i);
 });
+
+test('the scheduler workflow is valid YAML, with no script at column zero', () => {
+  // The failure this reproduces, exactly: a multi-line Python block was
+  // embedded in a `run: |` scalar with its lines at column zero. That
+  // terminates the block scalar and makes the whole workflow file invalid,
+  // so GitHub rejects it and the watches never run — silently, because
+  // nothing local parses workflow YAML.
+  //
+  // A full YAML parser would be a dependency for one file, so this checks the
+  // one rule that was actually broken: every line inside a block scalar must
+  // be indented further than the key that opened it.
+  const file = path.join(ROOT, '..', '.github', 'workflows', 'selena-watches.yml');
+  assert.ok(fs.existsSync(file), 'the scheduler workflow must exist');
+
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  const indentOf = (line) => line.length - line.trimStart().length;
+
+  let block = null;
+  lines.forEach((line, i) => {
+    if (block !== null) {
+      if (line.trim() === '') return; // blank lines are always allowed
+      if (indentOf(line) > block.indent) return; // still inside the block
+      block = null; // dedented out of it
+    }
+    const opener = line.match(/^(\s*)[\w.-]+:\s*[|>][-+]?\s*$/);
+    if (opener) block = { indent: opener[1].length, line: i + 1 };
+  });
+
+  // Anything at column zero that is not a top-level key or a comment means a
+  // block scalar leaked, which is precisely the bug.
+  const leaked = lines
+    .map((line, i) => ({ line, n: i + 1 }))
+    .filter(({ line }) => line.length && !line.startsWith(' ') && !line.startsWith('#'))
+    .filter(({ line }) => !/^[\w.-]+:/.test(line) && line.trim() !== '---');
+  assert.deepEqual(leaked, [], `these lines sit at column zero and are not top-level keys: ${JSON.stringify(leaked)}`);
+
+  const source = lines.join('\n');
+  assert.match(source, /node scripts\/sweep\.mjs/, 'the workflow must call the tested script rather than inlining logic');
+  assert.ok(fs.existsSync(path.join(ROOT, 'scripts', 'sweep.mjs')), 'scripts/sweep.mjs must exist');
+});
+
+test('every npm script points at a file that exists', () => {
+  // "watch:run" pointed at scripts/run-watches.mjs, which was never written —
+  // the script was renamed and the reference was not. Nothing would have found
+  // that until someone ran it and got MODULE_NOT_FOUND.
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  for (const [name, cmd] of Object.entries(pkg.scripts)) {
+    for (const [, file] of String(cmd).matchAll(/node (?:--\S+ )*([\w./-]+\.(?:mjs|js))/g)) {
+      // node_modules paths only exist after an install, so they are exempt.
+      if (file.startsWith('node_modules')) continue;
+      assert.ok(fs.existsSync(path.join(ROOT, file)), `script "${name}" runs ${file}, which does not exist`);
+    }
+  }
+});

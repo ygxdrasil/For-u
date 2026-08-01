@@ -171,7 +171,7 @@ If Node cannot verify HTTPS behind corporate TLS interception, use
 ## Tests
 
 ```
-npm test          # 85 unit tests
+npm test          # 87 unit tests
 npm run selftest  # 17 end-to-end checks, whole pipeline, network stubbed
 npm run stress    # 29 hostile-input cases; keeps going and reports every one
 ```
@@ -186,6 +186,7 @@ things they hold in place:
 - every API route is a single path segment
 - `vercel.json` headers match `core/headers.js` exactly
 - no `DELETE FROM` exists anywhere in the source
+- the scheduler workflow is valid YAML and every npm script points at a real file
 
 ---
 
