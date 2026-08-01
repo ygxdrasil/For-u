@@ -713,7 +713,15 @@ function Output({ calls }) {
 function Dock({ messages, live, busy, ready, approval, onSend, onDismiss, showStream }) {
   const [input, setInput] = useState('');
   const bottom = useRef(null);
-  useEffect(() => bottom.current?.scrollIntoView({ behavior: 'smooth' }), [messages, live]);
+  // Block body, deliberately. An arrow with an implicit return hands whatever
+  // scrollIntoView returns back to React as this effect's CLEANUP function.
+  // Chromium returns undefined so it looked fine everywhere I tested; browsers
+  // and smooth-scroll polyfills that return a Promise made React call it on the
+  // next render — "g is not a function" — which unmounted the whole tree and
+  // left a white screen the moment a reply arrived.
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, live]);
 
   const submit = () => { onSend(input); setInput(''); };
   const hasThread = messages.length > 0 || live.length > 0 || approval;
