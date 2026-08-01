@@ -44,6 +44,35 @@ test('every API route is a single path segment', () => {
   }
 });
 
+test('the deploy stays under the Hobby serverless function limit', () => {
+  // Vercel Hobby allows 12 serverless functions per deployment, and there are
+  // enough reports of it failing at 11 that the working ceiling here is 11.
+  // The failure mode is the worst kind: the build succeeds, the deploy is
+  // rejected, and the last good deployment stays live — so the site looks fine
+  // while every change silently stops shipping. api/tokens.js was folded into
+  // api/auth.js for exactly this reason; the next new route has to fold into an
+  // existing one too.
+  const HOBBY_CEILING = 11;
+  const routes = walk(path.join(ROOT, 'api'), (f) => f.endsWith('.js')).map((f) => path.relative(ROOT, f).split(path.sep).join('/'));
+
+  assert.ok(
+    routes.length <= HOBBY_CEILING,
+    `${routes.length} serverless functions: ${routes.join(', ')}. The ceiling is ${HOBBY_CEILING} — fold the new route into an existing one and branch on an action in the body.`,
+  );
+
+  // A route with no entry gets Vercel's default 10s timeout, which is under
+  // research's own budget: the platform would kill the function mid-run and
+  // return nothing, which reads as a hang rather than as a timeout.
+  const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
+  const declared = Object.keys(vercel.functions ?? {});
+  for (const route of routes) {
+    assert.ok(declared.includes(route), `${route} has no maxDuration in vercel.json, so it silently gets the 10s default`);
+  }
+  for (const entry of declared) {
+    assert.ok(routes.includes(entry), `vercel.json configures ${entry}, which no longer exists`);
+  }
+});
+
 test('vercel.json headers match core/headers.js exactly', () => {
   // Two hand-maintained copies drift, and the drift is invisible: the page
   // keeps working and one half quietly stops being protected.

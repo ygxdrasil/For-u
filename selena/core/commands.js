@@ -53,6 +53,12 @@ export const VERBS = {
   open: { summary: 'open a finding by name', examples: ['open the invoice one'], spends: false },
   send: { summary: 'hand a finding to Jason', examples: ['send the invoice finding to Jason'], spends: false, consequential: true },
   archive: { summary: 'archive a finding', examples: ['archive the seating chart one'], spends: false, consequential: true },
+  explore: {
+    summary: 'go looking on her own and propose things to watch',
+    examples: ['explore', 'go looking', 'find me something'],
+    spends: true,
+    consequential: true,
+  },
   help: { summary: 'list what she understands', examples: ['help', '?'], spends: false },
 };
 
@@ -145,6 +151,13 @@ const RULES = [
     verb: 'resume',
     test: /^(?:resume|restart|unpause|continue)\s+(?:the\s+)?(.+?)(?:\s+watch)?$/i,
     build: (m) => ({ verb: 'resume', args: { target: strip(m[1]) } }),
+  },
+
+  // ---- explore (before run, or "go" is swallowed by the sweep) ----------
+  {
+    verb: 'explore',
+    test: /^(?:explore|go looking|look around|find me something|surprise me|what am i missing)\s*$/i,
+    build: () => ({ verb: 'explore', args: {} }),
   },
 
   // ---- run --------------------------------------------------------------
@@ -241,6 +254,8 @@ export function estimateFor(parsed) {
   if (parsed.verb === 'research') return LEVELS[parsed.args.depth]?.estUsd ?? LEVELS.dig.estUsd;
   // A sweep runs at most a couple of watches, each deciding its own depth.
   if (parsed.verb === 'run') return LEVELS.check.estUsd * 2;
+  // Exploring reads for free and pays for exactly one judgement call.
+  if (parsed.verb === 'explore') return LEVELS.glance.estUsd;
   return 0;
 }
 
@@ -271,6 +286,8 @@ export function describe(parsed) {
       return `hand the finding matching "${a.target}" to Jason`;
     case 'archive':
       return `archive the finding matching "${a.target}"`;
+    case 'explore':
+      return 'go looking on your own and propose things worth watching — reading is free, one cheap model call to find the pattern';
     case 'help':
       return 'list what you can tell me';
     default:

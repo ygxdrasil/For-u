@@ -86,6 +86,7 @@ export async function runResearch(task, deps) {
   // run one's Etsy listings if its own Etsy call failed — silently attributing
   // one topic's prices to another.
   let etsyEvidence = null;
+  let communityAsks = null;
 
   // Declared before the first possible return. finish() is hoisted and reads
   // all three, so a `let` further down put them in the temporal dead zone and
@@ -194,11 +195,39 @@ export async function runResearch(task, deps) {
       notes.push('Etsy is dark (no ETSY_API_KEY), so the strongest evidence source was unavailable for this run.');
     }
 
+    // ---- the free community sources -------------------------------------
+    // No key, no quota to speak of, and full of people stating a need in their
+    // own words with a permanent link. They only ever produce asks, so they
+    // cannot inflate a finding past level 2 on their own.
+    if (deps.community && !deadline.tooLateFor(6_000)) {
+      try {
+        const found = await deps.community.gatherAsks({ keywords: topic, hnLimit: depth.rank >= 2 ? 10 : 5, seLimit: depth.rank >= 2 ? 6 : 3 });
+        communityAsks = found;
+        for (const ask of found.asks) {
+          ledger.record({ url: ask.url, status: 200, via: 'direct-fetch', title: ask.title, domain: null });
+        }
+        if (found.asks.length) {
+          readings.push(
+            `### community (read directly through free APIs)\n` +
+              found.asks
+                .slice(0, 12)
+                .map((x) => `- "${x.quote.slice(0, 320)}" — ${x.url}`)
+                .join('\n'),
+          );
+        }
+        if (found.partial) {
+          notes.push(`community sources: read ${found.read} of ${found.attempted}; ${found.failures.map((f) => `${f.source} failed (${f.error})`).join('; ')}. A caveat, not a failure.`);
+        }
+      } catch (err) {
+        notes.push(`community lookup failed (${err.message}); continuing with what the rest gave us`);
+      }
+    }
+
     // ---- reconsider depth, out loud -------------------------------------
     const interim = computeEvidence({
       paying: etsyEvidence?.paying ?? [],
       complaints: etsyEvidence?.complaints ?? [],
-      inTheirWords: [],
+      inTheirWords: communityAsks?.asks ?? [],
     });
     const reconsidered = reconsiderDepth({
       current: depth.level,
@@ -237,7 +266,7 @@ export async function runResearch(task, deps) {
     }
   }
 
-  if (!readings.length && !etsyEvidence?.paying?.length) {
+  if (!readings.length && !etsyEvidence?.paying?.length && !communityAsks?.asks?.length) {
     return finish('nothing', null, [...notes, 'nothing readable came back for this topic']);
   }
 
@@ -285,6 +314,21 @@ export async function runResearch(task, deps) {
   const merged = {
     ...extracted,
     watchId: task.watchId ?? null,
+    demand: {
+      ...(extracted.demand ?? {}),
+      inTheirWords: [
+        ...(extracted.demand?.inTheirWords ?? []),
+        // Structural, not just in the prose: an extraction that under-reports
+        // these would silently throw away quotes we genuinely read.
+        ...(communityAsks?.asks ?? []).slice(0, 6).map((x) => ({
+          quote: x.quote,
+          url: x.url,
+          date: x.date,
+          platform: x.platform,
+          via: x.via,
+        })),
+      ],
+    },
     evidence: {
       ...extracted.evidence,
       paying: [...(extracted.evidence?.paying ?? []), ...(etsyEvidence?.paying ?? [])],

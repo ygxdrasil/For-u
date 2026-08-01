@@ -24,18 +24,24 @@ import Jason from './pages/Jason.jsx';
 import Sources from './pages/Sources.jsx';
 import Costs from './pages/Costs.jsx';
 import Settings from './pages/Settings.jsx';
+import Connections from './pages/Connections.jsx';
+import { Icon } from './icons.jsx';
 
 const PAGES = [
-  { id: 'home', label: 'Home', component: Home, bare: true },
-  { id: 'dashboard', label: 'Dashboard', component: Dashboard },
-  { id: 'findings', label: 'Findings', component: Findings, count: (d) => d?.headline?.activeFindings },
-  { id: 'watches', label: 'Watches', component: Watches, count: (d) => d?.headline?.watchesActive },
-  { id: 'jason', label: 'For Jason', component: Jason, count: (d) => d?.headline?.buildable },
-  { id: 'ask', label: 'Ask', component: Ask },
-  { id: 'costs', label: 'Costs', component: Costs },
-  { id: 'sources', label: 'Sources', component: Sources },
-  { id: 'settings', label: 'Settings', component: Settings },
+  { id: 'home', label: 'Home', icon: 'home', component: Home, bare: true },
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', component: Dashboard },
+  { id: 'findings', label: 'Findings', icon: 'findings', component: Findings, count: (d) => d?.headline?.activeFindings },
+  { id: 'watches', label: 'Watches', icon: 'watches', component: Watches, count: (d) => d?.headline?.watchesActive },
+  { id: 'jason', label: 'For Jason', icon: 'jason', component: Jason, count: (d) => d?.headline?.buildable },
+  { id: 'ask', label: 'Ask', icon: 'ask', component: Ask },
+  { id: 'costs', label: 'Costs', icon: 'costs', component: Costs },
+  { id: 'sources', label: 'Sources', icon: 'sources', component: Sources },
+  { id: 'connections', label: 'Connections', icon: 'connections', component: Connections },
+  { id: 'settings', label: 'Settings', icon: 'settings', component: Settings },
 ];
+
+/** Collapsed or not, remembered per browser. */
+const RAIL_KEY = 'selena.rail';
 
 /** Poll cadence. Slow enough to be free, fast enough to feel live. */
 const POLL_MS = 12_000;
@@ -65,6 +71,26 @@ export default function App() {
   // Who are you? Asked once on load, and again only when something changes it.
   // Nothing else renders until this is known, so the HUD never flashes a
   // half-loaded dashboard at someone who is not signed in.
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(RAIL_KEY) === 'collapsed';
+    } catch {
+      return false;
+    }
+  });
+  const toggleRail = useCallback(() => {
+    setCollapsed((was) => {
+      const next = !was;
+      try {
+        localStorage.setItem(RAIL_KEY, next ? 'collapsed' : 'open');
+      } catch {
+        // Locked-down storage must not stop the sidebar working, only stop it
+        // being remembered.
+      }
+      return next;
+    });
+  }, []);
+
   const [auth, setAuth] = useState(null);
   const refreshAuth = useCallback(async () => {
     const res = await api.authStatus();
@@ -140,7 +166,7 @@ export default function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="brand">
           <h1>
             <span className="mark" />
@@ -153,20 +179,30 @@ export default function App() {
           {PAGES.map((p) => {
             const count = p.count?.(data);
             return (
-              <a key={p.id} href={`#${p.id}`} className={route.id === p.id ? 'on' : ''}>
-                <span>{p.label}</span>
+              <a key={p.id} href={`#${p.id}`} className={route.id === p.id ? 'on' : ''} title={collapsed ? p.label : undefined}>
+                <span>
+                  <span className="ico">
+                    <Icon name={p.icon} />
+                  </span>
+                  <span className="label">{p.label}</span>
+                </span>
                 {Number.isFinite(count) && count > 0 ? <span className="count">{count}</span> : null}
               </a>
             );
           })}
+
+          <button className="railtoggle" onClick={toggleRail} title={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}>
+            <Icon name={collapsed ? 'expand' : 'collapse'} />
+            {collapsed ? null : <span>collapse</span>}
+          </button>
         </nav>
 
         <div className="sidefoot">
-          <LiveDot busy={busy} at={data?.at} />
-          <div style={{ marginTop: 6 }}>
+          <LiveDot busy={busy} at={collapsed ? null : data?.at} />
+          <div className="detail" style={{ marginTop: 6 }}>
             build <code>{data?.build?.buildId ?? '—'}</code>
           </div>
-          <div className="muted" style={{ marginTop: 4 }}>
+          <div className="detail muted" style={{ marginTop: 4 }}>
             {data?.context?.store?.durable ? 'storage: durable' : 'storage: in memory'}
           </div>
         </div>

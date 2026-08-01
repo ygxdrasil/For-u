@@ -21,6 +21,7 @@ import { parseCommand, fromModel, fallbackPrompt, FALLBACK_SCHEMA, affordability
 import { runResearch } from '../core/research.js';
 import { createWatch, runWatch } from '../core/watches.js';
 import { handToJason } from '../core/jason.js';
+import { explore, saveProposals } from '../core/explore.js';
 import { summarizeFinding } from '../core/schema.js';
 import { phraseSimilarity } from '../core/util.js';
 
@@ -137,6 +138,20 @@ export default guard(async function handler(req, res) {
     case 'show':
       // Nothing to run: this is navigation, answered so the HUD can move.
       return done({ navigate: a });
+
+    case 'explore': {
+      const found = await explore({}, ctx);
+      const fresh = found.proposals.length ? await saveProposals(ctx.store, found.proposals) : [];
+      return done({
+        proposals: fresh,
+        read: found.read,
+        notes: found.notes,
+        costUsd: found.costUsd,
+        message: fresh.length
+          ? `Read ${found.read} posts and found ${fresh.length} thing(s) worth watching. Nothing is watched until you approve it.`
+          : `Read ${found.read} posts and found nothing worth a watch. ${found.notes.join(' ')}`,
+      });
+    }
 
     case 'watch': {
       const watch = createWatch({ name: a.topic, topic: a.topic, cadence: a.cadence, depth: a.depth });

@@ -17,6 +17,7 @@ import { createWatch, runWatch, isDue, CADENCES, WATCH_STATES } from '../core/wa
 import { LEVEL_NAMES } from '../core/depth.js';
 import { summarizeFinding } from '../core/schema.js';
 import { nowIso } from '../core/util.js';
+import { listProposals, approveProposal, dismissProposal } from '../core/explore.js';
 
 export default guard(async function handler(req, res) {
   if (!methodGuard(req, res, ['GET', 'POST'])) return;
@@ -42,6 +43,9 @@ export default guard(async function handler(req, res) {
           rememberedCount: await ctx.store.seenCount(w.id).catch(() => 0),
         })),
       ),
+      // What she found on her own, waiting for your approval. Nothing here is
+      // being watched or costing anything yet.
+      proposals: await listProposals(ctx.store).catch(() => []),
       cadences: Object.entries(CADENCES).map(([id, c]) => ({ id, label: c.label })),
       depths: LEVEL_NAMES,
       states: WATCH_STATES,
@@ -68,6 +72,17 @@ export default guard(async function handler(req, res) {
     await ctx.store.putWatch(watch);
     await ctx.store.addActivity({ kind: 'watch', level: 'info', message: `watch created: ${watch.name}`, watchId: watch.id });
     return json(res, 201, { ok: true, watch });
+  }
+
+  if (action === 'approve-proposal' || action === 'dismiss-proposal') {
+    const proposalId = String(body.id ?? '').trim();
+    if (!proposalId) return json(res, 400, { ok: false, error: 'Which proposal? Send { "id": "..." }.' });
+    const result =
+      action === 'approve-proposal'
+        ? await approveProposal(ctx.store, proposalId, { cadence: body.cadence ?? 'weekly' })
+        : await dismissProposal(ctx.store, proposalId);
+    if (!result.ok) return json(res, 404, { ok: false, error: result.error });
+    return json(res, 200, { ok: true, ...result, proposals: await listProposals(ctx.store) });
   }
 
   const id = String(body.id ?? '').trim();

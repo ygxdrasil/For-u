@@ -48,8 +48,10 @@ Checked against each platform's own documentation on 2026-07-31.
 | Source | Access | Why |
 |---|---|---|
 | **Etsy** | Official API | Marketplace listing search *and* listing/shop reviews need **no OAuth scope** — an API keystring is the only auth. Both halves of a level-4 finding from one authorised place. |
+| **Hacker News** | Official API, no key | The Algolia search API is public, keyless and unmetered. "Ask HN" threads are people describing what they need in their own words, with a permanent URL for every one. |
+| **Stack Exchange** | Official API, no key | 300 requests a day without registering. Software Recommendations and Webmasters are people saying what tool they are looking for and what the existing ones get wrong. |
 | **Reddit** | Search index only | The Data API's free tier is explicitly non-commercial. Not registered, by choice. Threads are cited where a search index surfaces them. |
-| **Facebook / Instagram** | Search index only | The Graph API has no public search — it reaches accounts you own, after app review. Never fetched. |
+| **Facebook / Instagram** | Search index only | The Graph API has no public keyword or hashtag search — it reaches accounts you administer, after app review. The **Meta Content Library** does expose searchable public posts, and is exactly what you would want, but it is restricted to academic and nonprofit researchers and explicitly not open to commercial or independent developers. Never fetched. |
 | **Gumroad** | Search index only | API v2 is scoped to your own products; there is no public discovery. Their terms forbid crawlers outright. |
 | **Fiverr** | Search index only | No public API. robots.txt disallows `/search/` and `/gigs/search` for every agent, and their Community Standards prohibit scraping. |
 | **Open web** | Grounded search | Ordinary sites, via Gemini's Google Search grounding. |
@@ -74,6 +76,7 @@ also the command bar:
 ```
 watch bookkeeping for UK tradespeople daily
 dig into invoice chasing for trades, deep
+go looking
 run
 pause the invoice watch
 show level 5
@@ -99,6 +102,45 @@ the real trace the pipeline writes as it goes — so a stall is visible rather
 than hidden behind a spinner that always looks busy. A scheduled watch running
 in the background shows the same animation, dimmer, so you can tell whether
 she is working for you or for the clock.
+
+---
+
+## Going looking on her own
+
+`go looking` — or the button on the Watches page — sets her off without a
+topic. She reads the free community sources broadly for the shapes people use
+when they are describing an unmet need, then makes **one** cheap model call to
+sort what she read into candidate subjects. Reading costs nothing; the single
+judgement call is a fraction of a penny.
+
+What comes back is a **proposal**, not a watch. She never stands a watch or
+files a finding on her own authority — proposals sit on the Watches page until
+you approve or dismiss one, and a dismissed proposal is kept, not deleted, so
+the same subject coming back a month later is itself a signal.
+
+Every proposal cites the posts it came from, and a proposal citing a URL she
+did not actually read is discarded by the same ledger that governs findings.
+
+---
+
+## Connections
+
+Selena, Jason and Grace are separate deployments with separate tokens.
+**Connections** is where you tell her where the others are and prove the line
+works:
+
+- **Test** sends one harmless line and shows you what came back. A 200 from a
+  login page is reported as *"reached a web page rather than an API"*, not as
+  success — a status code is not proof you reached the right thing.
+- Peer tokens are **encrypted at rest** with the same secret that signs your
+  sign-in, because they are somebody else's credential and a database dump
+  should not be a working key into another system.
+- She sends nothing to a peer on her own. Every message from this page is one
+  you pressed.
+
+Handing a finding to Jason still goes through `JASON_ENDPOINT`, and carries the
+full evidence packet rather than a line of text. Adding him here as a peer is
+for talking to him, not for handing work over.
 
 ---
 
@@ -264,6 +306,9 @@ things they hold in place:
 - no sentence that is not a command is ever bent into one, and rule order
   cannot silently turn "pause everything" into a watch called "everything"
 - the scheduler workflow is valid YAML and every npm script points at a real file
+- the deploy stays at or under eleven serverless functions, and every one of
+  them has a `maxDuration` — an undeclared route silently gets Vercel's 10s
+  default, which is shorter than research's own budget
 
 ---
 
@@ -277,7 +322,12 @@ core/       the headless engine — no HTTP, no React, no cron
   schema.js      the finding schema and its validator
   buildability.js  what Jason can and cannot build
   sources.js     the source policy, enforced
+  community.js   Hacker News and Stack Exchange — keyless, quoted verbatim
+  explore.js     going looking with no topic; proposes, never files
+  peers.js       where Jason and Grace are, and proof the line works
   meter.js       prices, and the hard stop
-api/        one file per route, each a single path segment
-src/        the HUD — dashboard, findings, watches, Jason, ask, costs, sources, settings
+api/        one file per route, each a single path segment — eleven of them,
+            because Vercel's Hobby plan stops at twelve and a test asserts it
+src/        the HUD — home, dashboard, findings, watches, Jason, ask, costs,
+            sources, connections, settings, behind a sidebar that collapses
 ```

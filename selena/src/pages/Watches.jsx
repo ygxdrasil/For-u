@@ -12,7 +12,7 @@ import { api, money, ago } from '../api.js';
 import { Pill, Empty, Banner, StrengthBar } from '../components.jsx';
 
 export default function Watches({ data, refresh }) {
-  const [state, setState] = useState({ watches: [], cadences: [], depths: [] });
+  const [state, setState] = useState({ watches: [], cadences: [], depths: [], proposals: [] });
   const [error, setError] = useState(null);
   const [form, setForm] = useState({ topic: '', name: '', cadence: 'daily', depth: '' });
   const [busyId, setBusyId] = useState(null);
@@ -56,6 +56,24 @@ export default function Watches({ data, refresh }) {
     refresh?.();
   };
 
+  const exploreNow = async () => {
+    setBusyId('explore');
+    setOutcome(null);
+    const res = await api.command({ text: 'explore', confirm: true });
+    setBusyId(null);
+    setOutcome(res.ok ? { ...res.data, exploring: true } : { error: res.error });
+    await load();
+    refresh?.();
+  };
+
+  const decide = async (action, id) => {
+    setBusyId(id);
+    await api.watchAction(action, { id });
+    setBusyId(null);
+    await load();
+    refresh?.();
+  };
+
   const toggle = async (w) => {
     await api.watchAction(w.state === 'active' ? 'pause' : 'resume', { id: w.id });
     await load();
@@ -93,6 +111,46 @@ export default function Watches({ data, refresh }) {
             </div>
           ) : null}
         </Banner>
+      ) : null}
+
+      {state.proposals?.length ? (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <h3>She found these on her own ({state.proposals.length})</h3>
+          <p className="small muted" style={{ marginTop: -4 }}>
+            Proposed, not watched. Nothing here is running or costing anything until you approve it — she looks on her own,
+            but she does not decide what is worth your money.
+          </p>
+          {state.proposals.map((p) => (
+            <div className="proposal" key={p.id}>
+              <div className="topic">{p.topic}</div>
+              <div className="who">{p.whoSeemsToHaveIt}</div>
+              <div className="why">{p.why}</div>
+              {p.quotes?.length ? (
+                <div style={{ marginTop: 8 }}>
+                  {p.quotes.slice(0, 2).map((q, i) => (
+                    <blockquote className="quote" key={i}>
+                      “{q.quote.slice(0, 220)}”
+                      <cite>
+                        <a href={q.url} target="_blank" rel="noopener noreferrer nofollow">
+                          the post that suggested it
+                        </a>
+                      </cite>
+                    </blockquote>
+                  ))}
+                </div>
+              ) : null}
+              <div className="row" style={{ marginTop: 10, gap: 6 }}>
+                <Pill tone={p.confidence === 'high' ? 'ok' : p.confidence === 'medium' ? 'warn' : ''}>{p.confidence} confidence</Pill>
+                <button className="primary small" onClick={() => decide('approve-proposal', p.id)} disabled={busyId === p.id}>
+                  Watch this weekly
+                </button>
+                <button className="small" onClick={() => decide('dismiss-proposal', p.id)} disabled={busyId === p.id}>
+                  Not interested
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       ) : null}
 
       <div className="card" style={{ marginBottom: 14 }}>
@@ -134,7 +192,16 @@ export default function Watches({ data, refresh }) {
             </button>
           </div>
         </form>
-        <p className="small muted" style={{ marginBottom: 0 }}>
+        <div className="row" style={{ marginTop: 10, alignItems: 'center', gap: 10 }}>
+          <button onClick={exploreNow} disabled={busyId === 'explore'}>
+            {busyId === 'explore' ? 'Looking…' : 'Or let her go looking'}
+          </button>
+          <span className="small muted">
+            She reads the free community sources for recurring needs and proposes what to watch. Reading costs nothing; the
+            one judgement call is a fraction of a penny.
+          </span>
+        </div>
+        <p className="small muted" style={{ marginBottom: 0, marginTop: 10 }}>
           Leave depth on "she decides" unless you have a reason. She starts cheap and escalates when the signals earn it —
           and writes down why.
         </p>

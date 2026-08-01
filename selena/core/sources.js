@@ -61,7 +61,7 @@ export const SOURCES = [
     checkedOn: '2026-07-31',
     gives: ['asks'],
     note:
-      'The Graph API has no public search: it reaches pages you administer, after app review. There is no sanctioned way to read what small businesses are asking each other in groups. Public posts that a search index has indexed are fair to cite; anything else is not reachable honestly.',
+      'The Graph API has no public search: it reaches pages you administer, after app review, and Meta confirmed in 2026 that there is still no public keyword or hashtag search endpoint. One route to public Facebook and Instagram posts does exist — the Meta Content Library — and it is genuinely what you would want: searchable public posts from Pages, groups and verified accounts. It is restricted to academic and nonprofit researchers and explicitly not available to commercial or independent developers, so it is not open to us. Public posts a search index has already surfaced are fair to cite; nothing else is reachable honestly.',
     limits: 'Not applicable — no API calls are made.',
     neverFetchHtml: true,
     htmlNote: 'Never fetched. Most of the interesting material is behind a login, and Selena never logs in as anyone.',
@@ -74,7 +74,7 @@ export const SOURCES = [
     docs: 'https://developers.facebook.com/docs/instagram-platform',
     checkedOn: '2026-07-31',
     gives: ['asks'],
-    note: 'Same position as Facebook: the official API is for accounts you own. Public posts are citable only where a search index already surfaced them.',
+    note: 'Same position as Facebook: the official API is for accounts you own, there is no public hashtag or keyword search, and the Meta Content Library that would cover it is limited to academic and nonprofit researchers. Public posts are citable only where a search index already surfaced them.',
     limits: 'Not applicable — no API calls are made.',
     neverFetchHtml: true,
     htmlNote: 'Never fetched.',
@@ -106,6 +106,36 @@ export const SOURCES = [
     limits: 'Not applicable — no API calls are made.',
     neverFetchHtml: true,
     htmlNote: 'Never fetched, by robots.txt and by terms.',
+  },
+  {
+    id: 'hackernews',
+    name: 'Hacker News',
+    access: 'official-api',
+    requiresEnv: null,
+    docs: 'https://hn.algolia.com/api',
+    checkedOn: '2026-08-01',
+    gives: ['asks', 'complaints'],
+    endpoints: ['GET hn.algolia.com/api/v1/search?query=…&tags=(story,comment)'],
+    note:
+      "Algolia's public search over every Hacker News story and comment. No key, no account, no registration — verified working on the date above. Show HN posts are people describing what they built because nothing existed; the comment threads are people saying what is wrong with what does. Asks only: nothing here proves anyone is paying, so on its own it cannot push a finding past level 2.",
+    limits: 'No published quota. Requests are spaced anyway, because a free service deserves not to be hammered.',
+    neverFetchHtml: false,
+    htmlNote: 'The API is the route in. Quotes link to the permanent news.ycombinator.com item so you can check them.',
+  },
+  {
+    id: 'stackexchange',
+    name: 'Stack Exchange (softwarerecs, webapps, workplace, money)',
+    access: 'official-api',
+    requiresEnv: null,
+    docs: 'https://api.stackexchange.com/docs',
+    checkedOn: '2026-08-01',
+    gives: ['asks', 'complaints', 'incumbents'],
+    endpoints: ['GET api.stackexchange.com/2.3/search/advanced?q=…&site=softwarerecs&filter=withbody'],
+    note:
+      'Free without a key at 300 requests a day — verified, and the API reports the remaining quota on every response. softwarerecs is the reason this source is here: every question on it is somebody writing "I need a tool that does X and here is what I have already tried and hated", which is the exact sentence this system exists to find. Asks and complaints, never proof of payment.',
+    limits: '300 requests a day without a key. A free key raises it to 10,000, and is not needed yet.',
+    neverFetchHtml: false,
+    htmlNote: 'The API is the route in; quotes link to the question itself.',
   },
   {
     id: 'web',
@@ -141,7 +171,14 @@ export const BLOCKED_HOSTS = {
   etsy: ['etsy.com'], // the API host api.etsy.com is allowed; the storefront is not
 };
 
-const API_HOSTS = new Set(['api.etsy.com', 'openapi.etsy.com', 'generativelanguage.googleapis.com']);
+const API_HOSTS = new Set([
+  'api.etsy.com',
+  'openapi.etsy.com',
+  'generativelanguage.googleapis.com',
+  'hn.algolia.com',
+  'news.ycombinator.com',
+  'api.stackexchange.com',
+]);
 
 export class ForbiddenSourceError extends Error {
   constructor(host, sourceId, why) {
@@ -188,8 +225,12 @@ export function sourceStatus(env = process.env) {
     docs: s.docs,
     checkedOn: s.checkedOn,
     endpoints: s.endpoints ?? null,
-    // "live" means we can actually use it right now, key and all.
-    live: s.access === 'official-api' ? Boolean(s.requiresEnv && env[s.requiresEnv]) : true,
+    // "live" means we can actually use it right now. An official API that
+    // needs no key is live the moment it is deployed — reporting Hacker News
+    // and Stack Exchange as "dark" because they have no env var to check was
+    // an honest-looking lie about two sources that work out of the box.
+    live: s.access === 'official-api' ? (s.requiresEnv ? Boolean(env[s.requiresEnv]) : true) : true,
+    needsKey: Boolean(s.requiresEnv),
     blockedReason:
       s.access === 'official-api' && s.requiresEnv && !env[s.requiresEnv]
         ? `${s.requiresEnv} is not set, so this source is dark. Everything else keeps working without it.`

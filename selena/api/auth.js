@@ -6,6 +6,13 @@
  * POST { action: 'login' }     sign in; sets a cookie that lasts 180 days
  * POST { action: 'logout' }    sign out this browser
  * POST { action: 'change' }    change it, which signs every other browser out
+ * POST { action: 'mint-token' | 'retire-token' | 'list-tokens' }
+ *                              Jason's bearer credentials, admin-only
+ *
+ * The token actions live here rather than in their own route because Vercel's
+ * Hobby plan allows twelve serverless functions per deployment and there are
+ * reports of it failing at eleven. Credentials are one subject; two routes for
+ * them was a slot spent on tidiness.
  *
  * The first-password problem is real: before one is set, whoever reaches this
  * endpoint first would own the deployment. Two defences. If SELENA_TOKEN is
@@ -16,7 +23,7 @@
 
 import { json, methodGuard, readBody, guard } from '../core/http.js';
 import { createStore } from '../core/store.js';
-import { extractToken } from '../core/auth.js';
+import { extractToken, authenticateAdmin, rotateToken, retireToken, listTokens } from '../core/auth.js';
 import crypto from 'node:crypto';
 import {
   PASSWORD_KEY,
@@ -192,5 +199,32 @@ export default guard(async function handler(req, res) {
     return json(res, 200, { ok: true, signedIn: true, otherSessionsEnded: true });
   }
 
-  return json(res, 400, { ok: false, error: `Unknown action "${action}". Use setup, login, logout or change.` });
+  // ---- Jason's bearer tokens --------------------------------------------
+  // Always the bootstrap token, even when signed in and even in open mode: an
+  // API that can mint its own credentials is not protected, it is decorative.
+  if (action === 'mint-token' || action === 'retire-token' || action === 'list-tokens') {
+    const admin = authenticateAdmin(req);
+    if (!admin.ok) return json(res, 401, { ok: false, error: admin.error });
+
+    if (action === 'list-tokens') return json(res, 200, { ok: true, tokens: await listTokens(store), durable: store.durable });
+
+    if (action === 'mint-token') {
+      const minted = await rotateToken(store, { label: body.label ? String(body.label).slice(0, 60) : null });
+      return json(res, 201, {
+        ok: true,
+        id: minted.id,
+        token: minted.raw,
+        note: 'This is the only time the value is shown. The old tokens are still live — retire them once Jason is moved across.',
+        durable: store.durable,
+        warning: store.durable ? null : 'The store is in memory, so this token disappears on the next cold start. Set DATABASE_URL first.',
+      });
+    }
+
+    const id = String(body.id ?? '').trim();
+    if (!id) return json(res, 400, { ok: false, error: 'Which token? Send { "id": "..." }.' });
+    const remaining = await retireToken(store, id);
+    return json(res, 200, { ok: true, liveTokens: remaining, note: 'Retired, not deleted — the record that it existed is part of the audit trail.' });
+  }
+
+  return json(res, 400, { ok: false, error: `Unknown action "${action}". Use setup, login, logout, change, mint-token, retire-token or list-tokens.` });
 });

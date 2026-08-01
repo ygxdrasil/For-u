@@ -94,8 +94,13 @@ export const api = {
   cronStatus: () => call('/api/cron'),
   cronRun: (payload = {}) => call('/api/cron', { method: 'POST', body: payload }),
 
-  tokens: () => call('/api/tokens'),
-  tokenAction: (action, payload = {}) => call('/api/tokens', { method: 'POST', body: { action, ...payload } }),
+  // Token management lives on /api/auth: credentials are one subject, and
+  // Vercel's Hobby plan only allows twelve functions per deployment.
+  tokens: () => call('/api/auth', { method: 'POST', body: { action: 'list-tokens' } }),
+  tokenAction: (action, payload = {}) => call('/api/auth', { method: 'POST', body: { action: `${action}-token`, ...payload } }),
+
+  peers: () => call('/api/peers'),
+  peerAction: (action, payload = {}) => call('/api/peers', { method: 'POST', body: { action, ...payload } }),
 };
 
 export function money(usd, dp = 4) {

@@ -15,6 +15,7 @@ import { createStore } from './store.js';
 import { createMeter } from './meter.js';
 import { createLlm } from './llm.js';
 import { createEtsy } from './etsy.js';
+import { createCommunity } from './community.js';
 import { createLedger } from './ledger.js';
 import { createDeadline, nowIso } from './util.js';
 
@@ -48,6 +49,9 @@ export async function createContext({
 
   const ledger = createLedger({ now });
   const etsy = createEtsy({ apiKey: env.ETSY_API_KEY ?? null, ledger, fetchImpl });
+  // Hacker News and Stack Exchange need no key, so they are always available.
+  // They give asks, never proof of payment, and the ladder knows the difference.
+  const community = createCommunity({ fetchImpl });
 
   const deadline = createDeadline(budgetMs);
 
@@ -57,6 +61,7 @@ export async function createContext({
     llm,
     llmError,
     etsy,
+    community,
     ledger,
     deadline,
     budgetMs,
@@ -81,6 +86,7 @@ export function contextStatus(ctx) {
     store: { kind: ctx.store.kind, durable: ctx.store.durable, note: ctx.store.note ?? null, degraded: Boolean(ctx.store.degraded) },
     model: { configured: Boolean(ctx.llm), error: ctx.llmError },
     etsy: { configured: ctx.etsy.available },
+    community: { configured: Boolean(ctx.community) },
     capUsd: ctx.capUsd,
   };
 }
