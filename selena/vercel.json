@@ -6,6 +6,9 @@
     "api/research.js": {
       "maxDuration": 60
     },
+    "api/command.js": {
+      "maxDuration": 60
+    },
     "api/cron.js": {
       "maxDuration": 60
     },

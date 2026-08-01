@@ -85,6 +85,7 @@ export const api = {
   watchAction: (action, payload) => call('/api/watches', { method: 'POST', body: { action, ...payload } }),
 
   research: (payload) => call('/api/research', { method: 'POST', body: payload }),
+  command: (payload) => call('/api/command', { method: 'POST', body: payload }),
   ask: (payload) => call('/api/ask', { method: 'POST', body: payload }),
 
   handoffPreview: (id) => call(`/api/handoff?id=${encodeURIComponent(id)}`),

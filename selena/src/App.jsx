@@ -15,6 +15,7 @@ import { api, getToken } from './api.js';
 import { LiveDot, Banner, Empty } from './components.jsx';
 import Gate from './pages/Gate.jsx';
 
+import Home from './pages/Home.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Findings from './pages/Findings.jsx';
 import Watches from './pages/Watches.jsx';
@@ -25,6 +26,7 @@ import Costs from './pages/Costs.jsx';
 import Settings from './pages/Settings.jsx';
 
 const PAGES = [
+  { id: 'home', label: 'Home', component: Home, bare: true },
   { id: 'dashboard', label: 'Dashboard', component: Dashboard },
   { id: 'findings', label: 'Findings', component: Findings, count: (d) => d?.headline?.activeFindings },
   { id: 'watches', label: 'Watches', component: Watches, count: (d) => d?.headline?.watchesActive },
@@ -40,9 +42,9 @@ const POLL_MS = 12_000;
 
 function useHashRoute() {
   const read = () => {
-    const raw = (window.location.hash || '#dashboard').slice(1);
+    const raw = (window.location.hash || '#home').slice(1);
     const [id, param] = raw.split('/');
-    return { id: PAGES.some((p) => p.id === id) ? id : 'dashboard', param: param ? decodeURIComponent(param) : null };
+    return { id: PAGES.some((p) => p.id === id) ? id : 'home', param: param ? decodeURIComponent(param) : null };
   };
   const [route, setRoute] = useState(read);
   useEffect(() => {
@@ -112,7 +114,8 @@ export default function App() {
     };
   }, [refresh, auth, locked]);
 
-  const Page = useMemo(() => PAGES.find((p) => p.id === route.id)?.component ?? Dashboard, [route.id]);
+  const current = useMemo(() => PAGES.find((p) => p.id === route.id) ?? PAGES[0], [route.id]);
+  const Page = current.component;
 
   if (auth === null) return <Empty>…</Empty>;
 
@@ -129,6 +132,11 @@ export default function App() {
   }
 
   const needsToken = error && /401|token/i.test(String(error)) && !getToken();
+
+  // The home screen is the atmosphere: no sidebar, no banners, nothing but
+  // her and the command bar. Everything else is an instrument and keeps the
+  // chrome.
+  if (current.bare) return <Page data={data} refresh={refresh} param={route.param} busy={busy} auth={auth} refreshAuth={refreshAuth} />;
 
   return (
     <div className="shell">

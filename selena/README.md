@@ -66,6 +66,42 @@ anything, or spends past the cap.
 
 ---
 
+## Telling her what to do
+
+She takes orders, not questions. The home screen is a question mark that is
+also the command bar:
+
+```
+watch bookkeeping for UK tradespeople daily
+dig into invoice chasing for trades, deep
+run
+pause the invoice watch
+show level 5
+send the invoice one to Jason
+```
+
+Common phrasings are matched by **rule** — free, instant, identical every time.
+Only a phrasing no rule recognises is worth paying a model to interpret, and
+even then it may only choose among the verbs she already has. It cannot invent
+an action.
+
+Two things hold regardless of how it was parsed:
+
+- **A misreading never acts.** Every command is read back as a plain sentence,
+  and anything that spends money or changes something waits for a second press
+  of enter. `dig into X, deep` shows *"research 'X' now, at deep depth — about
+  $0.050, $9.40 left this month"* before it runs.
+- **Nothing recognisable is bent into a command.** "make me a cup of tea" does
+  nothing and lists what she does understand. She never picks a nearest match.
+
+While she works the ? dissolves into orbiting embers, and the line beneath is
+the real trace the pipeline writes as it goes — so a stall is visible rather
+than hidden behind a spinner that always looks busy. A scheduled watch running
+in the background shows the same animation, dimmer, so you can tell whether
+she is working for you or for the clock.
+
+---
+
 ## Signing in
 
 The first time you open a fresh deployment it asks you to **set a password**.
@@ -201,7 +237,7 @@ If Node cannot verify HTTPS behind corporate TLS interception, use
 ## Tests
 
 ```
-npm test          # 104 unit tests
+npm test          # 121 unit tests
 npm run selftest  # 17 end-to-end checks, whole pipeline, network stubbed
 npm run stress    # 29 hostile-input cases; keeps going and reports every one
 npm run dbtest    # 18 checks driving the REAL Postgres store against a real Postgres
@@ -225,6 +261,8 @@ things they hold in place:
 - no `DELETE FROM` exists anywhere in the source
 - a password is never stored, sessions cannot be forged, and changing the
   password invalidates the ones issued before it
+- no sentence that is not a command is ever bent into one, and rule order
+  cannot silently turn "pause everything" into a watch called "everything"
 - the scheduler workflow is valid YAML and every npm script points at a real file
 
 ---
