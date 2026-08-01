@@ -11,7 +11,8 @@
     "selftest": "node scripts/selftest.mjs",
     "stress": "node scripts/stress.mjs",
     "watch:run": "node scripts/sweep.mjs",
-    "serve": "node scripts/dev-server.mjs --port 3101 --static dist"
+    "serve": "node scripts/dev-server.mjs --port 3101 --static dist",
+    "dbtest": "node scripts/dbtest.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.15.0",
@@ -26,7 +27,8 @@
   "comments": {
     "no-npx": "Every script is `node <path>`, never a bare CLI name: .cmd/.bat shims are blocked by group policy on the target machine.",
     "lazy-genai": "core/llm.js imports @google/genai dynamically, so the core, the tests and the stress suite all run with no node_modules at all. A test that needs a network SDK installed is a test that stops being run.",
-    "no-router-dep": "The HUD routes on window.location.hash in ~40 lines. A router dependency for eight pages is weight with no payoff."
+    "no-router-dep": "The HUD routes on window.location.hash in ~40 lines. A router dependency for eight pages is weight with no payoff.",
+    "pglite": "scripts/dbtest.mjs drives the real Postgres store against an embedded Postgres. It is deliberately NOT a dependency: install it only to run that script, with npm install --no-save @electric-sql/pglite"
   },
   "engines": {
     "node": ">=20"

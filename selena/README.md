@@ -174,7 +174,14 @@ If Node cannot verify HTTPS behind corporate TLS interception, use
 npm test          # 87 unit tests
 npm run selftest  # 17 end-to-end checks, whole pipeline, network stubbed
 npm run stress    # 29 hostile-input cases; keeps going and reports every one
+npm run dbtest    # 18 checks driving the REAL Postgres store against a real Postgres
 ```
+
+`dbtest` needs an embedded Postgres, which is deliberately not a dependency:
+`npm install --no-save @electric-sql/pglite` first. It runs every statement in
+`core/store.neon.js` for real and asserts the Postgres and memory stores
+**agree** — a store that behaves one way locally and another in production is
+worse than one that is broken in both.
 
 The suites exist to reproduce specific failures, not describe them. Among the
 things they hold in place:

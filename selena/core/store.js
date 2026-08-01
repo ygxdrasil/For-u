@@ -99,7 +99,16 @@ export function createMemoryStore({ now = nowIso } = {}) {
       // both append, and one write is lost with no error anywhere.
       return withLock(`finding:${finding.id}`, async () => {
         const previous = findings.get(finding.id) ?? null;
-        const stored = copyOf({ ...finding, updatedAt: now(), version: (previous?.version ?? 0) + 1 });
+        const stored = copyOf({
+          ...finding,
+          // Never un-hand a finding. A re-verification rewrites the record
+          // without the handoff stamp, and losing it here would mean the HUD
+          // forgot you had already sent something to Jason. The Postgres store
+          // does the same thing with COALESCE; the two must not disagree.
+          handedToJasonAt: finding.handedToJasonAt ?? previous?.handedToJasonAt ?? null,
+          updatedAt: now(),
+          version: (previous?.version ?? 0) + 1,
+        });
         findings.set(finding.id, stored);
         versions.push(copyOf(stored)); // append-only history; never pruned
         return copyOf(stored);

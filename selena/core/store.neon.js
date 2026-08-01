@@ -201,28 +201,38 @@ export async function createNeonStore({ databaseUrl, now = nowIso, sqlFactory = 
           version = selena_findings.version + 1,
           doc = EXCLUDED.doc,
           updated_at = now()
-        RETURNING version, doc`;
+        RETURNING version, handed_to_jason_at`;
 
       const version = Number(rows[0]?.version ?? 1);
-      const stored = { ...finding, version, updatedAt: now() };
+      // The COALESCE above deliberately keeps a handoff stamp that a later
+      // write does not carry — a re-verification rewrites the finding and must
+      // not erase the fact that it was sent to Jason. But that made the COLUMN
+      // and the stored DOCUMENT disagree, and different callers read different
+      // ones, so countFindings() said "1 handed over" while getFinding() said
+      // null. The column is authoritative; every read overlays it.
+      const stored = { ...finding, handedToJasonAt: iso(rows[0]?.handed_to_jason_at) ?? null, version, updatedAt: now() };
       // History is appended after the fact and never pruned.
       await sql`INSERT INTO selena_finding_versions (id, version, doc, at) VALUES (${finding.id}, ${version}, ${JSON.stringify(stored)}::jsonb, now())`;
       return stored;
     },
     async getFinding(id) {
-      const rows = await sql`SELECT doc, version FROM selena_findings WHERE id = ${id}`;
-      return rows[0] ? { ...rows[0].doc, version: Number(rows[0].version) } : null;
+      const rows = await sql`SELECT doc, version, handed_to_jason_at FROM selena_findings WHERE id = ${id}`;
+      // handed_to_jason_at is read from the column, not the document — see the
+      // note in putFinding. The column survives a rewrite that omits it.
+      return rows[0]
+        ? { ...rows[0].doc, handedToJasonAt: iso(rows[0].handed_to_jason_at) ?? null, version: Number(rows[0].version) }
+        : null;
     },
     async listFindings({ status = null, watchId = null, minStrength = 0, buildable = null, limit = 200 } = {}) {
       const rows = await sql`
-        SELECT doc, version FROM selena_findings
+        SELECT doc, version, handed_to_jason_at FROM selena_findings
         WHERE (${status}::text IS NULL OR status = ${status})
           AND (${watchId}::text IS NULL OR watch_id = ${watchId})
           AND (${buildable}::text IS NULL OR buildable = ${buildable})
           AND strength >= ${clampNumber(minStrength, 0, 5, 0)}
         ORDER BY strength DESC, score DESC, found_at DESC
         LIMIT ${clampNumber(limit, 1, 1000, 200)}`;
-      return rows.map((r) => ({ ...r.doc, version: Number(r.version) }));
+      return rows.map((r) => ({ ...r.doc, handedToJasonAt: iso(r.handed_to_jason_at) ?? null, version: Number(r.version) }));
     },
     async findingVersions(id) {
       const rows = await sql`SELECT doc, version, at FROM selena_finding_versions WHERE id = ${id} ORDER BY version ASC`;
