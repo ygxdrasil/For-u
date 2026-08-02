@@ -303,6 +303,35 @@ test('a list that was cut short says so', async () => {
   }
 });
 
+test('no effect hands React a value it will try to call as cleanup', async () => {
+  // This is the one that produced "g is not a function" and a white screen on a
+  // real phone. React treats ANY non-undefined return from useEffect as the
+  // cleanup function and calls it on the next run. An arrow with an implicit
+  // return quietly hands over whatever the last expression evaluated to —
+  // scrollIntoView returns undefined in Chromium, which is why it passed every
+  // test I had, and a Promise in Safari and in every smooth-scroll polyfill.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = path.dirname(new URL('.', import.meta.url).pathname) + '/src';
+
+  const offenders = [];
+  for (const file of fs.readdirSync(src)) {
+    if (!/\.jsx?$/.test(file)) continue;
+    const text = fs.readFileSync(path.join(src, file), 'utf8');
+    text.split('\n').forEach((line, i) => {
+      // An effect whose arrow body is an expression rather than a block.
+      const m = line.match(/useEffect\(\s*\(\s*\)\s*=>\s*(.)/);
+      if (m && m[1] !== '{') offenders.push(`${file}:${i + 1} ${line.trim().slice(0, 90)}`);
+    });
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these effects return a value to React, which will call it as a cleanup:\n${offenders.join('\n')}`,
+  );
+});
+
 test('he can do the system tagging he is instructed to do', async () => {
   // The prompt tells him to tag every workflow in a system with the same
   // "system:<name>" tag. Nothing could set a tag, so that instruction produced
