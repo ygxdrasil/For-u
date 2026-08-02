@@ -220,7 +220,11 @@ function Jason({ onSignOut }) {
   const [signedOut, setSignedOut] = useState(false);
 
   const refresh = useCallback(() => {
-    fetch(`/api/dashboard?sessionId=${encodeURIComponent(sessionId.current)}`)
+    // The conversation is only wanted once, to put the screen back after a
+    // reload. Asking for it on every poll would read it out of the database
+    // twice a minute forever and throw it away each time.
+    const wantConversation = !restored.current;
+    fetch(`/api/dashboard${wantConversation ? `?sessionId=${encodeURIComponent(sessionId.current)}` : ''}`)
       .then(async (r) => {
         // A poll that quietly fails leaves the numbers on screen looking
         // current when nobody is reading them any more.
