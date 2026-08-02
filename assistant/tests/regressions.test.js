@@ -546,3 +546,61 @@ test('the same breakage repeating does not open a second finding', async () => {
   delete process.env.N8N_API_KEY;
   resetStoreCache();
 });
+
+test('an answer cut off at the token ceiling is not reported as a finished one', async () => {
+  // finishReason MAX_TOKENS. The text arrives, the request is 200, nothing
+  // throws, and the sentence just stops — the only model failure that looks
+  // exactly like success. Nothing read finishReason, so half an answer was
+  // presented with a full stop implied.
+  const store = createMemoryStore();
+  const truncating = () => ({ models: { generateContent: async () => ({
+    text: 'I built the trigger and the sheet read, and the third node needs the sheet id from',
+    functionCalls: [],
+    usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 4096 },
+    candidates: [{ finishReason: 'MAX_TOKENS' }],
+  }) } });
+
+  const out = await run({ text: 'build it', config: cfg, store, llmClientFactory: truncating }, {});
+  assert.notEqual(out.status, 'ok', 'a truncated answer got the same status as a complete one');
+  assert.match(out.reply, /cut off/i);
+  assert.ok(out.jobId, 'there is no way to ask him to carry on from where it stopped');
+});
+
+test('an empty reply that was blocked does not blame the thinking budget', async () => {
+  // SAFETY and RECITATION produce an empty reply too. Blaming the budget sends
+  // you to change a setting that was never the problem.
+  const { createLlm } = await import('../core/llm.js');
+  const { createMeter } = await import('../core/meter.js');
+  const llm = createLlm({
+    apiKey: 'k',
+    meter: createMeter({ store: createMemoryStore(), capUsd: 100 }),
+    clientFactory: () => ({ models: { generateContent: async () => ({
+      text: '', functionCalls: [], usageMetadata: { promptTokenCount: 10 }, candidates: [{ finishReason: 'SAFETY' }],
+    }) } }),
+  });
+  const out = await llm.generate({ tier: 'chat', contents: [], systemInstruction: 'x' });
+  assert.equal(out.empty, true);
+  assert.match(out.emptyReason, /SAFETY/);
+  // It may mention the budget to rule it out — what it must not do is blame it.
+  assert.doesNotMatch(out.emptyReason, /thinking tokens used/i);
+});
+
+test('a model call we abort ourselves is reported as running out of time', async () => {
+  // Aborting makes the SDK reject as well, and that rejection can win the race.
+  // It says "aborted", which is true and useless: the caller checks for
+  // ModelTimeoutError to stop gracefully, and an ordinary error there produced
+  // a bare "the model call failed" instead of what he had managed to do.
+  const { createLlm, ModelTimeoutError } = await import('../core/llm.js');
+  const { createMeter } = await import('../core/meter.js');
+  const llm = createLlm({
+    apiKey: 'k',
+    meter: createMeter({ store: createMemoryStore(), capUsd: 100 }),
+    clientFactory: () => ({ models: { generateContent: ({ config }) => new Promise((_, reject) => {
+      config?.abortSignal?.addEventListener('abort', () => reject(new Error('Request was aborted.')));
+    }) } }),
+  });
+  await assert.rejects(
+    () => llm.generate({ tier: 'chat', contents: [], systemInstruction: 'x', timeoutMs: 300 }),
+    (err) => err instanceof ModelTimeoutError,
+  );
+});

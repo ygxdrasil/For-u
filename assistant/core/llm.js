@@ -140,8 +140,10 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
 
         const controller = new AbortController();
         let timer;
+        let timedOut = false;
         const expired = new Promise((_, reject) => {
           timer = setTimeout(() => {
+            timedOut = true;
             controller.abort();
             reject(new ModelTimeoutError(model, deadline));
           }, deadline);
@@ -151,6 +153,15 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
           // but the request itself is still billed, so the race is what
           // guarantees we return in time.
           return await Promise.race([client.models.generateContent({ model, contents, config: { ...cfg, abortSignal: controller.signal } }), expired]);
+        } catch (err) {
+          // Aborting makes the SDK reject too, and that rejection can win the
+          // race. It says "aborted", which is true and useless: the caller
+          // checks for ModelTimeoutError to stop gracefully and say what it
+          // managed to do, and an ordinary error there produces a bare "the
+          // model call failed" instead. Whatever the abort threw, if we are the
+          // ones who aborted it, this is a timeout.
+          if (timedOut && !(err instanceof ModelTimeoutError)) throw new ModelTimeoutError(model, deadline);
+          throw err;
         } finally {
           clearTimeout(timer);
         }
@@ -176,6 +187,20 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
         const text = res.text ?? '';
         const calls = res.functionCalls ?? [];
 
+        /**
+         * WHY the model stopped, which the happy path never has to ask.
+         *
+         * MAX_TOKENS is the dangerous one: the reply arrives, the request is
+         * 200, nothing throws, and the last sentence simply stops. Presented as
+         * a finished answer it is indistinguishable from one — the only failure
+         * in this adapter that looks exactly like success. SAFETY and RECITATION
+         * matter for a different reason: they produce an empty reply that used
+         * to be blamed on the thinking budget, sending anyone reading it to
+         * change a setting that was never the problem.
+         */
+        const finishReason = res.candidates?.[0]?.finishReason ?? null;
+        const truncated = finishReason === 'MAX_TOKENS';
+
         // An empty answer with no tool call is the silent-failure signature.
         // Surface it as an explicit condition rather than an empty reply.
         const empty = !text.trim() && !calls.length;
@@ -184,9 +209,13 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
           model,
           text,
           functionCalls: calls,
+          finishReason,
+          truncated,
           empty,
           emptyReason: empty
-            ? `${model} returned no text and no tool call. Thinking tokens used: ${usage.thoughtsTokenCount ?? 0} of a ${spec.maxOutputTokens} output allowance.`
+            ? finishReason && finishReason !== 'STOP'
+              ? `${model} returned no text and no tool call, and stopped because of ${finishReason}. That is the model refusing or being cut off — not the thinking budget.`
+              : `${model} returned no text and no tool call. Thinking tokens used: ${usage.thoughtsTokenCount ?? 0} of a ${spec.maxOutputTokens} output allowance.`
             : null,
           usage: priced,
           raw: res,

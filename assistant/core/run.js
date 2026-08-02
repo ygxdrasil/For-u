@@ -309,7 +309,11 @@ export async function run(input, hooks = {}) {
     const calls = response.functionCalls ?? [];
     if (!calls.length) {
       contents.push({ role: 'model', parts: [{ text: response.text }] });
-      stoppedBecause = 'done';
+      // Hitting the output ceiling is running out of road, exactly like running
+      // out of time or steps — and worse than either, because it looks like an
+      // ordinary finished answer. The sentence just stops. Reported as 'ok' it
+      // is a half answer with a full stop implied.
+      stoppedBecause = response.truncated ? 'output' : 'done';
       break;
     }
 
@@ -321,6 +325,11 @@ export async function run(input, hooks = {}) {
       // tool must never sink the others, and n8n drops rapid concurrent writes.
       const tool = byName.get(call.name);
       if (!tool) {
+        // Recorded as a step, not only relayed back to the model. A tool that
+        // does not exist being called is worth seeing in the terminal — it is
+        // usually the prompt and the registry disagreeing, and it is invisible
+        // if the only trace is a message the model quietly recovers from.
+        steps.push({ tool: String(call.name ?? '(unnamed)'), ok: false, error: 'no such tool' });
         responseParts.push(fnResponse(call, { ok: false, error: `No tool called "${call.name}".` }));
         continue;
       }
@@ -369,7 +378,7 @@ export async function run(input, hooks = {}) {
     if (step === prefs.maxSteps - 1) stoppedBecause = 'steps';
   }
 
-  if (stoppedBecause === 'deadline' || stoppedBecause === 'steps') {
+  if (stoppedBecause === 'deadline' || stoppedBecause === 'steps' || stoppedBecause === 'output') {
     const jobId = `job_${Date.now().toString(36)}`;
     await store.saveJob({ id: jobId, sessionId: input.sessionId ?? null, contents, createdAt: new Date().toISOString(), status: 'paused' });
 
@@ -387,7 +396,9 @@ export async function run(input, hooks = {}) {
         (reply ? `${reply}\n\n` : '') +
         (stoppedBecause === 'deadline'
           ? `I ran out of time on this request before finishing. Here is what I completed: ${ran}. Ask me to continue and I will pick up from here.`
-          : `I used all ${prefs.maxSteps} steps allowed in one request before finishing. Here is what I completed: ${ran}. Ask me to continue and I will pick up from here.`),
+          : stoppedBecause === 'output'
+            ? 'That answer was cut off — it hit the length limit mid-sentence, so read the last line as unfinished rather than as what I meant to say. Ask me to continue and I will carry on from there.'
+            : `I used all ${prefs.maxSteps} steps allowed in one request before finishing. Here is what I completed: ${ran}. Ask me to continue and I will pick up from here.`),
       spend: await meter.summary(),
     });
   }
