@@ -20,7 +20,7 @@ import { gateRequest } from '../core/auth.js';
 import { parseCommand, fromModel, fallbackPrompt, FALLBACK_SCHEMA, affordability, VERBS } from '../core/commands.js';
 import { runResearch } from '../core/research.js';
 import { createWatch, runWatch } from '../core/watches.js';
-import { handToJason } from '../core/jason.js';
+import { handToJason, resolveJasonTarget } from '../core/jason.js';
 import { explore, saveProposals } from '../core/explore.js';
 import { arm as armHer, disarm, readAutonomy, describeAutonomy } from '../core/autonomy.js';
 import { stopEverything } from '../core/pass.js';
@@ -279,20 +279,27 @@ export default guard(async function handler(req, res) {
       }
 
       try {
+        const { getSessionSecret } = await import('../core/password.js');
+        const target = await resolveJasonTarget({
+          env: process.env,
+          store: ctx.store,
+          secret: await getSessionSecret(ctx.store).catch(() => null),
+        });
         const outcome = await handToJason(found.match, {
           store: ctx.store,
-          endpoint: process.env.JASON_ENDPOINT ?? null,
-          token: process.env.JASON_TOKEN ?? null,
+          endpoint: target.endpoint,
+          token: target.token,
           fetchImpl: ctx.fetchImpl,
           force: body.force === true,
         });
         return done({
           delivery: outcome.delivery,
+          via: target.via,
           message: outcome.delivery.attempted
             ? outcome.delivery.ok
-              ? `Sent to Jason. He said: ${String(outcome.delivery.detail).slice(0, 120)}`
+              ? `Sent to Jason${target.via === 'connections' ? ` (${target.name}, from Connections)` : ''}. He said: ${String(outcome.delivery.detail).slice(0, 120)}`
               : `Marked as handed, but delivery failed: ${outcome.delivery.detail}`
-            : 'Packet prepared and recorded. No JASON_ENDPOINT is set, so it was not sent anywhere.',
+            : 'Packet prepared and recorded. Jason is not connected — set JASON_ENDPOINT, or add him as a builder on Connections — so it was not sent anywhere.',
         });
       } catch (err) {
         if (err.name === 'NotBuildableError') {

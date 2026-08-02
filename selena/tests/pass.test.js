@@ -183,3 +183,77 @@ test('stop everything disarms her and pauses every watch', async () => {
   assert.equal(after.armed, false);
   assert.equal(after.ran.length, 0);
 });
+
+test('a builder connected on the Connections page actually receives findings', async () => {
+  // The defect this pins: every handoff path read JASON_ENDPOINT from the
+  // environment, so connecting Jason through the page built for connecting
+  // Jason fed the "say hello" button and nothing else. Level-5 findings were
+  // recorded as handed and went nowhere.
+  const { ctx, calls } = await makeCtx({ env: {} });
+  const { addPeer } = await import('../core/peers.js');
+  const { getSessionSecret } = await import('../core/password.js');
+  const secret = await getSessionSecret(ctx.store);
+
+  await addPeer(ctx.store, { name: 'Jason', kind: 'builder', url: 'https://jason.example.com', token: 'jt' }, secret);
+  await arm(ctx.store, {});
+  await ctx.store.putFinding(fullFinding());
+
+  const out = await runPass(ctx);
+
+  assert.equal(out.handed.length, 1, 'a connected builder must receive the finding');
+  assert.equal(calls.length, 1);
+  // The peer URL is a base; the default path is appended so the handoff goes
+  // where the test button proved the line works.
+  assert.equal(calls[0].url, 'https://jason.example.com/api/agent');
+  assert.equal(calls[0].body.findingId, 'f-strong');
+});
+
+test('the environment wins over a connected peer when both are set', async () => {
+  const { ctx, calls } = await makeCtx({ env: { JASON_ENDPOINT: 'https://from-env.example.com/api/agent', JASON_TOKEN: 'envtok' } });
+  const { addPeer } = await import('../core/peers.js');
+  const { getSessionSecret } = await import('../core/password.js');
+  await addPeer(ctx.store, { name: 'Jason', kind: 'builder', url: 'https://from-ui.example.com', token: 'uitok' }, await getSessionSecret(ctx.store));
+  await arm(ctx.store, {});
+  await ctx.store.putFinding(fullFinding());
+
+  await runPass(ctx);
+  assert.equal(calls[0].url, 'https://from-env.example.com/api/agent', 'an explicit deploy-time setting beats something clicked in a UI');
+});
+
+test('the handoff packet carries a sentence as well as the structure', async () => {
+  // Agent endpoints overwhelmingly take { text }. A packet with no text field
+  // gets a 400 telling you to send text, which is a working connection failing
+  // on a technicality.
+  const { packageForJason } = await import('../core/jason.js');
+  const packet = packageForJason(fullFinding());
+
+  assert.equal(typeof packet.text, 'string');
+  assert.ok(packet.text.includes('invoice chasing for trades'), 'the sentence must name the demand');
+  assert.ok(packet.text.includes('level 5'), 'and the evidence level');
+  assert.ok(/bad idea/i.test(packet.text), 'the reasons not to build it travel with the reasons to');
+  // The structure is still there for anything built to use it.
+  assert.equal(packet.why.evidenceStrength, 5);
+  assert.equal(packet.findingId, 'f-strong');
+});
+
+test('asking only whether Jason is connected does not pay for a decryption', async () => {
+  // scrypt is ~60ms by design. The dashboard polls every twelve seconds and
+  // only needs to know WHETHER he is wired up, so it must not stretch the key
+  // to find out. hasToken has to stay truthful without the token.
+  const { ctx } = await makeCtx({ env: {} });
+  const { addPeer } = await import('../core/peers.js');
+  const { getSessionSecret } = await import('../core/password.js');
+  const { resolveJasonTarget } = await import('../core/jason.js');
+  const secret = await getSessionSecret(ctx.store);
+  await addPeer(ctx.store, { name: 'Jason', kind: 'builder', url: 'https://jason.example.com', token: 'jt' }, secret);
+
+  const status = await resolveJasonTarget({ env: {}, store: ctx.store, secret, withToken: false });
+  assert.equal(status.endpoint, 'https://jason.example.com/api/agent');
+  assert.equal(status.hasToken, true, 'whether a token exists is answerable without reading it');
+  assert.equal(status.token, null, 'and it must not have been read');
+  assert.equal(status.tokenUnreadable, false, 'never report unreadable when we did not try');
+
+  const full = await resolveJasonTarget({ env: {}, store: ctx.store, secret });
+  assert.equal(full.token, 'jt');
+  assert.equal(full.hasToken, true);
+});

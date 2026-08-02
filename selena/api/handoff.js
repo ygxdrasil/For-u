@@ -13,7 +13,8 @@
 import { json, methodGuard, readBody, guard } from '../core/http.js';
 import { createContext, contextStatus } from '../core/context.js';
 import { gateRequest } from '../core/auth.js';
-import { packageForJason, handToJason, NotBuildableError } from '../core/jason.js';
+import { getSessionSecret } from '../core/password.js';
+import { packageForJason, handToJason, resolveJasonTarget, NotBuildableError } from '../core/jason.js';
 
 export default guard(async function handler(req, res) {
   if (!methodGuard(req, res, ['GET', 'POST'])) return;
@@ -21,6 +22,14 @@ export default guard(async function handler(req, res) {
   const ctx = await createContext({ budgetMs: 20_000 });
   const gate = await gateRequest(req, ctx.store);
   if (!gate.ok) return json(res, 401, { ok: false, error: gate.error });
+
+  // Resolved once. It decrypts a token, and doing that twice to answer one
+  // request is work for nothing.
+  const target = await resolveJasonTarget({
+    env: process.env,
+    store: ctx.store,
+    secret: await getSessionSecret(ctx.store).catch(() => null),
+  });
 
   if (req.method === 'GET') {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -31,7 +40,11 @@ export default guard(async function handler(req, res) {
       preview: true,
       packet: packageForJason(finding),
       wouldRefuse: finding.buildability?.verdict === 'jason-cannot-build',
-      endpointConfigured: Boolean(process.env.JASON_ENDPOINT),
+      // Whichever way he is actually wired up, not only the env var. `via`
+      // says which, because "not configured" and "configured somewhere you
+      // forgot" need different things doing about them.
+      target: { via: target.via, name: target.name, hasToken: Boolean(target.hasToken) },
+      endpointConfigured: Boolean(target.endpoint),
     });
   }
 
@@ -43,8 +56,8 @@ export default guard(async function handler(req, res) {
     const outcome = await handToJason(finding, {
       store: ctx.store,
       note: body.note ? String(body.note).slice(0, 2000) : null,
-      endpoint: process.env.JASON_ENDPOINT ?? null,
-      token: process.env.JASON_TOKEN ?? null,
+      endpoint: target.endpoint,
+      token: target.token,
       fetchImpl: ctx.fetchImpl,
       force: body.force === true,
     });

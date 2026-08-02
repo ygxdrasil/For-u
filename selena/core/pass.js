@@ -21,7 +21,7 @@
 
 import { runWatch, dueWatches, createWatch } from './watches.js';
 import { explore, saveProposals } from './explore.js';
-import { handToJason } from './jason.js';
+import { handToJason, resolveJasonTarget } from './jason.js';
 import { clampNumber, nowIso } from './util.js';
 import { readAutonomy, recordRun, recordHandoff, mayHandOff, shouldRoam, unattendedHeadroom, updateAutonomy } from './autonomy.js';
 
@@ -146,7 +146,18 @@ export async function runPass(ctx, { limit = 2, at = nowIso() } = {}) {
   }
 
   // ---- 4. hand the strongest to Jason ------------------------------------
-  const endpoint = ctx.env?.JASON_ENDPOINT ?? null;
+  // Env first, then whatever you connected on the Connections page. Resolved
+  // once per pass rather than per finding: it cannot change mid-pass, and
+  // re-reading it would decrypt the token on every iteration.
+  const { getSessionSecret } = await import('./password.js');
+  const target = await resolveJasonTarget({
+    env: ctx.env,
+    store: ctx.store,
+    secret: await getSessionSecret(ctx.store, ctx.env).catch(() => null),
+  });
+  if (target.tokenUnreadable) {
+    notes.push(`${target.name}'s token cannot be decrypted — SESSION_SECRET has changed since it was saved. Handoffs will be attempted without it, and will probably be refused. Add the token again on Connections.`);
+  }
   const candidates = (await ctx.store.listFindings({ status: 'active', limit: 200 }))
     .filter((f) => !f.handedToJasonAt)
     .sort((a, b) => (b.evidence?.strength ?? 0) - (a.evidence?.strength ?? 0));
@@ -166,8 +177,8 @@ export async function runPass(ctx, { limit = 2, at = nowIso() } = {}) {
       const outcome = await handToJason(finding, {
         store: ctx.store,
         note: 'Handed over automatically: level 5, and she was armed.',
-        endpoint,
-        token: ctx.env?.JASON_TOKEN ?? null,
+        endpoint: target.endpoint,
+        token: target.token,
         fetchImpl: ctx.fetchImpl,
       });
       await recordHandoff(ctx.store, { findingId: finding.id, at });

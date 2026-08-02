@@ -64,11 +64,33 @@ export const PEER_KIND_NAMES = Object.keys(PEER_KINDS);
 // Token encryption
 // ---------------------------------------------------------------------------
 
+/**
+ * Derived keys, cached for the life of the process.
+ *
+ * scrypt is deliberately slow — measured at ~60ms here — which is the whole
+ * point when it is guarding a password, and pure waste when the same
+ * deployment secret is stretched into the same key over and over. The
+ * dashboard polls every twelve seconds; without this, that is 60ms of CPU
+ * burned per poll to answer a question whose input never changes.
+ *
+ * A Map keyed by the secret, in memory only, never persisted. It lives exactly
+ * as long as the warm function instance does.
+ */
+const keyCache = new Map();
+
 function keyFrom(secret) {
+  const id = String(secret);
+  const cached = keyCache.get(id);
+  if (cached) return cached;
   // A fixed salt is fine here: the secret is already high-entropy and unique
   // per deployment, and a random salt would need storing beside the ciphertext
   // for no gain.
-  return crypto.scryptSync(String(secret), 'selena-peer-tokens', 32);
+  const derived = crypto.scryptSync(id, 'selena-peer-tokens', 32);
+  // Bounded so a pathological caller cannot grow it without limit; in practice
+  // there is one secret per deployment and this never evicts.
+  if (keyCache.size > 8) keyCache.clear();
+  keyCache.set(id, derived);
+  return derived;
 }
 
 export function encryptToken(plain, secret) {

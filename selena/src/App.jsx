@@ -241,6 +241,24 @@ export default function App() {
           </Banner>
         ) : null}
 
+        {/* Armed but with nowhere to send anything is the combination that
+            wastes a week: she finds a level 5, marks it handed, and it goes
+            nowhere. Only shown when she is actually armed — before that,
+            handing over is something you do by hand and by choice. */}
+        {data?.autonomy?.armed && data?.jason && !data.jason.connected ? (
+          <Banner tone="warn" title="She is armed, but Jason is not connected">
+            Findings that reach level {data.autonomy.handoffFloor} will be packaged, recorded and sent nowhere. Set
+            JASON_ENDPOINT, or add him as a builder on <a href="#connections">Connections</a>.
+          </Banner>
+        ) : null}
+
+        {data?.jason?.tokenUnreadable ? (
+          <Banner tone="warn" title="Jason's token cannot be read">
+            SESSION_SECRET has changed since it was saved, so handoffs will go out unauthenticated and probably be refused.
+            Add the token again on <a href="#connections">Connections</a>.
+          </Banner>
+        ) : null}
+
         <Page data={data} refresh={refresh} param={route.param} busy={busy} auth={auth} refreshAuth={refreshAuth} />
       </main>
     </div>

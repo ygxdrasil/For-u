@@ -58,12 +58,39 @@ export default guard(async function handler(req, res) {
   const capUsd = meterSummary?.capUsd ?? ctx.capUsd;
   const spentUsd = meterSummary?.monthToDateUsd ?? 0;
 
+  // Where a finding would actually go if she handed one over right now. This
+  // is on the dashboard because it was silently wrong once: Jason connected on
+  // the Connections page fed nothing, and the only sign was a line saying the
+  // packet had been "prepared and recorded".
+  const { resolveJasonTarget } = await import('../core/jason.js');
+  const { getSessionSecret } = await import('../core/password.js');
+  // withToken: false — the dashboard only needs to know whether he is wired
+  // up, and decrypting a token to answer that would cost a scrypt derivation
+  // on every twelve-second poll.
+  const jason = await resolveJasonTarget({
+    env: process.env,
+    store: ctx.store,
+    secret: await getSessionSecret(ctx.store).catch(() => null),
+    withToken: false,
+  }).catch(() => ({ endpoint: null, via: null, name: null }));
+
   json(res, 200, {
     ok: true,
     at,
     build: BUILD,
     context: contextStatus(ctx),
     openApi: gate.open ? gate.warning : null,
+
+    jason: {
+      connected: Boolean(jason.endpoint),
+      via: jason.via,
+      name: jason.name,
+      hasToken: Boolean(jason.hasToken),
+      tokenUnreadable: Boolean(jason.tokenUnreadable),
+      // Deliberately not the endpoint itself: it can carry a token in a query
+      // string, and this payload is rendered in a browser.
+      host: jason.endpoint ? (() => { try { return new URL(jason.endpoint).host; } catch { return null; } })() : null,
+    },
 
     autonomy: {
       armed: autonomy.armed,
