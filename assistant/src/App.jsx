@@ -516,7 +516,7 @@ function Jason({ onSignOut }) {
           <div className="panel-body">
             {section === 'overview' && <Overview data={data} />}
             {section === 'workflows' && <Workflows data={data} onOpen={openInN8n} onEdit={loadIntoTerminal} canOpen={Boolean(n8nBaseUrl)} />}
-            {section === 'broke' && <Broke findings={findings} />}
+            {section === 'broke' && <Broke findings={findings} onChanged={refresh} />}
             {section === 'memory' && <Memory />}
             {section === 'settings' && <Settings onSaved={refresh} />}
           </div>
@@ -1057,10 +1057,21 @@ const Workflows = ({ data, onOpen, onEdit, canOpen }) => {
   );
 };
 
-const Broke = ({ findings }) =>
-  !findings.length ? (
-    <div className="empty">Nothing has failed since the last check. That's what I know — not a promise everything ran.</div>
-  ) : (
+const Broke = ({ findings, onChanged }) => {
+  const [busy, setBusy] = useState(null);
+
+  const resolve = async (id) => {
+    setBusy(id);
+    const r = await post('/api/findings', { action: 'resolve', id });
+    setBusy(null);
+    if (r.ok) onChanged?.();
+  };
+
+  if (!findings.length) {
+    return <div className="empty">Nothing has failed since the last check. That's what I know — not a promise everything ran.</div>;
+  }
+
+  return (
     <>
       {findings.map((f) => (
         <div className="item" key={f.id}>
@@ -1070,10 +1081,20 @@ const Broke = ({ findings }) =>
             <span className="when">{ago(f.at)}</span>
           </div>
           <div className="meta">{f.failingNode ?? 'unknown step'} — {f.error ?? 'no message'}</div>
+          <div className="row" style={{ marginTop: 6 }}>
+            {/* Without this the count only ever went up: you could fix the
+                workflow, watch it run clean, and still be told it needed a
+                look. Marking it dealt with keeps the record — it is a status,
+                not an erasure. */}
+            <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} disabled={busy === f.id} onClick={() => resolve(f.id)}>
+              {busy === f.id ? '…' : 'Dealt with'}
+            </button>
+          </div>
         </div>
       ))}
     </>
   );
+};
 
 function Vitals({ vitals }) {
   const [more, setMore] = useState(false);

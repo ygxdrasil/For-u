@@ -492,6 +492,86 @@ await check('a probe that returns nothing usable refuses to produce values', asy
   assert.equal(out.count, 0);
 });
 
+/* ================= 10. a finding that can be closed */
+
+section('10. Findings can be closed, and only on evidence');
+
+await check('the sweep opens a finding and the panel can close it, keeping the record', async () => {
+  const { createStore, resetStoreCache } = await import('../core/store.js');
+  const { setupPassword, sessionSecret } = await import('../core/settings.js');
+  const { issueSession, sessionCookie } = await import('../core/secrets.js');
+  process.env.ALLOW_MEMORY_AUTH = '1';
+  resetStoreCache();
+  const store = await createStore({ databaseUrl: null });
+  await setupPassword(store, 'stress-test-password');
+  const cookie = sessionCookie(issueSession(await sessionSecret(store))).split(';')[0];
+
+  const opened = await store.addFinding({ workflowId: 'wf1', workflowName: 'Nightly', error: 'boom', failingNode: 'Slack' });
+  assert.equal((await store.listFindings({ status: 'open' })).length, 1);
+
+  const handler = (await import('../api/findings.js')).default;
+  const chunks = [];
+  const res = {
+    statusCode: 0, headers: {},
+    setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
+    end(c) { if (c) chunks.push(String(c)); this.text = chunks.join(''); },
+    get body() { try { return JSON.parse(this.text ?? ''); } catch { return null; } },
+  };
+  await handler({ method: 'POST', headers: { cookie }, body: { action: 'resolve', id: opened.id } }, res);
+
+  assert.equal(res.body.ok, true, res.body?.error);
+  assert.equal((await store.listFindings({ status: 'open' })).length, 0, 'the count did not come down');
+  // Kept, not erased.
+  assert.equal((await store.listFindings({})).length, 1, 'closing a finding destroyed the record');
+});
+
+await check('there is no way to remove a finding, only to close it', async () => {
+  const { createStore } = await import('../core/store.js');
+  const { sessionSecret } = await import('../core/settings.js');
+  const { issueSession, sessionCookie } = await import('../core/secrets.js');
+  const store = await createStore({ databaseUrl: null });
+  const cookie = sessionCookie(issueSession(await sessionSecret(store))).split(';')[0];
+  const handler = (await import('../api/findings.js')).default;
+
+  for (const action of ['delete', 'remove', 'purge', 'destroy']) {
+    const chunks = [];
+    const res = { statusCode: 0, setHeader() {}, end(c) { if (c) chunks.push(String(c)); this.text = chunks.join(''); },
+      get body() { try { return JSON.parse(this.text ?? ''); } catch { return null; } } };
+    await handler({ method: 'POST', headers: { cookie }, body: { action, id: 'x' } }, res);
+    assert.equal(res.statusCode, 400, `"${action}" was not refused`);
+    assert.match(res.body.error, /never removes/i);
+  }
+});
+
+await check('he may only close a finding on the evidence of a real success', async () => {
+  const store = createMemoryStore();
+  const opened = await store.addFinding({ workflowId: 'wf1', workflowName: 'Nightly', error: 'boom' });
+
+  const execution = (status, workflowId = 'wf1') => async () =>
+    new Response(JSON.stringify({ id: 'e1', workflowId, status }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  const toolWith = (fetchImpl) =>
+    buildToolRegistry({ n8n: createN8nClient({ baseUrl: 'https://n8n.invalid', apiKey: 'k', fetchImpl }), store, approvals: [] })
+      .find((t) => t.name === 'resolve_finding');
+
+  // A failed run is not evidence.
+  const onFailure = await toolWith(execution('error')).handler({ findingId: opened.id, executionId: 'e1' });
+  assert.equal(onFailure.ok, false);
+  assert.match(onFailure.error, /not a success/i);
+
+  // A success belonging to a DIFFERENT workflow is not evidence either.
+  const elsewhere = await toolWith(execution('success', 'wf-other')).handler({ findingId: opened.id, executionId: 'e1' });
+  assert.equal(elsewhere.ok, false);
+  assert.match(elsewhere.error, /somewhere else/i);
+
+  assert.equal((await store.listFindings({ status: 'open' })).length, 1, 'it closed on bad evidence');
+
+  // A real success on the right workflow closes it.
+  const good = await toolWith(execution('success')).handler({ findingId: opened.id, executionId: 'e1' });
+  assert.equal(good.ok, true, good.error);
+  assert.equal((await store.listFindings({ status: 'open' })).length, 0);
+});
+
 /* ============================================================ report */
 
 process.stdout.write('\n');
