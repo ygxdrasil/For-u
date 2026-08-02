@@ -93,6 +93,25 @@ export function readPath(value, path) {
   return current.length === 1 ? current[0] : current;
 }
 
+/**
+ * A URL fit to show a human and write into an error.
+ *
+ * A key can ride in a query string, and this string ends up on screen, in the
+ * activity feed and in a GitHub Actions log. The value of anything that looks
+ * like a credential is replaced rather than trusted to be absent.
+ */
+export function safeUrl(url) {
+  try {
+    const u = new URL(url);
+    for (const key of [...u.searchParams.keys()]) {
+      if (/key|token|secret|auth|password|sig/i.test(key)) u.searchParams.set(key, '…');
+    }
+    return u.toString();
+  } catch {
+    return String(url).slice(0, 200);
+  }
+}
+
 /** The first path that actually yields something, so a map can offer alternatives. */
 function firstOf(item, paths) {
   for (const path of String(paths ?? '').split('|').map((p) => p.trim()).filter(Boolean)) {
@@ -499,7 +518,17 @@ export async function retireConnector(store, id) {
 
 function restUrlFor(connector, query, token) {
   const encoded = encodeURIComponent(query);
-  let url = connector.url.includes('{query}') ? connector.url.replaceAll('{query}', encoded) : `${connector.url}${connector.url.includes('?') ? '&' : '?'}q=${encoded}`;
+  let url;
+  if (connector.url.includes('{query}')) {
+    url = connector.url.replaceAll('{query}', encoded);
+  } else if (connector.method === 'POST') {
+    // The term goes in the body for a POST. Bolting ?q= on as well sends the
+    // search twice, in two places, and some APIs reject an unknown parameter
+    // outright — a request that fails for a reason nothing on screen explains.
+    url = connector.url;
+  } else {
+    url = `${connector.url}${connector.url.includes('?') ? '&' : '?'}q=${encoded}`;
+  }
   if (token && connector.authStyle === 'query') {
     const param = connector.authName || 'api_key';
     url += `${url.includes('?') ? '&' : '?'}${param}=${encodeURIComponent(token)}`;
@@ -536,7 +565,9 @@ export async function readConnector(connector, query, { secret, fetchImpl = glob
         timeoutMs,
         dialect: connector.dialect,
       });
-      if (!called.ok) return { ok: false, asks: [], detail: called.detail, status: called.status };
+      if (!called.ok) {
+        return { ok: false, asks: [], status: called.status, requested: safeUrl(connector.url), detail: `${safeUrl(connector.url)} (tool "${connector.tool}"): ${called.detail}` };
+      }
       const payload = payloadFromToolResult(called.result);
       const mapped = mapItems(payload, connector.map, { source: connector.name });
       if (ledger) for (const a of mapped.asks) ledger.read(a.url, { via: `connector:${connector.name}` });
@@ -558,7 +589,8 @@ export async function readConnector(connector, query, { secret, fetchImpl = glob
       body = connector.bodyTemplate ? connector.bodyTemplate.replaceAll('{query}', escaped) : JSON.stringify({ query });
     }
 
-    const res = await fetchImpl(restUrlFor(connector, query, token), {
+    const requested = restUrlFor(connector, query, token);
+    const res = await fetchImpl(requested, {
       method: post ? 'POST' : 'GET',
       headers,
       ...(body ? { body } : {}),
@@ -566,13 +598,30 @@ export async function readConnector(connector, query, { secret, fetchImpl = glob
     });
     const text = await res.text();
     if (!res.ok) {
-      return { ok: false, asks: [], status: res.status, detail: `HTTP ${res.status}: ${text.slice(0, 240)}` };
+      // Say what was ASKED FOR, not just what came back. A bare "HTTP 404" and
+      // a server's own error page tells you a source is broken and nothing
+      // about why; the method and URL usually make it obvious in one glance —
+      // wrong path, wrong host, a placeholder never filled in. Never guess
+      // twice: instrument.
+      return {
+        ok: false,
+        asks: [],
+        status: res.status,
+        requested: safeUrl(requested),
+        detail: `${post ? 'POST' : 'GET'} ${safeUrl(requested)} answered HTTP ${res.status}: ${text.slice(0, 200)}`,
+      };
     }
     let payload;
     try {
       payload = JSON.parse(text);
     } catch {
-      return { ok: false, asks: [], status: res.status, detail: `it answered, but not with JSON. First 200 characters: ${text.slice(0, 200)}` };
+      return {
+        ok: false,
+        asks: [],
+        status: res.status,
+        requested: safeUrl(requested),
+        detail: `${safeUrl(requested)} answered ${res.status}, but not with JSON. First 200 characters: ${text.slice(0, 200)}`,
+      };
     }
     const mapped = mapItems(payload, connector.map, { source: connector.name });
     if (ledger) for (const a of mapped.asks) ledger.read(a.url, { via: `connector:${connector.name}` });

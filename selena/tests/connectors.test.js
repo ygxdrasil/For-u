@@ -397,3 +397,50 @@ test('a link template with a missing field yields no link rather than a broken o
   assert.equal(mapped.asks[0].url, 'https://f.example.com/t/a/1');
   assert.equal(mapped.missingUrl, 1);
 });
+
+test('a POST source does not also bolt the term onto the URL', async () => {
+  // A POST carries the term in its body. Appending ?q= as well sends the same
+  // search twice in two places, and some APIs reject an unknown parameter
+  // outright — a failure with nothing on screen to explain it.
+  const store = freshStore();
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return { ok: true, status: 200, text: async () => JSON.stringify({ results: [] }) };
+  };
+
+  const added = await addConnector(
+    store,
+    { kind: 'rest', name: 'awards', url: 'https://api.usaspending.gov/api/v2/search/spending_by_award/', method: 'POST', bodyTemplate: '{"keywords":["{query}"]}' },
+    SECRET,
+  );
+  await readConnector(await getConnector(store, added.connector.id, SECRET), 'plumbing', { secret: SECRET, fetchImpl });
+  assert.equal(urls[0], 'https://api.usaspending.gov/api/v2/search/spending_by_award/', 'the URL must be left exactly as given');
+
+  // A GET with no placeholder still gets the fallback parameter, or it would
+  // search for nothing at all.
+  const g = await addConnector(store, { kind: 'rest', name: 'g', url: 'https://api.example.com/search' }, SECRET);
+  await readConnector(await getConnector(store, g.connector.id, SECRET), 'plumbing', { secret: SECRET, fetchImpl });
+  assert.equal(urls[1], 'https://api.example.com/search?q=plumbing');
+});
+
+test('a failed source says what it asked for, with any key redacted', async () => {
+  // This is what the run cost: "HTTP 404" plus somebody's error page told us a
+  // source was broken and nothing whatsoever about why. The method and URL
+  // make it obvious in one glance.
+  const store = freshStore();
+  const fetchImpl = async () => ({ ok: false, status: 404, text: async () => '{"error":{"code":"NOT_FOUND"}}' });
+
+  const added = await addConnector(
+    store,
+    { kind: 'rest', name: 'wrong', url: 'https://api.example.com/v2/typo?api_key=SUPERSECRET&x={query}' , authStyle: 'none' },
+    SECRET,
+  );
+  const outcome = await readConnector(await getConnector(store, added.connector.id, SECRET), 'plumbing', { secret: SECRET, fetchImpl });
+
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.detail, /GET https:\/\/api\.example\.com\/v2\/typo/, 'the URL has to be in the message');
+  assert.match(outcome.detail, /HTTP 404/);
+  assert.ok(!outcome.detail.includes('SUPERSECRET'), 'and a key in the query string must never be echoed into a log');
+  assert.match(outcome.detail, /api_key=%E2%80%A6|api_key=…/);
+});
