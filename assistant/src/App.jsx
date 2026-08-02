@@ -195,7 +195,24 @@ function Jason({ onSignOut }) {
   // Held in a ref as well as state: the 'done' frame needs the latest drawing
   // synchronously, and reading state there would capture a stale closure.
   const lastCanvas = useRef(null);
-  const sessionId = useRef(`s_${Math.random().toString(36).slice(2)}`);
+  // Kept across reloads. Regenerated on every page load, a refresh — or a phone
+  // evicting the tab — started a brand new conversation, so he lost everything
+  // you were in the middle of and the old one was orphaned server-side. It read
+  // as him being forgetful; it was the page throwing the thread away.
+  const sessionId = useRef(
+    (() => {
+      try {
+        const kept = localStorage.getItem('jason.session');
+        if (kept) return kept;
+        const fresh = `s_${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem('jason.session', fresh);
+        return fresh;
+      } catch {
+        return `s_${Math.random().toString(36).slice(2)}`;
+      }
+    })(),
+  );
+  const restored = useRef(false);
 
   const prefs = data?.sections?.settings?.data?.prefs;
   const n8nBaseUrl = data?.sections?.settings?.data?.n8nBaseUrl ?? null;
@@ -203,7 +220,7 @@ function Jason({ onSignOut }) {
   const [signedOut, setSignedOut] = useState(false);
 
   const refresh = useCallback(() => {
-    fetch('/api/dashboard')
+    fetch(`/api/dashboard?sessionId=${encodeURIComponent(sessionId.current)}`)
       .then(async (r) => {
         // A poll that quietly fails leaves the numbers on screen looking
         // current when nobody is reading them any more.
@@ -211,7 +228,22 @@ function Jason({ onSignOut }) {
         setSignedOut(false);
         return r.json();
       })
-      .then((d) => { if (d?.ok) { setData(d); setCheckedAt(new Date().toISOString()); } })
+      .then((d) => {
+        if (!d?.ok) return;
+        setData(d);
+        setCheckedAt(new Date().toISOString());
+
+        // Once, on the first read: put back what was said before the reload, so
+        // the screen agrees with what he remembers. Never on later polls, which
+        // would trample a conversation in flight.
+        if (!restored.current) {
+          restored.current = true;
+          const prior = d.sections?.conversation?.data;
+          if (Array.isArray(prior) && prior.length) {
+            setMessages((current) => (current.length ? current : prior.map((m) => ({ ...m, restored: true }))));
+          }
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -382,6 +414,19 @@ function Jason({ onSignOut }) {
     { label: folded ? 'Show panel' : 'Hide panel', hint: 'panel', run: () => setFolded((f) => !f) },
     ...wf.map((w) => ({ label: `Open ${w.name} in n8n`, hint: 'n8n', run: () => openInN8n(w.id) })),
     ...wf.map((w) => ({ label: `Edit ${w.name} here`, hint: 'terminal', run: () => loadIntoTerminal(w.id) })),
+    {
+      label: 'Start a new conversation',
+      hint: 'chat',
+      run: () => {
+        const fresh = `s_${Math.random().toString(36).slice(2)}`;
+        try { localStorage.setItem('jason.session', fresh); } catch { /* private mode */ }
+        sessionId.current = fresh;
+        restored.current = true;
+        setMessages([]);
+        setCanvas(null);
+        setCalls([]);
+      },
+    },
     { label: 'Sign out', hint: '', run: onSignOut },
   ], [wf, folded, n8nBaseUrl]);
 
