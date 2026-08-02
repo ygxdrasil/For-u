@@ -482,3 +482,67 @@ test('two turns sent at the same moment do not erase each other', async () => {
   assert.match(messages, /from the phone/, 'one of two simultaneous turns vanished from the conversation');
   assert.match(messages, /from the laptop/);
 });
+
+test('an execution that failed with no message still produces a sentence', async () => {
+  // n8n records the failure and nothing about why — a crashed worker, a killed
+  // container, an execution truncated by pruning. describeFailure returned
+  // null, and null printed into a sentence reads as our bug rather than a
+  // missing record on their side.
+  const { describeFailure } = await import('../core/assess.js');
+  for (const execution of [{ data: { resultData: { lastNodeExecuted: 'Post to Slack' } } }, {}, null]) {
+    const d = describeFailure(execution);
+    assert.equal(typeof d.message, 'string');
+    assert.doesNotMatch(d.message, /undefined|null|\[object/, 'a JavaScript value reached a sentence meant for a person');
+  }
+  assert.match(describeFailure({ data: { resultData: { lastNodeExecuted: 'Post to Slack' } } }).message, /Post to Slack/);
+});
+
+test('a half-built workflow does not take the canvas down', async () => {
+  // The model streams a workflow into the canvas as it writes it, so the array
+  // genuinely does contain holes for a moment. One of them threw, and the
+  // error boundary caught a blank screen for a node that was never going to
+  // draw anyway.
+  const { buildPreview } = await import('../core/preview.js');
+  for (const wf of [null, {}, { nodes: null }, { nodes: [null, undefined] }, { nodes: [{}], connections: null }]) {
+    assert.doesNotThrow(() => buildPreview(wf), `buildPreview threw on ${JSON.stringify(wf)}`);
+  }
+});
+
+test('the same breakage repeating does not open a second finding', async () => {
+  // A workflow broken at 3am and retried hourly opened twenty findings by
+  // morning — same workflow, same node, same error. Twenty rows is the same
+  // disease as a counter that only goes up: you stop reading the panel, and
+  // the one genuinely new failure underneath is invisible.
+  const { resetStoreCache, createStore } = await import('../core/store.js');
+  resetStoreCache();
+  const realFetch = globalThis.fetch;
+  process.env.AGENT_TOKEN = 'regression-token';
+  process.env.N8N_BASE_URL = 'https://n8n.invalid';
+  process.env.N8N_API_KEY = 'k';
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname.replace('/api/v1', '');
+    const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (path === '/executions') return reply({ data: [{ id: String(300 + hits), workflowId: 'wf1', status: 'error', workflowData: { name: 'Leads' } }] });
+    return reply({ id: String(300 + hits), workflowId: 'wf1', status: 'error', data: { resultData: { lastNodeExecuted: 'Post to Slack', error: { message: 'connect ETIMEDOUT' } } } });
+  };
+
+  let hits = 0;
+  const handler = (await import('../api/sweep.js')).default;
+  const call = async () => {
+    const res = { statusCode: 0, setHeader() {}, end(t) { this.body = JSON.parse(t); } };
+    await handler({ method: 'POST', headers: { authorization: 'Bearer regression-token' }, body: { explain: false } }, res);
+    hits++;
+    return res.body;
+  };
+  for (let i = 0; i < 4; i++) await call();
+
+  const open = await (await createStore()).listFindings({ status: 'open' });
+  assert.ok(open.length <= 2, `four identical failures produced ${open.length} findings`);
+  assert.ok(open.some((f) => (f.seenCount ?? 1) > 1), 'nothing recorded that it had happened more than once');
+
+  globalThis.fetch = realFetch;
+  delete process.env.AGENT_TOKEN;
+  delete process.env.N8N_BASE_URL;
+  delete process.env.N8N_API_KEY;
+  resetStoreCache();
+});

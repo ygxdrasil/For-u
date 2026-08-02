@@ -64,19 +64,55 @@ export default async function handler(req, res) {
 
   // Diagnose each one independently. One diagnosis blowing up must not lose
   // the others — this is the Promise.all mistake, deliberately not made.
+  /**
+   * The same breakage is one thing to look at, however many times it happens.
+   *
+   * A schedule that runs hourly on a workflow broken at 3am opens twenty
+   * findings by morning — all the same workflow, the same node, the same
+   * error. Twenty rows is the same disease as a counter that only goes up: it
+   * stops being read, and the one genuinely new failure underneath them is
+   * invisible. So a repeat updates the finding it repeats, and the count is
+   * what turns "it broke" into "it has broken forty times since Tuesday",
+   * which is a different sentence with a different urgency.
+   *
+   * Nothing is overwritten that matters: the first sighting keeps its time and
+   * its execution id, and the latest one is recorded alongside.
+   */
+  const open = await store.listFindings({ status: 'open' });
+  const sameBreakage = (finding, workflowId, node, error) =>
+    finding.workflowId === workflowId && (finding.failingNode ?? null) === (node ?? null) && (finding.error ?? null) === (error ?? null);
+
   const findings = [];
   for (const failure of fresh) {
     try {
       const execution = await n8n.getExecution(failure.id);
       const detail = describeFailure(execution);
+      const workflowName = failure.workflowData?.name ?? execution?.workflowData?.name ?? null;
+
+      const existing = open.find((f) => sameBreakage(f, failure.workflowId, detail.node, detail.message));
+      if (existing) {
+        const updated = await store.updateFinding(existing.id, {
+          seenCount: (existing.seenCount ?? 1) + 1,
+          lastSeenAt: failure.startedAt ?? new Date().toISOString(),
+          latestExecutionId: failure.id,
+        });
+        // Keep the in-memory copy current so several repeats in one sweep
+        // count up rather than each finding the original again.
+        if (updated) Object.assign(existing, updated);
+        findings.push({ ...(updated ?? existing), diagnosed: true, repeat: true });
+        continue;
+      }
+
       const finding = await store.addFinding({
         executionId: failure.id,
         workflowId: failure.workflowId,
-        workflowName: failure.workflowData?.name ?? execution?.workflowData?.name ?? null,
+        workflowName,
         failingNode: detail.node,
         error: detail.message,
+        seenCount: 1,
         at: failure.startedAt,
       });
+      open.push(finding);
       findings.push({ ...finding, diagnosed: true });
     } catch (err) {
       findings.push({ executionId: failure.id, diagnosed: false, error: `Could not read this execution: ${err.message}` });

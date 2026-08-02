@@ -137,7 +137,19 @@ export function describeFailure(execution) {
     }
   }
 
-  return { node: resultData.lastNodeExecuted ?? null, message: null, stack: null };
+  // n8n said it failed and recorded nothing about why. That happens — a
+  // crashed worker, a killed container, an execution truncated by pruning. The
+  // caller still has to print a sentence, and `null` printed as "undefined"
+  // reads like our bug rather than a missing record on their side.
+  const node = resultData.lastNodeExecuted ?? null;
+  return {
+    node,
+    message: node
+      ? `n8n recorded no error message for this failure. The last node to run was "${node}", so start there — the detail may still be in the execution in n8n.`
+      : 'n8n recorded no error message and no last node for this failure, which usually means the execution was cut short (a restart, or pruning) rather than a node throwing.',
+    stack: null,
+    noDetail: true,
+  };
 }
 
 /**

@@ -1091,9 +1091,18 @@ const Broke = ({ findings, onChanged }) => {
           <div className="head">
             <span className="dot bad" />
             <span className="title">{f.workflowName ?? f.workflowId}</span>
-            <span className="when">{ago(f.at)}</span>
+            <span className="when">{ago(f.lastSeenAt ?? f.at)}</span>
           </div>
           <div className="meta">{f.failingNode ?? 'unknown step'} — {f.error ?? 'no message'}</div>
+          {/* "It broke" and "it has broken forty times since Tuesday" are
+              different sentences with different urgency, and the second one is
+              only sayable because repeats update the finding instead of
+              stacking up next to it. */}
+          {(f.seenCount ?? 1) > 1 && (
+            <div className="meta" style={{ color: 'var(--failed)' }}>
+              {f.seenCount} times, first {ago(f.at)}
+            </div>
+          )}
           <div className="row" style={{ marginTop: 6 }}>
             {/* Without this the count only ever went up: you could fix the
                 workflow, watch it run clean, and still be told it needed a

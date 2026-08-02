@@ -21,8 +21,14 @@ export function shortType(type) {
 }
 
 export function buildPreview(workflow, { disabledNodes = [] } = {}) {
-  const nodes = workflow?.nodes;
-  if (!Array.isArray(nodes) || !nodes.length) return null;
+  // Junk is filtered once, here, the same way the validator does it. A model
+  // mid-stream produces half-built arrays with holes in them, and a canvas that
+  // throws on one takes the whole screen with it — for a node that was never
+  // going to draw anyway.
+  const nodes = Array.isArray(workflow?.nodes)
+    ? workflow.nodes.filter((n) => n && typeof n === 'object' && typeof n.name === 'string')
+    : null;
+  if (!nodes?.length) return null;
 
   const connections = workflow.connections ?? {};
   const edges = [];

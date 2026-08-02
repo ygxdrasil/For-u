@@ -812,17 +812,22 @@ await check('a read-back that still disagrees is reported as unconfirmed, never 
 await check('every shape of n8n failure is read for the node that broke', async () => {
   const { describeFailure } = await import('../core/assess.js');
   const shapes = [
-    [{ data: { resultData: { error: { message: 'top level boom' }, lastNodeExecuted: 'Slack' } } }, 'Slack', 'top level boom'],
-    [{ data: { resultData: { runData: { Sheets: [{ error: { message: 'per node boom' } }] } } } }, 'Sheets', 'per node boom'],
-    [{ data: { executionData: { resultData: { error: { message: 'nested boom' }, lastNodeExecuted: 'Gmail' } } } }, 'Gmail', 'nested boom'],
-    [{ data: { resultData: { lastNodeExecuted: 'Only this' } } }, 'Only this', null],
-    [{}, null, null],
-    [null, null, null],
+    [{ data: { resultData: { error: { message: 'top level boom' }, lastNodeExecuted: 'Slack' } } }, 'Slack', /top level boom/],
+    [{ data: { resultData: { runData: { Sheets: [{ error: { message: 'per node boom' } }] } } } }, 'Sheets', /per node boom/],
+    [{ data: { executionData: { resultData: { error: { message: 'nested boom' }, lastNodeExecuted: 'Gmail' } } } }, 'Gmail', /nested boom/],
+    // n8n said it failed and recorded nothing about why — a crashed worker, a
+    // killed container, an execution truncated by pruning. That used to come
+    // back as null, and null printed into a sentence reads as our bug rather
+    // than a missing record on their side. It now says which it is.
+    [{ data: { resultData: { lastNodeExecuted: 'Only this' } } }, 'Only this', /no error message.*Only this/s],
+    [{}, null, /no error message and no last node/],
+    [null, null, /no error message and no last node/],
   ];
   for (const [execution, node, message] of shapes) {
     const d = describeFailure(execution);
     assert.equal(d.node, node, `wrong node for ${JSON.stringify(execution)?.slice(0, 50)}`);
-    assert.equal(d.message, message);
+    assert.match(d.message, message);
+    assert.doesNotMatch(d.message, /undefined|null|\[object/, 'the sentence shown to a person contains a JavaScript value');
   }
 });
 
