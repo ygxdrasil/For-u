@@ -123,6 +123,14 @@ try {
     summary(`**${reportedAll.length} new or changed**`);
     summary('');
     for (const r of reportedAll) summary(`- **[level ${r.strength}]** ${r.watch} — ${r.oneLine}`);
+  } else if ((h.watchesActive ?? 0) === 0 && !dash.autonomy?.armed) {
+    // "Every watch looked and nothing had moved" is a lie when there are no
+    // watches: nothing looked. Silence because there is nothing to run and
+    // silence because there was nothing to find need different things doing
+    // about them, and only one of them is the system working.
+    summary('**Nothing ran, because nothing is set up to run.** There are no active watches and she is not armed, so this sweep had nothing to do.');
+    summary('');
+    summary('Stand a watch on the Watches page, or arm her with the switch in the sidebar.');
   } else {
     summary('Nothing new. Every watch looked and nothing had moved, which is the system working rather than failing.');
   }

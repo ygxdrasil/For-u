@@ -48,9 +48,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      # v5/v6 run on Node 24. Node 20 is removed from the runners in
+      # September 2026, and until then every run carries a deprecation
+      # warning that trains you to ignore warnings.
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
 
