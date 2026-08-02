@@ -12,7 +12,7 @@
     "api/health.js": { "maxDuration": 15, "includeFiles": "vendor/catalog.json" },
     "api/auth.js": { "maxDuration": 15 },
     "api/clientlog.js": { "maxDuration": 10 },
-    "api/settings.js": { "maxDuration": 15 },
+    "api/settings.js": { "maxDuration": 30 },
     "api/tokens.js": { "maxDuration": 15 }
   },
   "git": {

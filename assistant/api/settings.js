@@ -67,7 +67,14 @@ export default async function handler(req, res) {
       const result = await askPeer(store, {
         name: p.name,
         question:
-          'This is a connection test from Jason, an n8n workflow builder. Reply with one short sentence confirming you received it and saying what you are.',
+          'This is a connection test from Jason, an n8n workflow builder. Reply with one short sentence confirming you received it and saying what you are. Do not research anything to answer this.',
+        // Under this route's own limit, so a slow peer produces a sentence
+        // saying she was slow rather than a platform 504 carrying nothing.
+        timeoutMs: 20_000,
+        // A hint, not a contract: peers that understand it answer from what they
+        // already know. A connection test must never make another AI go and
+        // spend money to prove it is reachable.
+        extra: { mode: 'stored', depth: 'none', test: true },
       });
       return json(res, 200, {
         ok: true,

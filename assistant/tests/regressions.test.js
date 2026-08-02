@@ -303,6 +303,34 @@ test('a list that was cut short says so', async () => {
   }
 });
 
+test('no route waits longer than the platform will let it run', async () => {
+  // A 25-second peer call inside a function capped at 15 seconds. Vercel killed
+  // it and returned a bare 504 carrying no peer name and no reason — the exact
+  // "serverless returns NOTHING at its limit" failure, self-inflicted.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const root = path.dirname(new URL('.', import.meta.url).pathname);
+  const vercel = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+  const VERCEL_DEFAULT_MAX = 10;
+
+  const tooSlow = [];
+  for (const file of fs.readdirSync(path.join(root, 'api'))) {
+    if (!file.endsWith('.js')) continue;
+    const src = fs.readFileSync(path.join(root, 'api', file), 'utf8');
+    const limitSec = vercel.functions?.[`api/${file}`]?.maxDuration ?? VERCEL_DEFAULT_MAX;
+
+    for (const m of src.matchAll(/timeoutMs:\s*([\d_]+)/g)) {
+      const waitSec = Number(m[1].replace(/_/g, '')) / 1000;
+      // Room to answer as well as to wait.
+      if (waitSec >= limitSec - 2) {
+        tooSlow.push(`api/${file} waits ${waitSec}s inside a ${limitSec}s function`);
+      }
+    }
+  }
+
+  assert.deepEqual(tooSlow, [], tooSlow.join(' | '));
+});
+
 test('no effect hands React a value it will try to call as cleanup', async () => {
   // This is the one that produced "g is not a function" and a white screen on a
   // real phone. React treats ANY non-undefined return from useEffect as the
