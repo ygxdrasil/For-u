@@ -255,3 +255,23 @@ test('settings are clamped, so a bad number cannot widen a brake', () => {
   assert.equal(s.maxSelfWatches, 1);
   assert.equal(s.quietRuns, 0);
 });
+
+test('unattended handoff needs a positive buildability verdict, not just no blocker', () => {
+  // Found by stress: a finding with no buildability at all sailed through,
+  // because the only check was for the NEGATIVE verdict. Unattended is exactly
+  // when nobody is there to notice that it was never classified.
+  const armed = normalizeAutonomy({ armed: true });
+  const base = { evidence: { strength: 5, hypothesis: false }, status: 'active', demand: { oneLine: 'x' } };
+
+  assert.equal(mayHandOff(armed, { ...base, buildability: { verdict: 'jason-can-build' } }).ok, true);
+
+  for (const verdict of ['partly', 'unclear', 'jason-cannot-build']) {
+    const v = mayHandOff(armed, { ...base, buildability: { verdict } });
+    assert.equal(v.ok, false, `"${verdict}" must not go unattended`);
+  }
+  for (const buildability of [undefined, null, {}, { verdict: null }, { verdict: 'something-new' }]) {
+    const v = mayHandOff(armed, { ...base, buildability });
+    assert.equal(v.ok, false, `${JSON.stringify(buildability)} must not go unattended`);
+    assert.match(v.reason, /buildability/);
+  }
+});

@@ -82,7 +82,7 @@ export async function resolveJasonTarget({ env = process.env, store = null, secr
 export class NotBuildableError extends Error {
   constructor(finding) {
     super(
-      `"${finding.demand.oneLine}" is classified ${finding.buildability?.verdict}: ${finding.buildability?.reasoning} Handing Jason something he cannot build costs him the time to work out why and teaches him to distrust the queue. Override deliberately if you disagree.`,
+      `"${finding.demand?.oneLine ?? 'This finding'}" is classified ${finding.buildability?.verdict}: ${finding.buildability?.reasoning} Handing Jason something he cannot build costs him the time to work out why and teaches him to distrust the queue. Override deliberately if you disagree.`,
     );
     this.name = 'NotBuildableError';
   }
@@ -111,17 +111,17 @@ export function briefFor(finding) {
   const price = finding.evidence?.paying?.find((p) => p.price);
   const incumbent = finding.incumbents?.[0];
   const lines = [
-    `Build this: ${finding.demand.oneLine}`,
-    `Who has it: ${finding.demand.whoHasIt}`,
+    `Build this: ${finding.demand?.oneLine ?? '(no one-line description on the record)'}`,
+    `Who has it: ${finding.demand?.whoHasIt ?? '(not recorded)'}`,
     `Evidence: level ${finding.evidence?.strength ?? '?'} of 5${finding.evidence?.hypothesis ? ' (still a hypothesis)' : ''}.`,
   ];
   if (price) lines.push(`They already pay: ${price.price} ${price.currency ?? ''} for ${price.what} — ${price.url}`);
   if (incumbent) lines.push(`Competing with: ${incumbent.name}${incumbent.price ? ` at ${incumbent.price} ${incumbent.currency ?? ''}` : ''} — what it gets wrong: ${incumbent.whatTheyGetWrong}`);
   if (finding.evidence?.agreement?.subject) lines.push(`The complaints agree on: ${finding.evidence.agreement.subject}`);
-  if (finding.whatWouldWin?.length) lines.push(`It has to: ${finding.whatWouldWin.map((w) => w.requirement).join('; ')}`);
+  if (finding.whatWouldWin?.length) lines.push(`It has to: ${finding.whatWouldWin.map((w) => w?.requirement).filter(Boolean).join('; ')}`);
   if (finding.buildability?.shapeLabel) lines.push(`Shape: ${finding.buildability.shapeLabel}`);
   // Never trimmed away. The reasons not to build it travel with the reasons to.
-  if (finding.risks?.length) lines.push(`What would make this a bad idea: ${finding.risks.map((r) => r.risk ?? r).join('; ')}`);
+  if (finding.risks?.length) lines.push(`What would make this a bad idea: ${finding.risks.map((r) => r?.risk ?? r).filter(Boolean).join('; ')}`);
   lines.push(`Full evidence packet is in this same message. Finding id ${finding.id}.`);
   return lines.join('\n');
 }
@@ -137,39 +137,39 @@ export function packageForJason(finding, { note = null, now = nowIso } = {}) {
     text: briefFor(finding),
 
     build: {
-      what: finding.demand.oneLine,
-      forWhom: finding.demand.whoHasIt,
+      what: finding.demand?.oneLine ?? null,
+      forWhom: finding.demand?.whoHasIt ?? null,
       shape: finding.buildability?.shape ?? null,
       shapeLabel: finding.buildability?.shapeLabel ?? null,
-      mustDo: finding.whatWouldWin.map((w) => w.requirement),
+      mustDo: (finding.whatWouldWin ?? []).map((w) => w?.requirement).filter(Boolean),
       // What it has to beat, with what those cost today.
-      competingWith: finding.incumbents.map((i) => ({ name: i.name, price: i.price, currency: i.currency, weakness: i.whatTheyGetWrong, url: i.url })),
-      priceAnchors: finding.evidence.paying.map((p) => ({ what: p.what, price: p.price, currency: p.currency, url: p.url })),
+      competingWith: (finding.incumbents ?? []).map((i) => ({ name: i?.name, price: i?.price, currency: i?.currency, weakness: i?.whatTheyGetWrong, url: i?.url })),
+      priceAnchors: (finding.evidence?.paying ?? []).map((p) => ({ what: p?.what, price: p?.price, currency: p?.currency, url: p?.url })),
     },
 
     why: {
-      evidenceStrength: finding.evidence.strength,
-      isHypothesis: finding.evidence.hypothesis,
-      ladder: finding.evidence.ladder,
-      complaintsAgreeOn: finding.evidence.agreement?.subject ?? null,
-      inTheirWords: finding.demand.inTheirWords,
-      complaints: finding.evidence.complaints,
-      howMany: finding.evidence.volume,
+      evidenceStrength: finding.evidence?.strength ?? null,
+      isHypothesis: finding.evidence?.hypothesis ?? null,
+      ladder: finding.evidence?.ladder ?? [],
+      complaintsAgreeOn: finding.evidence?.agreement?.subject ?? null,
+      inTheirWords: finding.demand?.inTheirWords ?? [],
+      complaints: finding.evidence?.complaints ?? [],
+      howMany: finding.evidence?.volume ?? null,
     },
 
     // Handed over unfiltered. He needs the reasons not to build this at the
     // same moment he gets the reasons to.
-    risks: finding.risks,
-    buildability: finding.buildability,
-    verdict: finding.verdict,
+    risks: finding.risks ?? [],
+    buildability: finding.buildability ?? null,
+    verdict: finding.verdict ?? null,
 
     provenance: {
-      foundAt: finding.foundAt,
-      lastVerifiedAt: finding.lastVerifiedAt,
-      sources: finding.sources,
+      foundAt: finding.foundAt ?? null,
+      lastVerifiedAt: finding.lastVerifiedAt ?? null,
+      sources: finding.sources ?? [],
       // Stated plainly so he can weigh it: snippets are not the same as reads.
-      readQuality: finding.evidence.readQuality ?? null,
-      cost: finding.depth,
+      readQuality: finding.evidence?.readQuality ?? null,
+      cost: finding.depth ?? null,
     },
   };
 }

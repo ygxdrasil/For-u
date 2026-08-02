@@ -184,8 +184,21 @@ export function mayHandOff(autonomy, finding, { at = nowIso() } = {}) {
   if (finding?.evidence?.hypothesis) return { ok: false, reason: 'it is still a hypothesis' };
   if (finding?.handedToJasonAt) return { ok: false, reason: 'already handed over' };
   if (finding?.status && finding.status !== 'active') return { ok: false, reason: `it is ${finding.status}` };
+  // A POSITIVE verdict is required, not merely the absence of a negative one.
+  // A finding that was never classified is one nobody has checked he can build,
+  // and unattended is exactly when there is nobody to notice. Attended you can
+  // look at it and press send anyway; here she cannot.
   if (finding?.buildability?.verdict === 'jason-cannot-build') {
     return { ok: false, reason: `Jason cannot build it: ${finding.buildability.reasoning ?? 'no reason recorded'}` };
+  }
+  if (finding?.buildability?.verdict !== 'jason-can-build') {
+    // This also blocks 'partly' and 'unclear', deliberately. Attended you can
+    // read the classification and press send anyway; unattended there is
+    // nobody to read it, and "he can build some of it" is a judgement call,
+    // not a verdict. Any confidence of 'jason-can-build' is accepted, because
+    // level 5 is already doing the heavy lifting on whether it is real.
+    const verdict = finding?.buildability?.verdict ?? 'never classified';
+    return { ok: false, reason: `buildability is "${verdict}", and unattended she only sends things classified as ones Jason can build` };
   }
 
   const used = handoffsInWindow(autonomy, at).length;

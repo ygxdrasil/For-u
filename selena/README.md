@@ -442,6 +442,12 @@ things they hold in place:
   be widened by a bad number or reset by a settings change
 - two passes running at once cannot lose a counter increment — for an error
   counter that would mean the brake never trips
+- a hostile source cannot smuggle a `javascript:` link into a citation, fill a
+  prompt with one enormous field, reach Object.prototype through a field map,
+  or rewrite which host a link template points at
+- a finding is never handed over unattended without a POSITIVE buildability
+  verdict — "partly" and "never classified" are refused, because unattended is
+  exactly when nobody is there to read the classification
 - the deploy stays at or under eleven serverless functions, and every one of
   them has a `maxDuration` — an undeclared route silently gets Vercel's 10s
   default, which is shorter than research's own budget

@@ -703,7 +703,7 @@ export async function testConnector(connector, { secret, fetchImpl = globalThis.
  * them are rate-limited by the minute, and a burst of eight simultaneous
  * requests is the thing that gets a key suspended.
  */
-export async function gatherFromConnectors(store, query, { secret, fetchImpl = globalThis.fetch, ledger = null, deadline = null, gapMs = 300, limit = 12 } = {}) {
+export async function gatherFromConnectors(store, query, { secret, fetchImpl = globalThis.fetch, ledger = null, deadline = null, gapMs = 300, limit = 12, timeoutMs = 20_000 } = {}) {
   const all = (await store.getKv(CONNECTORS_KEY)) ?? [];
   const enabled = all.filter((c) => c && !c.retiredAt && c.enabled !== false);
   const live = enabled.slice(0, limit);
@@ -760,7 +760,7 @@ export async function gatherFromConnectors(store, query, { secret, fetchImpl = g
         }
         out.attempted += 1;
         // Straight from the store, so the token is still sealed.
-        const outcome = await readConnector({ ...connector, sealed: true }, query, { secret, fetchImpl, ledger });
+        const outcome = await readConnector({ ...connector, sealed: true }, query, { secret, fetchImpl, ledger, timeoutMs });
         if (outcome.ok) out.asks.push(...outcome.asks);
         else out.failures.push({ name: connector.name, detail: outcome.detail, status: outcome.status ?? null });
         // Only worth waiting when this host has another request coming.

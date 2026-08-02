@@ -257,3 +257,22 @@ test('asking only whether Jason is connected does not pay for a decryption', asy
   assert.equal(full.token, 'jt');
   assert.equal(full.hasToken, true);
 });
+
+test('a packet is built from a partial finding without throwing', async () => {
+  // Found by stress: packageForJason read finding.evidence.paying unguarded,
+  // so a finding with a null evidence block crashed the handoff — a 500 on
+  // /api/handoff, and a swallowed note in an unattended pass.
+  const { packageForJason, briefFor } = await import('../core/jason.js');
+  const partials = [
+    { id: 'a', demand: { oneLine: 'x', whoHasIt: 'y' }, evidence: null },
+    { id: 'b', demand: null, evidence: { strength: 5 } },
+    { id: 'c' },
+    { id: 'd', demand: { oneLine: 'x' }, whatWouldWin: null, incumbents: null, risks: null },
+  ];
+  for (const f of partials) {
+    assert.doesNotThrow(() => briefFor(f), `briefFor threw on ${f.id}`);
+    const packet = packageForJason(f);
+    assert.equal(typeof packet.text, 'string');
+    assert.doesNotThrow(() => JSON.parse(JSON.stringify(packet)), `packet for ${f.id} is not serialisable`);
+  }
+});
