@@ -27,6 +27,24 @@ const post = async (url, body) => {
   return res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
 };
 
+/**
+ * A read that cannot fail into nothing.
+ *
+ * A gateway error, a cold start that times out, a proxy sign-in page: any of
+ * them return something that is not JSON, and `.then(r => r.json())` with no
+ * catch becomes an unhandled rejection and a panel that sits empty with no
+ * explanation. The same shape of bug as reading a login page as an empty n8n,
+ * one layer up.
+ */
+const read = async (url) => {
+  try {
+    const res = await fetch(url);
+    return await res.json().catch(() => ({ ok: false, error: `The server answered ${res.status} with something that is not JSON.` }));
+  } catch (err) {
+    return { ok: false, error: `Could not reach the server: ${err.message}` };
+  }
+};
+
 const ago = (iso) => {
   if (!iso) return '—';
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -1154,7 +1172,7 @@ function Memory() {
   const [facts, setFacts] = useState([]);
   const [text, setText] = useState('');
 
-  const load = () => fetch('/api/settings').then((r) => r.json()).then((r) => setFacts(r.memory ?? []));
+  const load = () => read('/api/settings').then((r) => setFacts(r.memory ?? []));
   useEffect(() => { load(); }, []);
 
   const act = async (memory) => {
@@ -1219,17 +1237,24 @@ function Settings({ onSaved }) {
   const [draft, setDraft] = useState({});
   const [prefs, setPrefs] = useState(null);
   const [note, setNote] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const [advanced, setAdvanced] = useState(false);
   const [tokens, setTokens] = useState([]);
   const [minted, setMinted] = useState(null);
 
-  const load = () => fetch('/api/settings').then((r) => r.json()).then((r) => {
+  const load = () => read('/api/settings').then((r) => {
+    if (!r.ok && r.error) return setLoadError(r.error);
+    setLoadError(null);
     setS(r.settings); setPrefs(r.settings?.prefs ?? null);
     setDraft({ n8nBaseUrl: r.settings?.n8nBaseUrl ?? '', monthlyCapUsd: r.settings?.monthlyCapUsd ?? 8 });
   });
-  const loadTokens = () => fetch('/api/tokens').then((r) => r.json()).then((r) => setTokens(r.tokens ?? []));
+  const loadTokens = () => read('/api/tokens').then((r) => setTokens(r.tokens ?? []));
 
   useEffect(() => { load(); loadTokens(); }, []);
+  // A settings page that cannot load says why. Sitting on "Loading…" forever
+  // is the same as saying nothing, and it is what happened to every read here
+  // when the server answered with anything but JSON.
+  if (loadError) return <div className="empty">Settings could not be read. {loadError}</div>;
   if (!s || !prefs) return <div className="empty">Loading…</div>;
 
   const savePref = async (patch) => {
@@ -1333,7 +1358,7 @@ function Peers() {
   const [tests, setTests] = useState({});
   const [testing, setTesting] = useState(null);
 
-  const load = () => fetch('/api/settings').then((r) => r.json()).then((r) => setPeers(r.peers ?? []));
+  const load = () => read('/api/settings').then((r) => setPeers(r.peers ?? []));
   useEffect(() => { load(); }, []);
 
   const save = async () => {
