@@ -66,10 +66,14 @@ export default async function handler(req, res) {
       // explains being asked for the password every time.
       sessionKeyId: await sessionKeyId(store),
       durable: store.durable,
-      // Being honest about the consequence rather than letting them find out.
+      databaseUnreachable: Boolean(store.degraded),
+      // Being honest about the consequence rather than letting them find out —
+      // and about the cause, which is not the same in both cases.
       warning: store.durable
         ? null
-        : 'There is no database configured, so the password and your keys live in memory and are lost whenever the function cold-starts. Set DATABASE_URL.',
+        : store.degraded
+          ? `The database is configured but could not be opened, so your password and keys are living in memory and will be lost on the next cold start. ${store.note ?? ''}`
+          : 'There is no database configured, so the password and your keys live in memory and are lost whenever the function cold-starts. Set DATABASE_URL.',
     });
   }
 
@@ -84,11 +88,17 @@ export default async function handler(req, res) {
     // ALLOW_MEMORY_AUTH exists so local development and the wiring probe can
     // run the real handlers without a database. Never set it in production.
     if (!store.durable && process.env.ALLOW_MEMORY_AUTH !== '1') {
+      // Two different problems with two different fixes. Telling someone to add
+      // a DATABASE_URL they have already added sends them to look in the wrong
+      // place entirely, and the real reason was sitting in store.note unread.
       return json(res, 503, {
         ok: false,
-        error:
-          'No database is configured, so a password set now would be forgotten between requests and lock you out at random. Add DATABASE_URL in Vercel (Neon free tier), redeploy, then set your password.',
-        needsDatabase: true,
+        error: store.degraded
+          ? `The database is configured but could not be opened, so a password set now would be forgotten between requests. This is not something to fix by adding DATABASE_URL — it is already set. ${store.note ?? ''}`
+          : 'No database is configured, so a password set now would be forgotten between requests and lock you out at random. Add DATABASE_URL in Vercel (Neon free tier), redeploy, then set your password.',
+        needsDatabase: !store.degraded,
+        databaseUnreachable: Boolean(store.degraded),
+        detail: store.note ?? null,
       });
     }
     try {

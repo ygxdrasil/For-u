@@ -924,6 +924,12 @@ function Overview({ data }) {
 
   return (
     <>
+      {vitals.store?.degraded && (
+        <div className="notice bad">
+          Your database is set up but will not open, so nothing is being saved — keys, memory and sign-in are all living in memory
+          until the next cold start. This is not fixed by adding DATABASE_URL; it is already there. {vitals.store.note}
+        </div>
+      )}
       {vitals.n8n?.configured && !vitals.n8n?.reachable && <div className="notice unknown">Can't reach your n8n. State unknown, not broken.</div>}
       {!vitals.n8n?.configured && <div className="notice warn">No n8n connected yet — Settings.</div>}
 
@@ -1103,7 +1109,13 @@ function Vitals({ vitals }) {
       <div className="kv">
         <div><span className="k">Your n8n</span><span className="v"><span className={`dot ${vitals.n8n?.reachable ? 'ok' : vitals.n8n?.configured ? 'bad' : 'off'}`} />{vitals.n8n?.reachable ? 'connected' : vitals.n8n?.configured ? "can't reach" : 'not set up'}</span></div>
         <div><span className="k">Nodes I know</span><span className="v">{vitals.nodeIndex?.nodeCount ?? '—'}</span></div>
-        <div><span className="k">Memory</span><span className="v"><span className={`dot ${vitals.store?.durable ? 'ok' : 'bad'}`} />{vitals.store?.durable ? 'saved' : 'not saved'}</span></div>
+        <div>
+          <span className="k">Memory</span>
+          <span className="v" title={vitals.store?.note ?? ''}>
+            <span className={`dot ${vitals.store?.durable ? 'ok' : 'bad'}`} />
+            {vitals.store?.durable ? 'saved' : vitals.store?.degraded ? "database won't open" : 'not saved'}
+          </span>
+        </div>
         <div><span className="k">Your keys</span><span className="v"><span className={`dot ${vitals.encryption?.source === 'env' ? 'ok' : 'unk'}`} />{vitals.encryption?.source === 'env' ? 'locked away' : 'encrypted'}</span></div>
       </div>
       <button className="ghost" style={{ marginTop: 9, padding: '3px 9px', fontSize: 11 }} onClick={() => setMore((m) => !m)}>{more ? 'Less' : 'Details'}</button>

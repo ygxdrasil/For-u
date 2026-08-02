@@ -572,6 +572,46 @@ await check('he may only close a finding on the evidence of a real success', asy
   assert.equal((await store.listFindings({ status: 'open' })).length, 0);
 });
 
+/* ================= 11. the right cause, not a plausible one */
+
+section('11. Naming the right cause');
+
+await check('a database that is set but will not open says so, not "add a database"', async () => {
+  // store.degraded existed and nothing read it, so an unreachable Neon was
+  // reported as a missing one — instructions to do the thing already done,
+  // while the real reason sat unread.
+  const { createStore, resetStoreCache } = await import('../core/store.js');
+  // Through the environment, because that is how the route builds its own —
+  // handing the test a different store would have proved nothing about it.
+  const hadUrl = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = 'postgres://nobody@nowhere.invalid/none';
+  resetStoreCache();
+  const store = await createStore();
+
+  assert.equal(store.durable, false, 'a store that cannot open must not claim to be durable');
+  assert.equal(store.degraded, true, 'the failure was not recorded as degraded');
+  assert.match(store.note, /could not start/i);
+
+  const handler = (await import('../api/auth.js')).default;
+  const chunks = [];
+  const res = { statusCode: 0, setHeader() {}, end(c) { if (c) chunks.push(String(c)); this.text = chunks.join(''); },
+    get body() { try { return JSON.parse(this.text ?? ''); } catch { return null; } } };
+  const wasAllowed = process.env.ALLOW_MEMORY_AUTH;
+  delete process.env.ALLOW_MEMORY_AUTH;
+  await handler({ method: 'POST', headers: {}, body: { action: 'setup', password: 'a-long-enough-password' } }, res);
+  if (wasAllowed) process.env.ALLOW_MEMORY_AUTH = wasAllowed;
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.databaseUnreachable, true);
+  assert.equal(res.body.needsDatabase, false, 'it told them to add a database they already have');
+  assert.doesNotMatch(res.body.error, /Add DATABASE_URL/i);
+  assert.match(res.body.error, /already set/i);
+  assert.match(res.body.detail ?? '', /could not start/i, 'the real reason was not passed on');
+
+  if (hadUrl === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = hadUrl;
+  resetStoreCache();
+});
+
 /* ============================================================ report */
 
 process.stdout.write('\n');

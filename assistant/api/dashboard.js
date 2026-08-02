@@ -131,7 +131,7 @@ export default async function handler(req, res) {
     ok: true,
     vitals: {
       build: BUILD,
-      store: { kind: store.kind, durable: store.durable, note: store.note ?? null },
+      store: { kind: store.kind, durable: store.durable, degraded: Boolean(store.degraded), note: store.note ?? null },
       nodeIndex: index,
       nodeIndexError: indexError,
       // The public n8n API exposes no version endpoint, so this is genuinely
