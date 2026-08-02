@@ -22,6 +22,9 @@ import { askPeer, listPeers } from './peers.js';
 export const APPROVAL_REQUIRED = {
   ACTIVATE: 'activate_workflow',
   ENABLE_WRITES: 'enable_write_nodes',
+  // Asking a peer what it already knows is free. Telling it to go and find out
+  // is spending — at the far end, on the same person's money.
+  COMMISSION_RESEARCH: 'commission_research',
 };
 
 const ok = (data) => ({ ok: true, ...data });
@@ -480,18 +483,52 @@ export function buildToolRegistry(ctx) {
         properties: {
           question: { type: 'string', description: 'One specific question. Not "what should I build" — something answerable.' },
           peer: { type: 'string', description: 'Which peer to ask. Omit for the first configured one.' },
+          research: {
+            type: 'boolean',
+            description:
+              'Only if the peer has nothing on record AND the user has approved paying for new research. Asking what a peer already knows is free; commissioning research costs money at their end and needs an explicit yes.',
+          },
         },
         required: ['question'],
       },
-      handler: async ({ question, peer }) => {
-        const res = await askPeer(store, { name: peer ?? null, question });
+      handler: async ({ question, peer, research }) => {
+        // Spending is one of exactly two things that need a yes, and it does not
+        // stop being spending because it happens on another AI's bill.
+        if (research && !approvals.includes(APPROVAL_REQUIRED.COMMISSION_RESEARCH)) {
+          return {
+            ok: false,
+            needsApproval: APPROVAL_REQUIRED.COMMISSION_RESEARCH,
+            error:
+              `Answering "${String(question).slice(0, 120)}" would mean commissioning new research, which costs money at the peer's end. I need you to confirm before I do that — or tell me the answer yourself, which is free and faster.`,
+            question,
+          };
+        }
+
+        const res = await askPeer(store, {
+          name: peer ?? null,
+          question,
+          // Free by default. A peer that has the answer gives it; a peer that
+          // does not says so, and that is a question for the user rather than a
+          // reason to start spending.
+          extra: research ? { mode: 'research' } : { mode: 'stored', depth: 'none' },
+          timeoutMs: research ? 25_000 : 20_000,
+        });
+
         if (!res.ok) {
           return fail(
             `${res.error} Ask the user this question directly and wait — do not decide it yourself.`,
             { question },
           );
         }
-        return ok({ peer: res.peer, question, answer: res.answer });
+        return ok({
+          peer: res.peer,
+          question,
+          answer: res.answer,
+          researched: Boolean(research),
+          note: research
+            ? null
+            : 'This is what the peer already knew, which costs nothing. If the answer is that it has nothing on record, put the question to the user — do not commission research without their say-so.',
+        });
       },
     },
 

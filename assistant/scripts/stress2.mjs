@@ -1020,6 +1020,49 @@ await check('a connection test does not ask a peer to go and spend money', async
   assert.equal(sent.test, true);
 });
 
+await check('asking a peer is free, and stays free unless you say otherwise', async () => {
+  const { savePeer } = await import('../core/peers.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/api/ask', protocol: 'json' });
+  const tools = buildToolRegistry({ n8n: null, store, approvals: [], prefs: {}, onStatus: () => {} });
+  const ask = tools.find((t) => t.name === 'ask_peer');
+
+  let sent = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ answer: 'from the record' }), { status: 200 }); };
+
+  try {
+    const out = await ask.handler({ question: 'what counts as qualified?' });
+    assert.equal(out.ok, true, out.error);
+    assert.equal(sent.mode, 'stored', 'a plain question was allowed to trigger paid research');
+    assert.match(out.note, /costs nothing/i);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+await check('commissioning research needs a yes, like anything else that spends', async () => {
+  const { savePeer } = await import('../core/peers.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/api/ask', protocol: 'json' });
+
+  let called = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { called++; return new Response(JSON.stringify({ answer: 'researched' }), { status: 200 }); };
+
+  try {
+    const held = buildToolRegistry({ n8n: null, store, approvals: [], prefs: {}, onStatus: () => {} }).find((t) => t.name === 'ask_peer');
+    const out = await held.handler({ question: 'is there demand for this?', research: true });
+    assert.equal(out.ok, false);
+    assert.equal(out.needsApproval, 'commission_research');
+    assert.match(out.error, /costs money/i);
+    assert.equal(called, 0, 'it spent before being told it could');
+
+    const approved = buildToolRegistry({ n8n: null, store, approvals: ['commission_research'], prefs: {}, onStatus: () => {} }).find((t) => t.name === 'ask_peer');
+    const go = await approved.handler({ question: 'is there demand for this?', research: true });
+    assert.equal(go.ok, true, go.error);
+    assert.equal(called, 1, 'approval did not let it through');
+  } finally { globalThis.fetch = realFetch; }
+});
+
 await check('a minted token works once and is never shown again', async () => {
   const { createStore } = await import('../core/store.js');
   process.env.AGENT_TOKEN = 'stress-agent-token';
