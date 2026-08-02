@@ -154,16 +154,36 @@ out, each probed against the live API — the URL, the field map and the link
 template — with the counts shown being what actually came back on the day.
 One press connects the lot.
 
-| | Gives | Checked |
+| | Gives | Checked live |
 |---|---|---|
 | Shopify Community | asks, complaints | 50 of 50 posts citable |
 | n8n Community | asks, complaints | 50 of 50 posts citable |
 | Make.com Community | asks, complaints | 50 of 50 posts citable |
-| **Booksy Biz** reviews (barbers, salons) | **paying**, complaints | 50 citable, 8 at ≤3 stars |
-| **Fresha for business** reviews | **paying**, complaints | 50 citable, 20 at ≤3 stars |
-| **Tradify** reviews (trades) | **paying**, complaints | 50 citable, 14 at ≤3 stars |
-| **ServiceM8** reviews (field service) | **paying**, complaints | 50 citable, 15 at ≤3 stars |
-| **Square POS** reviews | **paying**, complaints | 50 citable, 30 at ≤3 stars |
+| Lemmy (federated) | asks, complaints | 20 of 20 posts citable |
+| GitHub issue search | asks, complaints | 20 of 20 issues citable |
+| **CFPB consumer complaints** | **paying**, complaints | 20 of 20 citable, detail pages resolve |
+| **US contract awards** | **paying**, incumbents | 20 of 20 citable — a real HVAC contract |
+| Federal Register | asks | 20 of 20 documents citable |
+| npm registry | incumbents | 20 of 20 packages citable |
+| **Booksy Biz** (barbers, salons) | **paying**, complaints | 50 citable, 8 at ≤3 stars |
+| **Fresha for business** | **paying**, complaints | 50 citable, 20 at ≤3 stars |
+| **Tradify** (trades) | **paying**, complaints | 50 citable, 14 at ≤3 stars |
+| **ServiceM8** (field service) | **paying**, complaints | 50 citable, 15 at ≤3 stars |
+| **Square POS** | **paying**, complaints | 50 citable, 30 at ≤3 stars |
+
+Nine of the fourteen are ticked by default — a spread across asking, paying and
+what already exists. Every connected source is a request on every run, and a
+dozen makes runs slow and noisy without making them better. The rest are one
+tick away.
+
+**On MCP, plainly:** five public servers with no authentication were probed and
+all five answered — DeepWiki, Context7, GitMCP, Hugging Face and grep.app. None
+is in the set, because none carries demand: they are repository docs, library
+lookups and literal code-pattern search. grep.app refuses a natural-language
+query outright. The MCP client works and is tested against both protocol
+dialects; there is simply nothing public worth pointing it at yet. An
+authenticated server you hold a token for is a different matter, and Connect
+takes those.
 
 The review feeds are the valuable half, and deliberately the *business-side*
 apps: Booksy and Fresha each have a consumer app with far more ratings whose

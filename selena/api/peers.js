@@ -28,7 +28,7 @@ import {
   CONNECTOR_KINDS,
 } from '../core/connectors.js';
 import { SOURCES } from '../core/sources.js';
-import { STARTERS, DEFAULT_SET, starterById, connectorInputFor, STARTERS_CHECKED_ON } from '../core/starters.js';
+import { STARTERS, DEFAULT_SET, GROUPS, starterById, connectorInputFor, STARTERS_CHECKED_ON } from '../core/starters.js';
 
 export default guard(async function handler(req, res) {
   if (!methodGuard(req, res, ['GET', 'POST'])) return;
@@ -61,6 +61,7 @@ export default guard(async function handler(req, res) {
       // link template all probed, not written from documentation.
       starters: STARTERS.map(({ id, group, name, why, verified, gives, searchable }) => ({ id, group, name, why, verified, gives, searchable })),
       defaultSet: DEFAULT_SET,
+      groups: GROUPS,
       startersCheckedOn: STARTERS_CHECKED_ON,
       catalogue: SOURCES.filter((s) => s.connectable).map((s) => ({
         id: s.id,
@@ -183,7 +184,7 @@ export default guard(async function handler(req, res) {
 
     if (action === 'edit-source') {
       const patch = {};
-      for (const key of ['name', 'url', 'tool', 'queryArg', 'authStyle', 'authName', 'method', 'bodyTemplate']) if (body[key] !== undefined) patch[key] = body[key];
+      for (const key of ['name', 'url', 'tool', 'queryArg', 'authStyle', 'authName', 'method', 'bodyTemplate', 'testQuery']) if (body[key] !== undefined) patch[key] = body[key];
       if (body.token !== undefined && body.token !== '') patch.token = body.token;
       const map = {};
       for (const key of ['itemsPath', 'textPath', 'urlPath', 'urlTemplate', 'titlePath', 'datePath', 'weightPath']) if (body[key] !== undefined) map[key] = body[key] || null;
@@ -196,7 +197,9 @@ export default guard(async function handler(req, res) {
     const result = await testConnector(connector, {
       secret,
       fetchImpl: ctx.fetchImpl,
-      query: String(body.query ?? '').trim() || 'is there a tool that',
+      // Null rather than a default, so the connector's own known-good term is
+      // used when it has one.
+      query: String(body.query ?? '').trim() || null,
     });
     // Remembering the dialect turns the probe into a one-off rather than a
     // cost paid on every single run.

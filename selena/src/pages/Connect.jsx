@@ -512,14 +512,12 @@ function StarterSet({ state, onDone, busy, setBusy, setError }) {
         The numbers are what actually came back when it was checked, on {state.startersCheckedOn}. Nothing here needs a key.
       </p>
 
-      {['forum', 'reviews'].map((g) => (
-        <div key={g} style={{ marginTop: 10 }}>
+      {(state.groups ?? []).map((grp) => (
+        <div key={grp.id} style={{ marginTop: 10 }}>
           <div className="detail" style={{ marginBottom: 6 }}>
-            {g === 'forum'
-              ? 'FORUMS — people saying what they need. Asks and complaints; never proof anyone is paying.'
-              : 'REVIEWS — people who have already paid, saying what is wrong with it. The rare source that can reach level 4 on its own.'}
+            {grp.label} — {grp.note}
           </div>
-          {group(g).map((s) => {
+          {group(grp.id).map((s) => {
             const on = chosen.has(s.id);
             const have = already.has(s.id);
             return (

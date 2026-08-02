@@ -464,6 +464,7 @@ export async function addConnector(store, input, secret) {
     // the HUD can say what it actually does instead of implying it looks for
     // your topic.
     searchable: input.searchable !== false,
+    testQuery: input.testQuery ?? null,
     starterId: input.starterId ?? null,
     bodyTemplate: String(input.bodyTemplate ?? '').slice(0, 2000) || null,
     map: {
@@ -647,8 +648,12 @@ export async function readConnector(connector, query, { secret, fetchImpl = glob
  * "it answered but gave nothing usable", "it refused you" and "it did not
  * answer" need four different things doing about them.
  */
-export async function testConnector(connector, { secret, fetchImpl = globalThis.fetch, query = 'is there a tool that', timeoutMs = 20_000 } = {}) {
-  const outcome = await readConnector(connector, query, { secret, fetchImpl, timeoutMs });
+export async function testConnector(connector, { secret, fetchImpl = globalThis.fetch, query = null, timeoutMs = 20_000 } = {}) {
+  // The source's own term wins when it has one: a database of public
+  // contracts genuinely has nothing matching "is there a tool that", and
+  // reporting that truthfully still looks exactly like a broken connection.
+  const term = query ?? connector.testQuery ?? 'is there a tool that';
+  const outcome = await readConnector(connector, term, { secret, fetchImpl, timeoutMs });
 
   if (!outcome.ok) {
     const refused = outcome.status === 401 || outcome.status === 403;
@@ -668,7 +673,7 @@ export async function testConnector(connector, { secret, fetchImpl = globalThis.
       verdict: outcome.seen ? 'it answered, but the field map found nothing in it' : 'it answered with no items',
       detail: outcome.seen
         ? `${outcome.seen} item(s) came back and none produced both text and a link${outcome.missingUrl ? `; ${outcome.missingUrl} had text but no usable URL` : ''}. Check the paths — an ask with no link cannot be cited, so it is not kept.`
-        : 'Nothing came back for that search term. It may simply have no results for it, so try the test again with a term you know is there.',
+        : `Nothing came back for "${term}". It may simply have no results for that term rather than being broken — try again with one you know is there.`,
       status: outcome.status ?? null,
       sampled: 0,
       testedAt: nowIso(),
@@ -694,13 +699,27 @@ export async function testConnector(connector, { secret, fetchImpl = globalThis.
  * them are rate-limited by the minute, and a burst of eight simultaneous
  * requests is the thing that gets a key suspended.
  */
-export async function gatherFromConnectors(store, query, { secret, fetchImpl = globalThis.fetch, ledger = null, deadline = null, gapMs = 300, limit = 6 } = {}) {
+export async function gatherFromConnectors(store, query, { secret, fetchImpl = globalThis.fetch, ledger = null, deadline = null, gapMs = 300, limit = 12 } = {}) {
   const all = (await store.getKv(CONNECTORS_KEY)) ?? [];
-  const live = all.filter((c) => c && !c.retiredAt && c.enabled !== false).slice(0, limit);
+  const enabled = all.filter((c) => c && !c.retiredAt && c.enabled !== false);
+  const live = enabled.slice(0, limit);
 
   const asks = [];
   const failures = [];
   let attempted = 0;
+
+  // Never a silent cap. Connecting eleven sources and having six read is a
+  // finding that rests on less than you think it does, and the only honest
+  // version of that is saying which ones were left out.
+  const truncated = enabled.length - live.length;
+  const notices = [];
+  if (truncated > 0) {
+    notices.push({
+      name: `${truncated} more connected source(s)`,
+      detail: `not read this run: the per-run ceiling is ${limit}. Pause the ones you care about least, or raise the ceiling.`,
+      skipped: true,
+    });
+  }
 
   for (const connector of live) {
     if (deadline?.tooLateFor(6_000)) {
@@ -715,5 +734,17 @@ export async function gatherFromConnectors(store, query, { secret, fetchImpl = g
     if (gapMs) await new Promise((r) => setTimeout(r, gapMs));
   }
 
-  return { asks, failures, partial: failures.length > 0, attempted, read: attempted - failures.length, connected: live.length };
+  // `failures` are sources that were asked and did not answer. `notices` are
+  // things you should know that are not failures — a source never asked
+  // because of the ceiling has not failed at anything. Keeping them apart is
+  // what stops "read 6 of 9" turning into "3 sources are broken".
+  return {
+    asks,
+    failures: [...failures, ...notices],
+    partial: failures.length > 0 || notices.length > 0,
+    attempted,
+    read: attempted - failures.length,
+    connected: enabled.length,
+    truncated,
+  };
 }

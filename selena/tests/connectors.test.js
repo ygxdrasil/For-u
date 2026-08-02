@@ -468,16 +468,26 @@ test('every verified starter is internally consistent', async () => {
     assert.ok(Boolean(s.urlPath) !== Boolean(s.urlTemplate), `${s.id} must have either a link path or a link template, not both or neither`);
     assert.ok(s.why && s.why.length > 40, `${s.id} must say why it is worth having`);
     assert.ok(s.verified, `${s.id} must record what was actually checked`);
-    assert.ok(['forum', 'reviews'].includes(s.group));
+    assert.ok(['forum', 'reviews', 'records', 'incumbents'].includes(s.group), `${s.id} has an unknown group "${s.group}"`);
 
     // A searchable source must have somewhere to put the term; a fixed corpus
     // must not pretend to.
     if (s.searchable) assert.ok(s.url.includes('{query}') || s.method === 'POST', `${s.id} is searchable but has nowhere to put the term`);
     else assert.ok(!s.url.includes('{query}'), `${s.id} is not searchable but has a {query} placeholder`);
 
-    // Only reviews may claim to prove payment: a forum post is somebody
-    // talking, and letting it count as paying would break the ladder.
-    if (s.gives.includes('paying')) assert.equal(s.group, 'reviews', `${s.id} claims paying evidence but is not a review source`);
+    // A forum post is somebody talking. It may never count as proof that
+    // anyone paid, however strongly it is worded — that is the difference
+    // between rung 2 and rung 3, and the whole ladder rests on it. Reviews
+    // (someone bought it) and public records (someone was awarded a contract)
+    // are documented payment and may.
+    if (s.gives.includes('paying')) {
+      assert.ok(['reviews', 'records'].includes(s.group), `${s.id} claims paying evidence from a "${s.group}" source, which cannot prove it`);
+    }
+    // And the reverse: a source that only tells you what exists must never
+    // claim anyone wants it.
+    if (s.group === 'incumbents') {
+      assert.deepEqual(s.gives, ['incumbents'], `${s.id} is a supply source and must not claim demand evidence`);
+    }
   }
 
   for (const id of DEFAULT_SET) assert.ok(starterById(id), `the default set names ${id}, which does not exist`);
@@ -512,4 +522,26 @@ test('a fixed review feed is not given a search term it cannot use', async () =>
   );
   await readConnector(await getConnector(store, added.connector.id, SECRET), 'invoice chasing', { secret: SECRET, fetchImpl });
   assert.equal(urls[0], 'https://itunes.apple.com/gb/rss/customerreviews/page=1/id=1/json', 'the URL is the whole query');
+});
+
+test('a per-run ceiling on sources is reported, never silent', async () => {
+  // Connecting eleven sources and having six read makes a finding rest on less
+  // than you think it does. Silent truncation reads as "covered everything".
+  const store = freshStore();
+  for (let i = 0; i < 5; i += 1) {
+    await addConnector(store, { kind: 'rest', name: `s${i}`, url: `https://s${i}.example.com/api?q={query}` }, SECRET);
+  }
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+
+  const out = await gatherFromConnectors(store, 'x', { secret: SECRET, fetchImpl, gapMs: 0, limit: 3 });
+
+  assert.equal(out.attempted, 3, 'only the ceiling is read');
+  assert.equal(out.connected, 5, 'but she knows how many there are');
+  assert.equal(out.truncated, 2);
+  assert.equal(out.partial, true);
+  assert.ok(out.failures.some((f) => f.skipped && /ceiling is 3/.test(f.detail)), 'and says which were left out and why');
+
+  // A source that was never asked has not failed. Counting it as one would
+  // read as "3 of your sources are broken".
+  assert.equal(out.read, 3, 'skipped is not the same as failed');
 });
