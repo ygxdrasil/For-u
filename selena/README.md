@@ -50,6 +50,11 @@ Checked against each platform's own documentation on 2026-07-31.
 | **Etsy** | Official API | Marketplace listing search *and* listing/shop reviews need **no OAuth scope** — an API keystring is the only auth. Both halves of a level-4 finding from one authorised place. |
 | **Hacker News** | Official API, no key | The Algolia search API is public, keyless and unmetered. "Ask HN" threads are people describing what they need in their own words, with a permanent URL for every one. |
 | **Stack Exchange** | Official API, no key | 300 requests a day without registering. Software Recommendations and Webmasters are people saying what tool they are looking for and what the existing ones get wrong. |
+| **Discourse forums** | Official API, no key | The quiet winner. Thousands of trade and niche-business forums run Discourse, and every public one answers the same documented JSON API anonymously. This is how you reach barbers, letting agents and florists — not one big platform, but a hundred small forums that all speak the same protocol. Verified live. |
+| **App Store reviews** | Official API, no key | Apple's customer-reviews feed: ~500 recent reviews an app, keyless. One of the few places paying and complaining sit in the same sentence — a level-4 shape out of the box. Verified live. |
+| **Public procurement** | Official API | USAspending needs no key at all; SAM.gov, TED and UK Contracts Finder need a free one. Itemised, published proof that someone is paying. Verified live: a real HVAC contract with a public link. |
+| **Product Hunt** | Official API | Free developer token in about a minute, read-only public scope. Good for the other half of a finding: what exists, what it charges, what the comments say it does not do. |
+| **Upwork / Thumbtack / Nextdoor** | Application-gated | All three have real APIs and none is open. Upwork needs an approved OAuth app; Thumbtack's is a partner Leads API by request; Nextdoor's portal is gated to advertising partners, publishers and public agencies. Connect them on the Connect page if you get approved. |
 | **Reddit** | Search index only | The Data API's free tier is explicitly non-commercial. Not registered, by choice. Threads are cited where a search index surfaces them. |
 | **Facebook / Instagram** | Search index only | The Graph API has no public keyword or hashtag search — it reaches accounts you administer, after app review. The **Meta Content Library** does expose searchable public posts, and is exactly what you would want, but it is restricted to academic and nonprofit researchers and explicitly not open to commercial or independent developers. Never fetched. |
 | **Gumroad** | Search index only | API v2 is scoped to your own products; there is no public discovery. Their terms forbid crawlers outright. |
@@ -122,6 +127,47 @@ the same subject coming back a month later is itself a signal.
 
 Every proposal cites the posts it came from, and a proposal citing a URL she
 did not actually read is discarded by the same ledger that governs findings.
+
+---
+
+## Connecting your own sources
+
+The table above is the fixed policy. **Connect** is the other half: a place to
+paste an API you hold a key for, or an MCP server, and have her actually read
+it on every run.
+
+Two kinds, because those are the two things that exist:
+
+- **An API.** A URL with `{query}` where the search term goes, GET or POST, and
+  a short map saying which fields hold the words and the link. The path
+  language is dots for keys, `[]` for a list, `|` between alternatives —
+  `data.items[].title` is the whole vocabulary. When a source hands back an id
+  or a slug instead of a link, a template builds one: `https://forum/t/{slug}/{id}`.
+- **An MCP server.** She lists its tools, you pick the one that searches, and
+  she calls it. The July 2026 revision removed the initialize handshake and
+  requires new routing headers; plenty of servers are still on the older
+  session-based spec. She tries the current shape first, falls back to the
+  handshake, and remembers which the server speaks so the probe is paid once.
+
+Recipes for Discourse, App Store reviews and public contract awards come
+pre-filled — all three verified against the live APIs, not written from memory.
+
+Three things hold:
+
+- **A test is not a status code.** It runs one real search and shows you the
+  posts that came back, with their links. "It answered 200 but the field map
+  found nothing in it" is reported as its own outcome, because that is the way
+  a connection silently reads nothing for a month.
+- **An item with no usable link is dropped.** Not kept with a placeholder. A
+  quote she cannot cite is not evidence, and the count of what was dropped is
+  shown rather than hidden.
+- **A pasted URL does not bypass the policy.** `assertFetchAllowed` runs on it
+  at add time and again at read time. Pasting a blocked host on a settings page
+  does not change what that platform's terms say — but the API hostnames are
+  not blocked, so a real approved key works.
+
+Keys are encrypted at rest with the same secret that signs your sign-in, and
+never sent back to the browser.
 
 ---
 
@@ -367,6 +413,7 @@ core/       the headless engine — no HTTP, no React, no cron
   sources.js     the source policy, enforced
   community.js   Hacker News and Stack Exchange — keyless, quoted verbatim
   explore.js     going looking with no topic; proposes, never files
+  connectors.js  the APIs and MCP servers you plug in yourself
   autonomy.js    the brakes: reserve, floor, ceiling, backoff, stop
   pass.js        one unattended pass: watch → roam → stand → hand over
   peers.js       where Jason and Grace are, and proof the line works

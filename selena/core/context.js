@@ -55,6 +55,22 @@ export async function createContext({
 
   const deadline = createDeadline(budgetMs);
 
+  // Whatever you plugged in on the Sources page. Assembled lazily and behind a
+  // tiny facade so the pipeline never has to know about secrets: it asks for
+  // asks and gets asks, exactly as it does from the built-in sources.
+  const connectors = {
+    async gather(query, { ledger: withLedger = null } = {}) {
+      const { gatherFromConnectors } = await import('./connectors.js');
+      const { getSessionSecret } = await import('./password.js');
+      const secret = await getSessionSecret(store, env);
+      return gatherFromConnectors(store, query, { secret, fetchImpl, ledger: withLedger, deadline });
+    },
+    async count() {
+      const { listConnectors } = await import('./connectors.js');
+      return (await listConnectors(store)).filter((c) => c.enabled !== false).length;
+    },
+  };
+
   return {
     store,
     meter,
@@ -62,6 +78,7 @@ export async function createContext({
     llmError,
     etsy,
     community,
+    connectors,
     ledger,
     deadline,
     budgetMs,

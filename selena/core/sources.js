@@ -138,6 +138,90 @@ export const SOURCES = [
     htmlNote: 'The API is the route in; quotes link to the question itself.',
   },
   {
+    id: 'discourse',
+    name: 'Discourse forums (any public instance)',
+    access: 'official-api',
+    requiresEnv: null,
+    docs: 'https://docs.discourse.org/',
+    checkedOn: '2026-08-02',
+    gives: ['asks', 'complaints', 'incumbents'],
+    endpoints: ['GET {forum}/search.json?q=…', 'GET {forum}/t/{slug}/{id}.json — a whole thread'],
+    connectable: true,
+    note:
+      'The quiet winner of the whole search. Discourse powers thousands of trade and niche-business forums, and every public instance exposes the same documented JSON API to anonymous readers — no key, no registration, and no meaningful rate limit on public reads. This is how you reach the barbers, the letting agents and the wedding florists: not one big platform, but a hundred small forums that all speak the same protocol. Add the ones for your trades on the Sources page and she reads them all with one adapter.',
+    limits: 'No strict limit on anonymous public reads. Private or login-walled forums return nothing, and are not worked around.',
+    neverFetchHtml: false,
+    htmlNote: 'The .json endpoints are the documented route in; quotes link back to the human thread.',
+  },
+  {
+    id: 'appstores',
+    name: 'App Store and Google Play reviews',
+    access: 'official-api',
+    requiresEnv: null,
+    docs: 'https://developer.apple.com/documentation/appstoreconnectapi',
+    checkedOn: '2026-08-02',
+    gives: ['paying', 'complaints', 'incumbents'],
+    endpoints: ['GET itunes.apple.com/{country}/rss/customerreviews/page={n}/sortBy=mostRecent/id={appId}/json'],
+    connectable: true,
+    note:
+      "Apple's customer-reviews feed is public, keyless, and returns roughly 50 reviews a page for up to ten pages per storefront. It is one of the few places where paying and complaining sit in the same record: someone bought the app and is telling you what is wrong with it. That is a level-4 shape straight out of the box. Apple throttles the feed hard per IP, so requests are spaced. Google Play has no equivalent public feed and needs a Play Console account for the reviews API.",
+    limits: 'Throttled aggressively per egress IP; about 500 recent reviews per app per storefront.',
+    neverFetchHtml: false,
+    htmlNote: 'The RSS/JSON feed only. The store pages themselves are not scraped.',
+  },
+  {
+    id: 'procurement',
+    name: 'Public procurement: tenders and contract awards',
+    access: 'official-api',
+    requiresEnv: null,
+    docs: 'https://api.usaspending.gov/',
+    checkedOn: '2026-08-02',
+    gives: ['paying', 'incumbents'],
+    endpoints: [
+      'POST api.usaspending.gov/api/v2/search/spending_by_award — no key at all',
+      'GET api.sam.gov/opportunities/v2/search — free key, US federal notices',
+      'GET ted.europa.eu/api — EU tender notices',
+      'GET www.contractsfinder.service.gov.uk/Published/Notices/OCDS/Search — UK',
+    ],
+    connectable: true,
+    note:
+      'Documented, published, itemised proof that an organisation is paying for something — which is the rung of the ladder everything else struggles to reach. USAspending needs no key whatsoever. A repeated tender for the same service, or a framework nobody bids on, is demand with a price attached and a public paper trail. Weaker on complaints: it tells you what was bought, not whether anyone was happy.',
+    limits: 'USAspending: unauthenticated, generous. SAM.gov: free key, rate-limited by account tier.',
+    neverFetchHtml: false,
+    htmlNote: 'All of these are open data programmes that exist to be read programmatically.',
+  },
+  {
+    id: 'producthunt',
+    name: 'Product Hunt',
+    access: 'official-api',
+    requiresEnv: null,
+    docs: 'https://api.producthunt.com/v2/docs',
+    checkedOn: '2026-08-02',
+    gives: ['incumbents', 'complaints'],
+    endpoints: ['POST api.producthunt.com/v2/api/graphql'],
+    connectable: true,
+    note:
+      'A free developer token, issued in about a minute, with a read-only public scope. Useful for the other half of a finding: what already exists, what it charges, and what the comments say it does not do. Read-only public data at 6,250 complexity points per fifteen minutes.',
+    limits: '6,250 complexity points per 15 minutes on a free developer token.',
+    neverFetchHtml: false,
+    htmlNote: 'GraphQL only.',
+  },
+  {
+    id: 'marketplaces-gated',
+    name: 'Upwork, Thumbtack, Nextdoor (application-gated)',
+    access: 'search-index-only',
+    requiresEnv: null,
+    docs: 'https://www.upwork.com/developer',
+    checkedOn: '2026-08-02',
+    connectable: true,
+    gives: ['asks', 'paying'],
+    note:
+      'All three have real APIs and none of them is open. Upwork\'s GraphQL API needs OAuth and an approved app, and job search through it is oriented at clients rather than at market research. Thumbtack\'s is a partner Leads API you have to request access to by hand. Nextdoor\'s developer portal is real but application-gated to advertising partners, publishers and public agencies — there is no general read API. If you get approved for any of them, paste the credentials on the Sources page and she will use them; until then they are search-index-only, like Reddit.',
+    limits: 'Not applicable — no API calls are made without credentials you have added.',
+    neverFetchHtml: true,
+    htmlNote: 'Not fetched. If you are approved, connect the API rather than the website.',
+  },
+  {
     id: 'web',
     name: 'Open web: forums, blogs, communities',
     access: 'open-web',
@@ -169,6 +253,9 @@ export const BLOCKED_HOSTS = {
   gumroad: ['gumroad.com'],
   fiverr: ['fiverr.com'],
   etsy: ['etsy.com'], // the API host api.etsy.com is allowed; the storefront is not
+  // Real APIs, all three application-gated. The websites stay blocked; if you
+  // are approved, you connect the API host, which is not on this list.
+  'marketplaces-gated': ['upwork.com', 'thumbtack.com', 'nextdoor.com'],
 };
 
 const API_HOSTS = new Set([
@@ -178,6 +265,18 @@ const API_HOSTS = new Set([
   'hn.algolia.com',
   'news.ycombinator.com',
   'api.stackexchange.com',
+  // Keyless and documented for anonymous reads.
+  'itunes.apple.com',
+  'api.usaspending.gov',
+  'api.sam.gov',
+  'ted.europa.eu',
+  'www.contractsfinder.service.gov.uk',
+  'api.producthunt.com',
+  // The gated marketplaces' API hosts, so an approved key works while the
+  // storefronts above stay refused.
+  'api.upwork.com',
+  'api.thumbtack.com',
+  'api.nextdoor.com',
 ]);
 
 export class ForbiddenSourceError extends Error {

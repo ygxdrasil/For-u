@@ -87,6 +87,7 @@ export async function runResearch(task, deps) {
   // one topic's prices to another.
   let etsyEvidence = null;
   let communityAsks = null;
+  let connectorAsks = null;
 
   // Declared before the first possible return. finish() is hoisted and reads
   // all three, so a `let` further down put them in the temporal dead zone and
@@ -228,6 +229,32 @@ export async function runResearch(task, deps) {
       }
     }
 
+    // ---- the sources you connected yourself ------------------------------
+    // These are the ones that know about barbers, letting agents and florists
+    // rather than about software. They go through exactly the same ledger as
+    // everything else: a pasted API buys reach, not trust.
+    if (deps.connectors && !deadline.tooLateFor(8_000)) {
+      try {
+        const found = await deps.connectors.gather(topic, { ledger });
+        if (found.asks.length) {
+          connectorAsks = found;
+          readings.push(
+            `### your connected sources\n` +
+              found.asks
+                .slice(0, 12)
+                .map((x) => `- "${x.quote.slice(0, 320)}" — ${x.url} (via ${x.source})`)
+                .join('\n'),
+          );
+          log(deps, 'read', `${found.asks.length} post(s) from ${found.read} connected source(s)`, { runId });
+        }
+        if (found.failures.length) {
+          notes.push(`connected sources: ${found.failures.map((f) => `${f.name} did not answer (${f.detail})`).join('; ')}. A caveat, not a failure.`);
+        }
+      } catch (err) {
+        notes.push(`your connected sources could not be read (${err.message}); continuing with what the rest gave us`);
+      }
+    }
+
     // ---- reconsider depth, out loud -------------------------------------
     const interim = computeEvidence({
       paying: etsyEvidence?.paying ?? [],
@@ -271,7 +298,7 @@ export async function runResearch(task, deps) {
     }
   }
 
-  if (!readings.length && !etsyEvidence?.paying?.length && !communityAsks?.asks?.length) {
+  if (!readings.length && !etsyEvidence?.paying?.length && !communityAsks?.asks?.length && !connectorAsks?.asks?.length) {
     return finish('nothing', null, [...notes, 'nothing readable came back for this topic']);
   }
 
@@ -325,11 +352,11 @@ export async function runResearch(task, deps) {
         ...(extracted.demand?.inTheirWords ?? []),
         // Structural, not just in the prose: an extraction that under-reports
         // these would silently throw away quotes we genuinely read.
-        ...(communityAsks?.asks ?? []).slice(0, 6).map((x) => ({
+        ...[...(communityAsks?.asks ?? []), ...(connectorAsks?.asks ?? [])].slice(0, 8).map((x) => ({
           quote: x.quote,
           url: x.url,
-          date: x.date,
-          platform: x.platform,
+          date: x.date ?? x.at ?? null,
+          platform: x.platform ?? x.source ?? null,
           via: x.via,
         })),
       ],

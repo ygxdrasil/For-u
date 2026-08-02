@@ -108,6 +108,14 @@ export const ICONS = {
       <rect x="3.4" y="3.4" width="9.2" height="9.2" rx="1.6" />
     </S>
   ),
+  // Plugging something in.
+  plug: () => (
+    <S>
+      <path d="M6 1.8v3.4M10 1.8v3.4" />
+      <path d="M3.8 5.2h8.4v2.4a4.2 4.2 0 0 1-8.4 0Z" />
+      <path d="M8 11.8v2.4" />
+    </S>
+  ),
 };
 
 export function Icon({ name }) {

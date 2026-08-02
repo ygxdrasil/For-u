@@ -25,6 +25,7 @@ import Sources from './pages/Sources.jsx';
 import Costs from './pages/Costs.jsx';
 import Settings from './pages/Settings.jsx';
 import Connections from './pages/Connections.jsx';
+import Connect from './pages/Connect.jsx';
 import AutonomyRail from './AutonomyRail.jsx';
 import { Icon } from './icons.jsx';
 
@@ -37,6 +38,7 @@ const PAGES = [
   { id: 'ask', label: 'Ask', icon: 'ask', component: Ask },
   { id: 'costs', label: 'Costs', icon: 'costs', component: Costs },
   { id: 'sources', label: 'Sources', icon: 'sources', component: Sources },
+  { id: 'connect', label: 'Connect', icon: 'plug', component: Connect },
   { id: 'connections', label: 'Connections', icon: 'connections', component: Connections },
   { id: 'settings', label: 'Settings', icon: 'settings', component: Settings },
 ];

@@ -114,6 +114,20 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
     } catch (err) {
       notes.push(`"${seed}" could not be read (${err.message})`);
     }
+
+    // Anything you plugged in yourself, read for the same seed. These are the
+    // sources that know about barbers and letting agents; the free community
+    // ones mostly know about software. Roaming without them only ever finds
+    // one kind of person.
+    if (deps.connectors) {
+      try {
+        const extra = await deps.connectors.gather(seed);
+        asks.push(...extra.asks);
+        if (extra.failures.length) notes.push(...extra.failures.map((f) => `${f.name} did not answer: ${f.detail}`));
+      } catch (err) {
+        notes.push(`your connected sources could not be read (${err.message})`);
+      }
+    }
   }
 
   if (!asks.length) {
