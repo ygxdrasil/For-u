@@ -432,3 +432,53 @@ test('a model with no price cannot be saved as a preference', async () => {
   assert.ok(PRICES[saved.chatModel], `an unpriced model "${saved.chatModel}" was accepted`);
   assert.equal(saved.designModel, 'gemini-2.5-pro', 'a priced model must still be accepted');
 });
+
+test('a login page answering 200 is not reported as a working n8n', async () => {
+  // n8n behind Cloudflare Access, an SSO gateway or a company portal: every
+  // request gets 200 and an HTML sign-in page, and n8n never sees the API key.
+  // The body parsed to { raw: '<html…' }, so `data?.length` was undefined and
+  // the answer came back as "you have no workflows" — a confident lie about
+  // someone's own instance, which is the one thing this system may never do.
+  const { createN8nClient } = await import('../core/n8nClient.js');
+  const loginPage = async () =>
+    new Response('<!doctype html><html><body>Sign in</body></html>', { status: 200, headers: { 'Content-Type': 'text/html' } });
+
+  const probe = await createN8nClient({ baseUrl: 'https://n8n.invalid', apiKey: 'k', fetchImpl: loginPage }).ping();
+  assert.equal(probe.ok, false, 'a sign-in page was reported as a healthy, authorised connection');
+  assert.equal(probe.reachable, true, 'something did answer — reporting it as unreachable sends you to the wrong fix');
+  assert.match(probe.error, /HTML|sign-in|JSON/i);
+});
+
+test('a stored key that cannot be decrypted is not reported as absent', async () => {
+  // MASTER_KEY changed or removed in Vercel. The ciphertext is still there and
+  // still correct; nothing can read it. Saying "not set" sends you looking for
+  // a key you never lost, and hides the only thing that explains it.
+  const { saveServerConfig, describeServerConfig } = await import('../core/settings.js');
+  const store = createMemoryStore();
+
+  process.env.MASTER_KEY = 'the original';
+  await saveServerConfig(store, { n8nApiKey: 'n8n_live_key' });
+  process.env.MASTER_KEY = 'a different one';
+  const described = await describeServerConfig(store);
+  delete process.env.MASTER_KEY;
+
+  assert.equal(described.n8nApiKey.set, false, 'an unreadable key must not read as usable');
+  assert.equal(described.n8nApiKey.unreadable, true, 'a key that is stored but unreadable was reported as never set');
+  assert.match(described.n8nApiKey.note, /MASTER_KEY/);
+});
+
+test('two turns sent at the same moment do not erase each other', async () => {
+  // Both read the same history, both appended to their own copy, and the
+  // slower write won: the faster turn was answered on screen and gone on the
+  // next reload, with no error anywhere. No merge written above the store can
+  // fix that — both can read before either writes — so the append is the
+  // store's job and is atomic there.
+  const store = createMemoryStore();
+  await Promise.all([
+    run({ text: 'from the phone', sessionId: 'both', config: cfg, store, llmClientFactory: stubModel([{ text: 'one' }]) }, {}),
+    run({ text: 'from the laptop', sessionId: 'both', config: cfg, store, llmClientFactory: stubModel([{ text: 'two' }]) }, {}),
+  ]);
+  const messages = JSON.stringify((await store.getSession('both')).messages);
+  assert.match(messages, /from the phone/, 'one of two simultaneous turns vanished from the conversation');
+  assert.match(messages, /from the laptop/);
+});

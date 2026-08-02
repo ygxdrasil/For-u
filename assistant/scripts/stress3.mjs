@@ -391,12 +391,16 @@ await check('a redirect, a 429 and a 500 each say what happened', async () => {
   }
 });
 
-await check('a response that is not JSON at all is reported, not parsed into nonsense', async () => {
+await check('a response that is not JSON at all is refused, not passed along as data', async () => {
+  // It used to come back as { raw: '<html…' }. Nothing looked at it, so the
+  // caller read `.nodes` off a login page and reported an empty workflow. A
+  // 200 that is not JSON did not come from the n8n API, and the only safe
+  // thing to do with it is stop.
   const client = createN8nClient({ baseUrl: 'https://n8n.invalid', apiKey: 'k', fetchImpl: async () => new Response('<!doctype html><title>Login</title>', { status: 200, headers: { 'Content-Type': 'text/html' } }) });
-  const wf = await client.getWorkflow('wf1');
-  // It comes back as raw rather than being mistaken for a workflow.
-  assert.ok(wf?.raw, 'an HTML page was accepted as a workflow object');
-  assert.ok(!wf.nodes, 'an HTML page produced something that looks like a workflow');
+  await assert.rejects(() => client.getWorkflow('wf1'), (err) => {
+    assert.match(err.message, /HTML|sign-in|JSON/i, 'the refusal does not say what actually came back');
+    return true;
+  }, 'an HTML page was handed back as a workflow');
 });
 
 /* ================= 9. degrading honestly */

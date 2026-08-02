@@ -189,6 +189,34 @@ export async function createNeonStore(databaseUrl, { sqlImpl = null } = {}) {
       return session;
     },
 
+    /**
+     * Append in one statement, so two turns arriving together both survive.
+     *
+     * The concatenation, the trim to the last `limit` and the write are a
+     * single UPDATE: Postgres takes a row lock for it, so the second turn's
+     * append sees the first turn's rows rather than the history it read a
+     * second ago. Doing this as select-then-write in JavaScript is what lost a
+     * message every time two were sent at once.
+     */
+    async appendSession(id, added, { limit = 40 } = {}) {
+      const rows = await sql`
+        insert into chat_sessions (id, messages, updated_at)
+        values (${id}, ${JSON.stringify(added ?? [])}::jsonb, now())
+        on conflict (id) do update set
+          messages = (
+            with joined as (
+              select value, row_number() over () as rn
+              from jsonb_array_elements(chat_sessions.messages || excluded.messages)
+            )
+            select coalesce(jsonb_agg(value order by rn), '[]'::jsonb)
+            from joined
+            where rn > (select count(*) from joined) - ${limit}
+          ),
+          updated_at = now()
+        returning messages`;
+      return { id, messages: rows[0]?.messages ?? [] };
+    },
+
     // ---- tokens (retired, never deleted)
     async listTokens() {
       const rows = await sql`select id, label, created_at, retired_at from api_tokens order by created_at desc`;

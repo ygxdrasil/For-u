@@ -390,7 +390,13 @@ function Jason({ onSignOut }) {
   const ex = data?.sections?.executions?.data ?? [];
   const findings = data?.sections?.findings?.data ?? [];
   const spend = data?.sections?.spend?.data;
-  const ready = data?.sections?.settings?.data?.geminiApiKey?.set;
+  const geminiKey = data?.sections?.settings?.data?.geminiApiKey;
+  const ready = geminiKey?.set;
+  // Three states, not two. A key that is stored but cannot be decrypted is not
+  // a missing key, and "add a Gemini key" is the wrong instruction for it.
+  const keyNote = geminiKey?.unreadable
+    ? 'A Gemini key is saved but cannot be decrypted — MASTER_KEY changed. Paste it again in Settings.'
+    : 'No Gemini key yet — Settings, in the panel.';
   const failed24h = ex.filter((e) => e.status === 'error' && Date.now() - new Date(e.startedAt).getTime() < 864e5).length;
 
   /** Which nodes actually ran, from the most recent execution he read back. */
@@ -473,7 +479,7 @@ function Jason({ onSignOut }) {
 
           <div className="surface">
             {tab === 'canvas' ? (
-              <CanvasView preview={canvas} runState={runState} busy={busy} ready={ready} onSend={send} />
+              <CanvasView preview={canvas} runState={runState} busy={busy} ready={ready} keyNote={keyNote} onSend={send} />
             ) : (
               <Terminal
                 code={code}
@@ -528,6 +534,7 @@ function Jason({ onSignOut }) {
         live={live}
         busy={busy}
         ready={ready}
+        keyNote={keyNote}
         approval={approval}
         onSend={send}
         onDismiss={() => setApproval(null)}
@@ -583,7 +590,7 @@ const STARTERS = [
  * the node feeding it has genuinely run and the one after it has not — it is
  * execution state, not decoration.
  */
-function CanvasView({ preview, runState, busy, ready, onSend }) {
+function CanvasView({ preview, runState, busy, ready, keyNote, onSend }) {
   if (!preview?.nodes?.length) {
     // Still inside the grid. An empty bench should read as an empty workbench,
     // not as a blank page — that difference is most of what "it feels dead" was.
@@ -596,7 +603,7 @@ function CanvasView({ preview, runState, busy, ready, onSend }) {
             <div className="row" style={{ justifyContent: 'center' }}>
               {STARTERS.map((s) => <button key={s} className="ghost" disabled={!ready} onClick={() => onSend(s)}>{s}</button>)}
             </div>
-            {!ready && <p style={{ marginTop: 14, color: 'var(--invisible)' }}>No Gemini key yet — Settings, in the panel.</p>}
+            {!ready && <p style={{ marginTop: 14, color: 'var(--invisible)' }}>{keyNote}</p>}
           </div>
         </div>
       </div>
@@ -794,7 +801,7 @@ function Output({ calls }) {
 
 /* ==================================================================== dock */
 
-function Dock({ messages, live, busy, ready, approval, onSend, onDismiss, showStream }) {
+function Dock({ messages, live, busy, ready, keyNote, approval, onSend, onDismiss, showStream }) {
   const [input, setInput] = useState('');
   const bottom = useRef(null);
   // Block body, deliberately. An arrow with an implicit return hands whatever
@@ -861,7 +868,7 @@ function Dock({ messages, live, busy, ready, approval, onSend, onDismiss, showSt
         <textarea
           value={input}
           rows={1}
-          placeholder={ready ? 'Describe what you want built…' : 'Add a Gemini key in Settings first.'}
+          placeholder={ready ? 'Describe what you want built…' : keyNote}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
         />
@@ -1185,6 +1192,19 @@ const Setting = ({ n, h, children }) => (
 
 const Toggle = ({ on, onChange }) => <button className="toggle" role="switch" aria-checked={on} onClick={() => onChange(!on)}><i /></button>;
 
+/**
+ * Saved, missing, or there-but-unreadable.
+ *
+ * The third one is the one worth having a component for: a key encrypted under
+ * a MASTER_KEY that has since changed is still sitting in the database, and
+ * calling that "not set" sends you hunting for a key you never lost.
+ */
+const KeyState = ({ state }) => {
+  if (state?.set) return <span style={{ color: 'var(--worked)' }}>saved {state.hint}</span>;
+  if (state?.unreadable) return <span style={{ color: 'var(--failed)' }} title={state.note}>stored, but unreadable — paste it again</span>;
+  return null;
+};
+
 function Settings({ onSaved }) {
   const [s, setS] = useState(null);
   const [draft, setDraft] = useState({});
@@ -1215,9 +1235,9 @@ function Settings({ onSaved }) {
         <h3>Connection<span className="rule" /></h3>
         <label>n8n address</label>
         <input value={draft.n8nBaseUrl ?? ''} placeholder="https://you.app.n8n.cloud" onChange={(e) => setDraft({ ...draft, n8nBaseUrl: e.target.value.trim() })} />
-        <label>n8n key {s.n8nApiKey.set && <span style={{ color: 'var(--worked)' }}>saved {s.n8nApiKey.hint}</span>}</label>
+        <label>n8n key <KeyState state={s.n8nApiKey} /></label>
         <input type="password" placeholder={s.n8nApiKey.set ? 'leave blank to keep' : 'n8n_api_…'} value={draft.n8nApiKey ?? ''} onChange={(e) => setDraft({ ...draft, n8nApiKey: e.target.value.trim() })} />
-        <label>Gemini key {s.geminiApiKey.set && <span style={{ color: 'var(--worked)' }}>saved {s.geminiApiKey.hint}</span>}</label>
+        <label>Gemini key <KeyState state={s.geminiApiKey} /></label>
         <input type="password" placeholder={s.geminiApiKey.set ? 'leave blank to keep' : 'AIza…'} value={draft.geminiApiKey ?? ''} onChange={(e) => setDraft({ ...draft, geminiApiKey: e.target.value.trim() })} />
         <label>Monthly cap (USD)</label>
         <input type="number" value={draft.monthlyCapUsd ?? 8} onChange={(e) => setDraft({ ...draft, monthlyCapUsd: Number(e.target.value) })} />

@@ -108,6 +108,23 @@ export function createMemoryStore() {
       return session;
     },
 
+    /**
+     * Add to a conversation without reading it first.
+     *
+     * Read-modify-write in the caller loses a turn whenever two arrive at once
+     * — both read the same history, both append to their own copy, and the
+     * slower write wins. There is no way to fix that above this line, so the
+     * append lives here where it can be atomic. This implementation does no
+     * awaiting between the read and the write, which on one thread is the same
+     * thing; the Postgres one does it in a single statement.
+     */
+    async appendSession(id, added, { limit = 40 } = {}) {
+      const existing = sessions.get(id)?.messages ?? [];
+      const messages = [...existing, ...copy(added ?? [])].slice(-limit);
+      sessions.set(id, { id, messages });
+      return { id, messages: copy(messages) };
+    },
+
     async listTokens() {
       return tokens.map(({ hash, ...rest }) => copy(rest));
     },

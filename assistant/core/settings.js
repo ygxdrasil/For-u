@@ -249,16 +249,43 @@ export async function saveServerConfig(store, patch) {
   return true;
 }
 
-/** What the browser is allowed to know: which keys are set, never their values. */
+/**
+ * What the browser is allowed to know: which keys are set, never their values.
+ *
+ * There is a third state between set and not set, and it used to be reported as
+ * "not set": a key that is stored but can no longer be decrypted. That happens
+ * when MASTER_KEY is changed or removed in Vercel — the ciphertext is intact
+ * and the key is exactly where you left it, but nothing can read it. Saying
+ * "not set" sends you looking for a key you never lost, and hides the one thing
+ * that would explain it. So it is named, along with the cause.
+ */
 export async function describeServerConfig(store) {
+  const stored = (await store.getKv(KEY_SETTINGS)) ?? {};
   const config = await loadServerConfig(store);
   const { source } = await resolveEncryption(store);
+
+  const describeField = (field) => {
+    if (config[field]) return describeSecret(config[field]);
+    if (stored[field]) {
+      return {
+        set: false,
+        unreadable: true,
+        hint: null,
+        note:
+          source === 'env'
+            ? 'A key is stored, but it cannot be decrypted with the current MASTER_KEY. If MASTER_KEY was changed or re-generated, put the old value back — or paste the key again to re-encrypt it under the new one.'
+            : 'A key is stored, but it cannot be decrypted with the key held in the database. Paste it again to replace it.',
+      };
+    }
+    return describeSecret(null);
+  };
+
   return {
     prefs: await loadPrefs(store),
     n8nBaseUrl: config.n8nBaseUrl ?? null,
     monthlyCapUsd: config.monthlyCapUsd ?? Number(process.env.MONTHLY_USD_CAP ?? 8),
-    n8nApiKey: describeSecret(config.n8nApiKey),
-    geminiApiKey: describeSecret(config.geminiApiKey),
+    n8nApiKey: describeField('n8nApiKey'),
+    geminiApiKey: describeField('geminiApiKey'),
     encryption: {
       source,
       note:

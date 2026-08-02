@@ -178,6 +178,33 @@ await bothMustAgree('a session round-trips and an unknown one is empty, not miss
   return { emptyShape: empty, messageCount: back.messages.length, last: back.messages.at(-1) };
 });
 
+await bothMustAgree('appending to a conversation adds to it and keeps the order', async (s) => {
+  await s.appendSession('s2', [{ role: 'user', parts: [{ text: 'first' }] }]);
+  await s.appendSession('s2', [{ role: 'model', parts: [{ text: 'answer' }] }, { role: 'user', parts: [{ text: 'second' }] }]);
+  const back = await s.getSession('s2');
+  return { count: back.messages.length, order: back.messages.map((m) => m.parts[0].text) };
+});
+
+await bothMustAgree('a conversation is trimmed to the last N, oldest first out', async (s) => {
+  for (let i = 0; i < 12; i++) await s.appendSession('s3', [{ role: 'user', parts: [{ text: `m${i}` }] }], { limit: 5 });
+  const back = await s.getSession('s3');
+  return { count: back.messages.length, kept: back.messages.map((m) => m.parts[0].text) };
+});
+
+/**
+ * The reason appendSession exists. Two turns arriving together used to read the
+ * same history and write their own copy back, and the slower write erased the
+ * faster turn — answered on screen, gone on the next reload.
+ */
+await bothMustAgree('two appends racing each other both survive', async (s) => {
+  await Promise.all([
+    s.appendSession('race', [{ role: 'user', parts: [{ text: 'from the phone' }] }]),
+    s.appendSession('race', [{ role: 'user', parts: [{ text: 'from the laptop' }] }]),
+  ]);
+  const text = JSON.stringify((await s.getSession('race')).messages);
+  return { count: (await s.getSession('race')).messages.length, hasPhone: text.includes('from the phone'), hasLaptop: text.includes('from the laptop') };
+});
+
 /* ---------------------------------------------------------------- tokens */
 
 await bothMustAgree('tokens are found by hash, retired not removed, and never listed raw', async (s) => {

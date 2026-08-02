@@ -224,10 +224,32 @@ export async function run(input, hooks = {}) {
   }
 
   const session = input.sessionId ? await store.getSession(input.sessionId) : { id: null, messages: [] };
+  const carried = resumed ? resumed.contents : (session.messages ?? []);
   const contents = [
-    ...(resumed ? resumed.contents : (session.messages ?? [])),
+    ...carried,
     { role: 'user', parts: [{ text: input.text }] },
   ];
+
+  /**
+   * Save this turn without overwriting one that landed while it was running.
+   *
+   * Two messages sent close together — a double-tapped send button, a phone and
+   * a laptop, the sweep while you are typing — both read the conversation, both
+   * append to their own copy, and the slower one wrote last. The faster turn
+   * disappeared from the history entirely: answered on screen, then gone on the
+   * next reload, with no error anywhere.
+   *
+   * So the turn writes only what IT added, and the store does the appending
+   * atomically. Reading the history here and writing the whole thing back is
+   * the bug itself, however carefully the merge is written: the two turns can
+   * both read before either writes.
+   */
+  const saveConversation = async () => {
+    if (!input.sessionId) return;
+    const mine = contents.slice(carried.length);
+    if (!mine.length) return;
+    await store.appendSession(input.sessionId, mine, { limit: 40 });
+  };
 
   // ---- the loop -----------------------------------------------------------
   let reply = '';
@@ -355,9 +377,7 @@ export async function run(input, hooks = {}) {
     // carry on and I will pick up from here" was a promise the code could not
     // keep: the next message started from the state before the turn, so he
     // repeated work he had already done and had no record of doing it.
-    if (input.sessionId) {
-      await store.saveSession({ id: input.sessionId, messages: contents.slice(-40) });
-    }
+    await saveConversation();
 
     const ran = steps.map((s) => s.tool).join(', ') || 'nothing yet';
     return result({
@@ -372,9 +392,7 @@ export async function run(input, hooks = {}) {
     });
   }
 
-  if (input.sessionId) {
-    await store.saveSession({ id: input.sessionId, messages: contents.slice(-40) });
-  }
+  await saveConversation();
 
   return result({ status: 'ok', reply: reply || '(no answer produced)', spend: await meter.summary(), n8n: n8nStatus });
 }

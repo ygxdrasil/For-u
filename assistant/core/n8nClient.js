@@ -86,10 +86,32 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
 
     const text = await res.text();
     let parsed = null;
+    let unparseable = false;
     try {
       parsed = text ? JSON.parse(text) : null;
     } catch {
       parsed = { raw: text };
+      unparseable = true;
+    }
+
+    /**
+     * A 200 that is not JSON did not come from the n8n API.
+     *
+     * The common cause is an identity proxy — Cloudflare Access, an SSO
+     * gateway, a company VPN portal — answering every request with its own
+     * sign-in page and a cheerful 200. n8n never sees the API key. Treating
+     * that body as data meant `data?.length` was undefined and the answer came
+     * back as "you have no workflows", which is a confident lie about someone's
+     * own instance. It is also what a 200 from a parked domain looks like.
+     */
+    if (res.ok && unparseable) {
+      const looksLikeHtml = /^\s*<(?:!doctype|html)/i.test(text);
+      throw new N8nError(
+        looksLikeHtml
+          ? `${url.origin} answered ${method} ${path} with an HTML page instead of JSON. That is not the n8n API — almost always a sign-in page from something in front of n8n (Cloudflare Access, an SSO proxy, a VPN portal), which means the API key never reaches n8n. The base URL may also be pointing at the editor rather than the API.`
+          : `${url.origin} answered ${method} ${path} with a body that is not JSON, so it did not come from the n8n API: ${text.slice(0, 200)}`,
+        { status: res.status, body: parsed, url: url.toString() },
+      );
     }
 
     if (!res.ok) {
@@ -292,10 +314,28 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
   async function ping() {
     try {
       const res = await listWorkflows({ limit: 1 });
-      return { ok: true, reachable: true, authorised: true, workflowCount: res?.data?.length ?? null };
+
+      // JSON came back, but the API always returns { data: [...] } here. A
+      // different shape means something answered on that URL and it was not
+      // the n8n API — reporting that as a healthy connection is how you end up
+      // being told your instance is empty.
+      if (!Array.isArray(res?.data)) {
+        return {
+          ok: false,
+          reachable: true,
+          authorised: null,
+          error: `${root} answered, but not with a workflow list. Check that the base URL is the n8n instance itself (the same host you open the editor on) and that nothing is sitting in front of it.`,
+        };
+      }
+      return { ok: true, reachable: true, authorised: true, workflowCount: res.data.length };
     } catch (err) {
       if (err.status === 401 || err.status === 403) {
         return { ok: false, reachable: true, authorised: false, error: 'n8n is reachable but rejected the API key.' };
+      }
+      // A reply arrived, it just was not the API. Reachable, but nothing can be
+      // said about the key — it may never have been looked at.
+      if (err.status) {
+        return { ok: false, reachable: true, authorised: null, error: err.message };
       }
       return { ok: false, reachable: false, authorised: null, error: err.message };
     }

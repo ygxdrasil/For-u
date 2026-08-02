@@ -9,7 +9,7 @@
     "build": "node scripts/stamp-build.mjs && node node_modules/vite/bin/vite.js build",
     "test": "node --test tests/*.test.js",
     "selftest": "node scripts/selftest.mjs",
-    "stress": "node scripts/stress.mjs && node scripts/stress2.mjs && node scripts/stress3.mjs && node scripts/stress-store.mjs",
+    "stress": "node scripts/stress.mjs && node scripts/stress2.mjs && node scripts/stress3.mjs && node scripts/stress4.mjs && node scripts/stress-store.mjs",
     "build:nodes": "node scripts/build-node-index.mjs",
     "build:icons": "node scripts/make-icons.mjs"
   },
