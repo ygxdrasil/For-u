@@ -188,15 +188,25 @@ export async function run(input, hooks = {}) {
     // Memory is an enhancement, never a precondition for answering.
   }
 
+  // Ordered by how often each part changes, least first, because caching works
+  // on a byte-identical PREFIX: everything after the first thing that changed
+  // is paid for again. Memory used to sit second, so learning one fact about
+  // you re-billed the node index and the instance line on every later request —
+  // the opposite of what the comment above it claimed.
+  //
+  //   never          the rules
+  //   per deploy     the node index
+  //   per instance   which n8n
+  //   per fact       what he knows about you
   const systemInstruction = [
     STATIC_RULES,
     '',
-    memoryBlock,
-    memoryBlock ? '' : null,
     `NODE INDEX: ${meta.nodeCount} nodes, ${meta.operationCount} operations, generated from n8n-nodes-base ${meta.packages['n8n-nodes-base']} and @n8n/n8n-nodes-langchain ${meta.packages['@n8n/n8n-nodes-langchain']}. Schema files ${meta.schemasBundledHere ? 'are' : 'are NOT'} available.`,
     n8nStatus.configured
       ? `N8N: connected to ${n8nStatus.baseUrl}.`
       : 'N8N: not configured. You can still search nodes and design a workflow, but you cannot read, save, ground or test anything. Say so plainly rather than pretending.',
+    memoryBlock ? '' : null,
+    memoryBlock,
   ]
     .filter((line) => line !== null && line !== undefined)
     .join('\n');

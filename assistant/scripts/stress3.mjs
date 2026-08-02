@@ -612,6 +612,46 @@ await check('a database that is set but will not open says so, not "add a databa
   resetStoreCache();
 });
 
+/* ================= 12. what gets re-billed on every request */
+
+section('12. The prompt is ordered so the stable part stays cached');
+
+await check('learning a fact does not change the prefix before it', async () => {
+  // Caching is on a byte-identical prefix: everything after the first change is
+  // paid for again. The most volatile block therefore goes LAST. Memory used to
+  // sit second, which re-billed the node index on every request after he learnt
+  // anything — and the comment above the code claimed the opposite.
+  const { remember } = await import('../core/memory.js');
+  const seen = [];
+  const capture = () => ({ models: { generateContent: async ({ config }) => {
+    seen.push(config.systemInstruction);
+    return { text: 'ok', functionCalls: [], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } };
+  } } });
+
+  const store = createMemoryStore();
+  const cfg = { geminiApiKey: 'k', monthlyCapUsd: 100 };
+  await run({ text: 'first', config: cfg, store, llmClientFactory: capture }, {});
+  await remember(store, 'The real Slack channel is #leads-uk');
+  await run({ text: 'second', config: cfg, store, llmClientFactory: capture }, {});
+  await remember(store, 'Invoices go out on the 1st');
+  await run({ text: 'third', config: cfg, store, llmClientFactory: capture }, {});
+
+  assert.equal(seen.length, 3);
+  assert.notEqual(seen[0], seen[2], 'memory never reached the prompt at all');
+
+  // Everything up to where they first differ must cover the rules, the index
+  // and the instance line — only what he knows about you may move.
+  const shared = (a, b) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return a.slice(0, i); };
+  const stable = shared(shared(seen[0], seen[1]), seen[2]);
+
+  assert.ok(stable.includes('NODE INDEX:'), 'the node index falls outside the stable prefix, so it is re-billed whenever he learns something');
+  assert.ok(stable.includes('N8N:'), 'the instance line falls outside the stable prefix');
+  assert.ok(
+    stable.length > seen[2].length * 0.8,
+    `only ${Math.round((stable.length / seen[2].length) * 100)}% of the prompt stayed stable between requests`,
+  );
+});
+
 /* ============================================================ report */
 
 process.stdout.write('\n');
