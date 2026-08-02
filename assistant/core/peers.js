@@ -80,10 +80,14 @@ export async function askPeer(store, { name, question, fetchImpl = globalThis.fe
   const headers = { 'Content-Type': 'application/json' };
   if (peer.token) headers.Authorization = `Bearer ${peer.token}`;
 
+  // There is no standard for "a question in, an answer out" over plain JSON, so
+  // the question goes under every name anyone actually uses. Sending one and
+  // guessing wrong produces a 400 that reads like a broken peer rather than a
+  // vocabulary mismatch — which is exactly what it cost the first time.
   const body =
     peer.protocol === 'mcp'
       ? { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: peer.tool || 'ask', arguments: { question: q } } }
-      : { text: q };
+      : { question: q, text: q, q, askedBy: 'jason' };
 
   let res;
   try {
@@ -95,14 +99,37 @@ export async function askPeer(store, { name, question, fetchImpl = globalThis.fe
   clearTimeout(timer);
 
   const text = await res.text();
-  if (!res.ok) return { ok: false, error: `${peer.name} returned ${res.status}: ${text.slice(0, 200)}`, peer: peer.name };
 
   let parsed = null;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { ok: true, peer: peer.name, answer: text.slice(0, 4000) };
+    parsed = null;
   }
+
+  if (!res.ok) {
+    // A peer that refuses often says something worth relaying — "I could not
+    // establish that" is an answer, and it is more use than a status code. Its
+    // own words go first, and it is still reported as a failure, because a
+    // refusal must never be passed off as knowledge.
+    const said = parsed?.error ?? parsed?.answer ?? parsed?.reply ?? parsed?.message ?? null;
+    const hint =
+      res.status === 405
+        ? ' That address does not accept a POST — it is probably the wrong path. Ask for the endpoint that takes questions.'
+        : res.status === 404
+          ? ' Nothing is listening at that path.'
+          : res.status === 401 || res.status === 403
+            ? ' The token was refused.'
+            : '';
+    return {
+      ok: false,
+      error: `${peer.name} returned ${res.status}: ${String(said ?? text).slice(0, 300)}${hint}`,
+      peer: peer.name,
+      status: res.status,
+    };
+  }
+
+  if (!parsed) return { ok: true, peer: peer.name, answer: text.slice(0, 4000) };
 
   // Pull the answer out of whichever shape came back, rather than assuming one.
   const answer =
