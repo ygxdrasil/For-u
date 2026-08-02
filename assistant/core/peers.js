@@ -64,7 +64,7 @@ export async function removePeer(store, name) {
  * Deliberately narrow: a question in, an answer out. Jason cannot make a peer
  * run tools, spend money or touch anything — he is asking, not delegating.
  */
-export async function askPeer(store, { name, question, fetchImpl = globalThis.fetch }) {
+export async function askPeer(store, { name, question, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS, extra = null }) {
   const peers = await loadRaw(store);
   const peer = name ? peers.find((p) => p.name === name) : peers[0];
   if (!peer) {
@@ -74,8 +74,13 @@ export async function askPeer(store, { name, question, fetchImpl = globalThis.fe
   const q = String(question ?? '').trim().slice(0, MAX_QUESTION);
   if (!q) return { ok: false, error: 'The question was empty.' };
 
+  // The caller sets this, because the caller knows which serverless function it
+  // is inside. A peer call that outlives its function is killed by the platform
+  // and returns a bare 504 carrying nothing — no peer name, no reason, nothing
+  // to act on. Better to give up first and be able to say why.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
 
   const headers = { 'Content-Type': 'application/json' };
   if (peer.token) headers.Authorization = `Bearer ${peer.token}`;
@@ -87,13 +92,21 @@ export async function askPeer(store, { name, question, fetchImpl = globalThis.fe
   const body =
     peer.protocol === 'mcp'
       ? { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: peer.tool || 'ask', arguments: { question: q } } }
-      : { question: q, text: q, q, askedBy: 'jason' };
+      : { question: q, text: q, q, askedBy: 'jason', ...(extra ?? {}) };
 
   let res;
   try {
     res = await fetchImpl(peer.url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
   } catch (err) {
     clearTimeout(timer);
+    if (timedOut) {
+      return {
+        ok: false,
+        peer: peer.name,
+        timedOut: true,
+        error: `${peer.name} did not answer within ${Math.round(timeoutMs / 1000)}s. She may be doing something slow — reaching her is not the problem, waiting for her is.`,
+      };
+    }
     return { ok: false, error: `Could not reach ${peer.name}: ${err.message}`, peer: peer.name };
   }
   clearTimeout(timer);

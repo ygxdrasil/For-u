@@ -984,6 +984,42 @@ await check('a peer that answers "I do not know" is a refusal, never knowledge',
   assert.match(res.error, /could not establish/i, 'her own words were dropped in favour of a status code');
 });
 
+await check('a peer that never answers gives up before the platform kills the request', async () => {
+  const { savePeer, askPeer } = await import('../core/peers.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/api/ask', protocol: 'json' });
+
+  const started = Date.now();
+  const res = await askPeer(store, {
+    question: 'anything',
+    timeoutMs: 1200,
+    fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new Error('This operation was aborted')));
+    }),
+  });
+  const waited = Date.now() - started;
+
+  assert.equal(res.ok, false);
+  assert.equal(res.timedOut, true, 'a timeout was not distinguished from being unreachable');
+  assert.match(res.error, /did not answer within 1s/);
+  assert.ok(waited < 3000, `it waited ${waited}ms for a 1.2s limit`);
+});
+
+await check('a connection test does not ask a peer to go and spend money', async () => {
+  const { savePeer, askPeer } = await import('../core/peers.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/api/ask', protocol: 'json' });
+
+  let sent = null;
+  await askPeer(store, {
+    question: 'connection test',
+    extra: { mode: 'stored', test: true },
+    fetchImpl: async (_url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ answer: 'ok' }), { status: 200 }); },
+  });
+  assert.equal(sent.mode, 'stored', 'the test did not ask for a cheap answer');
+  assert.equal(sent.test, true);
+});
+
 await check('a minted token works once and is never shown again', async () => {
   const { createStore } = await import('../core/store.js');
   process.env.AGENT_TOKEN = 'stress-agent-token';
