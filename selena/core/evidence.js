@@ -20,8 +20,19 @@ import { canonicalUrl, hostOf, normalizePhrase, subjectAgreement } from './util.
 /** How similar two complaint subjects must be to count as the same complaint. */
 export const AGREEMENT_THRESHOLD = 0.5;
 
-/** Reading a page beats being shown a snippet about it. */
-const READ_VIA = new Set(['etsy-api', 'direct-fetch']);
+/**
+ * Reading a page beats being shown a snippet about it.
+ *
+ * `connector` belongs here and its absence was a real bug: a source you plugged
+ * in is fetched by her, over HTTP, and returns the whole post or review — that
+ * is a direct read by any reasonable definition, and a stronger one than a
+ * search snippet. Leaving it out made every finding built from connected
+ * sources look like it had never read anything, which held all of them at
+ * level 4 for ever with the note "every source is a search snippet we never
+ * actually read". The nine sources shipped in the starter set are all
+ * connectors, so the cap was on essentially everything.
+ */
+const READ_VIA = new Set(['etsy-api', 'direct-fetch', 'connector']);
 
 function distinct(values) {
   return [...new Set(values.filter(Boolean))];
@@ -209,7 +220,22 @@ export function computeEvidence(input = {}) {
  * the model claimed.
  */
 export function applyEvidence(finding) {
-  const computed = computeEvidence(finding.evidence);
+  // inTheirWords lives on `demand`, not on `evidence` — the schema puts it
+  // with the demand it describes. Handing computeEvidence only `finding
+  // .evidence` therefore passed it an empty list of quotes every single time,
+  // so the thing the whole system collects — people saying what they need, in
+  // their own words — counted for nothing in the final score.
+  //
+  // Two consequences, both silent. The talk rungs were computed from
+  // complaints and prices alone. And readQuality saw only paying and
+  // complaints, so a finding whose quotes were all read directly still
+  // reported "every source is a search snippet we never actually read" and was
+  // held at 4. research.js computes an interim score correctly and then
+  // overwrote it with this one.
+  const computed = computeEvidence({
+    ...(finding.evidence ?? {}),
+    inTheirWords: finding.demand?.inTheirWords ?? finding.evidence?.inTheirWords ?? [],
+  });
   finding.evidence.strength = computed.strength;
   finding.evidence.hypothesis = computed.hypothesis;
   finding.evidence.ladder = computed.ladder;

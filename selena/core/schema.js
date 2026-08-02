@@ -49,8 +49,15 @@ export const FINDING_STATUS = ['active', 'superseded', 'archived'];
  * from one we cannot: `etsy-api` means we called an authorised API and read
  * the response; `grounded-search` means a search index showed it to us and we
  * never fetched the page ourselves.
+ *
+ * `connector` was missing, and because anything unrecognised falls back to
+ * `grounded-search`, every fact from a source you plugged in was relabelled as
+ * a snippet nobody read. That in turn made readQuality.thinRead true on those
+ * findings and held every one of them at level 4 for ever — a silent cap on
+ * essentially everything, since the whole starter set is connectors. A
+ * connector is her own HTTP request returning the whole post: a direct read.
  */
-export const VIA = ['etsy-api', 'grounded-search', 'direct-fetch', 'operator'];
+export const VIA = ['etsy-api', 'grounded-search', 'direct-fetch', 'operator', 'connector'];
 
 class Problems {
   constructor() {

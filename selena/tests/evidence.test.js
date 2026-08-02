@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeEvidence, clusterComplaints, AGREEMENT_THRESHOLD } from '../core/evidence.js';
+import { computeEvidence, applyEvidence, clusterComplaints, AGREEMENT_THRESHOLD } from '../core/evidence.js';
 
 const paying = (n, via = 'etsy-api') =>
   Array.from({ length: n }, (_, i) => ({ what: `thing ${i}`, price: 10 + i, currency: 'GBP', url: `https://shop${i}.com/p`, via }));
@@ -144,4 +144,69 @@ test('empty evidence is level 1, not a crash', () => {
     const e = computeEvidence(junk);
     assert.equal(e.strength, 1);
   }
+});
+
+test('the quotes she read count toward the score, not just the complaints', () => {
+  // The bug: inTheirWords lives on finding.demand, and applyEvidence handed
+  // computeEvidence only finding.evidence — so the quotes counted for nothing.
+  // Silently: the talk rungs were computed from complaints and prices alone,
+  // and readQuality saw no quotes at all, so a finding whose sources were ALL
+  // read directly still reported "every source is a search snippet" and stuck
+  // at level 4. research.js computed an interim score correctly and then
+  // overwrote it with this one.
+  const finding = {
+    demand: {
+      oneLine: 'barbers charged for clients they already had',
+      whoHasIt: 'one-to-three chair barbershops',
+      inTheirWords: [
+        { quote: 'they charged me for a client that was already mine', url: 'https://a.example.com/1', via: 'connector' },
+        { quote: 'random payments come out your account', url: 'https://b.example.com/2', via: 'connector' },
+      ],
+    },
+    evidence: {
+      paying: [
+        { what: 'Booksy', price: 29, currency: 'GBP', url: 'https://a.example.com/1' },
+        { what: 'Fresha', price: 20, currency: 'GBP', url: 'https://b.example.com/2' },
+      ],
+      complaints: [
+        { quote: 'charged for existing clients', aboutWhat: 'charged for existing clients', url: 'https://a.example.com/1' },
+        { quote: 'fees appear with no breakdown', aboutWhat: 'charged for existing clients', url: 'https://b.example.com/2' },
+        { quote: 'cannot see which booking caused it', aboutWhat: 'charged for existing clients', url: 'https://a.example.com/1' },
+      ],
+    },
+  };
+
+  applyEvidence(finding);
+
+  assert.equal(finding.evidence.readQuality.total, 7, 'the two quotes must be part of the total');
+  assert.equal(finding.evidence.readQuality.read, 2, 'and must be counted as read');
+  assert.equal(finding.evidence.readQuality.thinRead, false);
+  assert.equal(finding.evidence.strength, 5, 'two paying, three agreeing complaints, read directly — that is a 5');
+});
+
+test('a source you plugged in counts as read, not as a snippet', () => {
+  // `connector` was missing from both the schema's allowed provenance values
+  // and the read-quality allowlist. Anything unrecognised falls back to
+  // "grounded-search", so every fact from a connected source was relabelled a
+  // snippet nobody read — and the entire shipped starter set is connectors,
+  // so the cap was on essentially everything.
+  const viaConnector = {
+    demand: {
+      oneLine: 'x',
+      whoHasIt: 'y',
+      inTheirWords: [{ quote: 'read directly through a connected API', url: 'https://a.example.com/1', via: 'connector' }],
+    },
+    evidence: { paying: [], complaints: [] },
+  };
+  applyEvidence(viaConnector);
+  assert.equal(viaConnector.evidence.readQuality.read, 1);
+  assert.equal(viaConnector.evidence.readQuality.thinRead, false);
+
+  // A snippet is still a snippet.
+  const viaSnippet = JSON.parse(JSON.stringify(viaConnector));
+  viaSnippet.demand.inTheirWords[0].via = 'grounded-search';
+  delete viaSnippet.evidence.readQuality;
+  applyEvidence(viaSnippet);
+  assert.equal(viaSnippet.evidence.readQuality.read, 0);
+  assert.equal(viaSnippet.evidence.readQuality.thinRead, true);
 });
