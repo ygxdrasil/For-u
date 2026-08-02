@@ -565,12 +565,29 @@ await check('a peer that never answers becomes a question, never a guess', async
   // what proves askPeer actually sends one.
   const r = await askPeer(store, {
     question: 'which channel?',
+    timeoutMs: 800,
     fetchImpl: (_url, init) =>
       new Promise((_resolve, reject) => {
         init.signal.addEventListener('abort', () => reject(new Error('aborted')));
       }),
   });
   assert.equal(r.ok, false);
+  // Silence and refusal are both "ask the user"; which one it was decides what
+  // you go and fix, so the two are reported differently on purpose.
+  assert.equal(r.timedOut, true);
+  assert.match(r.error, /did not answer within/);
+});
+tick();
+
+await check('a peer that cannot be resolved reads differently from one that is slow', async () => {
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'research', url: 'https://peer.invalid/ask' });
+  const r = await askPeer(store, {
+    question: 'which channel?',
+    fetchImpl: async () => { throw new Error('getaddrinfo ENOTFOUND peer.invalid'); },
+  });
+  assert.equal(r.ok, false);
+  assert.notEqual(r.timedOut, true);
   assert.match(r.error, /Could not reach/);
 });
 tick();
