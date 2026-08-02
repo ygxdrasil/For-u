@@ -879,6 +879,58 @@ await check('a fact told through the route is remembered, and forgetting keeps t
   assert.ok((await loadMemory(store)).some((f) => f.id === id), 'forgetting destroyed the record instead of retiring it');
 });
 
+await check('testing a peer asks it a real question and reports what came back', async () => {
+  const { createStore } = await import('../core/store.js');
+  const { savePeer } = await import('../core/peers.js');
+  const { sessionSecret } = await import('../core/settings.js');
+  const { issueSession, sessionCookie } = await import('../core/secrets.js');
+  const store = await createStore({ databaseUrl: null });
+  const cookie = sessionCookie(issueSession(await sessionSecret(store))).split(';')[0];
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/ask', protocol: 'json', token: 'secret' });
+
+  let asked = null;
+  let sentAuth = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    asked = JSON.parse(init.body);
+    sentAuth = init.headers.Authorization;
+    return new Response(JSON.stringify({ reply: 'I am a research assistant. Received.' }), { status: 200 });
+  };
+
+  try {
+    const res = await callRoute('settings.js', { method: 'POST', headers: { cookie }, body: { peer: { action: 'test', name: 'selena' } } });
+    assert.equal(res.body.ok, true, res.body?.error);
+    assert.equal(res.body.test.reached, true, `test said unreachable: ${res.body.test?.error}`);
+    assert.match(res.body.test.answer, /research assistant/, 'the real answer was not passed back');
+    assert.ok(typeof res.body.test.ms === 'number');
+    // It must go out over the same path Jason uses, with the peer's token.
+    assert.ok(asked?.text, 'no question was actually sent');
+    assert.equal(sentAuth, 'Bearer secret', 'the peer token was not used');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await check('a peer that cannot be reached is reported as a question, not a tick', async () => {
+  const { createStore } = await import('../core/store.js');
+  const { sessionSecret } = await import('../core/settings.js');
+  const { issueSession, sessionCookie } = await import('../core/secrets.js');
+  const store = await createStore({ databaseUrl: null });
+  const cookie = sessionCookie(issueSession(await sessionSecret(store))).split(';')[0];
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('getaddrinfo ENOTFOUND selena.invalid'); };
+  try {
+    const res = await callRoute('settings.js', { method: 'POST', headers: { cookie }, body: { peer: { action: 'test', name: 'selena' } } });
+    assert.equal(res.body.ok, true, 'the route itself should still answer');
+    assert.equal(res.body.test.reached, false);
+    assert.match(res.body.test.error, /Could not reach/);
+    assert.equal(res.body.test.answer, null, 'it reported an answer it never got');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 await check('a minted token works once and is never shown again', async () => {
   const { createStore } = await import('../core/store.js');
   process.env.AGENT_TOKEN = 'stress-agent-token';
