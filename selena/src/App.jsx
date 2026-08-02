@@ -25,6 +25,7 @@ import Sources from './pages/Sources.jsx';
 import Costs from './pages/Costs.jsx';
 import Settings from './pages/Settings.jsx';
 import Connections from './pages/Connections.jsx';
+import AutonomyRail from './AutonomyRail.jsx';
 import { Icon } from './icons.jsx';
 
 const PAGES = [
@@ -196,6 +197,8 @@ export default function App() {
             {collapsed ? null : <span>collapse</span>}
           </button>
         </nav>
+
+        <AutonomyRail data={data} collapsed={collapsed} refresh={refresh} />
 
         <div className="sidefoot">
           <LiveDot busy={busy} at={collapsed ? null : data?.at} />

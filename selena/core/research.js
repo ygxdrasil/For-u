@@ -100,6 +100,11 @@ export async function runResearch(task, deps) {
   // before the real decision is made. A placeholder is honest — no depth was
   // chosen because there was nothing to research.
   let depth = { level: 'glance', reasoning: 'not decided — the run ended before planning', rank: 0, searches: 1 };
+  // How many claims cited a source this run never read. Zero is the normal
+  // case. It is reported rather than only logged because an unattended run
+  // halts on it: when nobody is watching, a run that had to have claims
+  // deleted is a run whose survivors have not earned the benefit of the doubt.
+  let ledgerViolations = 0;
 
   const topic = typeof task?.topic === 'string' ? task.topic.trim() : '';
   if (!topic) {
@@ -345,6 +350,7 @@ export async function runResearch(task, deps) {
   // claims that survived provenance. Otherwise an invented complaint could
   // push a finding to level 5 and then be quietly deleted afterwards.
   const enforcement = enforceLedger(finding, ledger);
+  ledgerViolations = enforcement.violations.length;
   if (enforcement.violations.length) {
     notes.push(
       `${enforcement.violations.length} claim${enforcement.violations.length === 1 ? '' : 's'} cited a source this run never read and ${enforcement.violations.length === 1 ? 'was' : 'were'} deleted: ${enforcement.violations
@@ -486,7 +492,7 @@ export async function runResearch(task, deps) {
       stoppedEarly,
       stoppedReason,
       elapsedMs: deadline.elapsedMs,
-      ledgerViolations: finding ? undefined : null,
+      ledgerViolations,
     };
   }
 }

@@ -13,6 +13,7 @@ import { summarizeFinding } from '../core/schema.js';
 import { isDue, CADENCES, staleFindings, REVERIFY_AFTER_DAYS } from '../core/watches.js';
 import { sourceStatus } from '../core/sources.js';
 import { clampNumber, nowIso, sumFinite } from '../core/util.js';
+import { normalizeAutonomy, describeAutonomy, handoffsInWindow, unattendedHeadroom, AUTONOMY_KEY } from '../core/autonomy.js';
 import BUILD from '../core/build.js';
 
 /** Daily spend for the last 14 days, for the sparkline. Never NaN. */
@@ -37,7 +38,7 @@ export default guard(async function handler(req, res) {
 
   // One dead panel must not blank the whole HUD, so every section is settled
   // independently and a failure is reported in place rather than thrown.
-  const [watches, findings, counts, activity, runs, spend, meterSummary, byWatch] = await Promise.all([
+  const [watches, findings, counts, activity, runs, spend, meterSummary, byWatch, autonomyRaw] = await Promise.all([
     ctx.store.listWatches().catch(() => []),
     ctx.store.listFindings({ status: 'active', limit: 100 }).catch(() => []),
     ctx.store.countFindings().catch(() => ({ total: 0, active: 0, byStrength: {} })),
@@ -46,9 +47,16 @@ export default guard(async function handler(req, res) {
     ctx.store.recentSpend(400).catch(() => []),
     ctx.meter.summary().catch(() => null),
     ctx.store.spendByWatch().catch(() => []),
+    ctx.store.getKv(AUTONOMY_KEY).catch(() => null),
   ]);
 
   const stale = staleFindings(findings, { at });
+
+  // The sidebar renders this on every page, so it rides the one poll the HUD
+  // already makes rather than adding a second endpoint to ask "is she on?".
+  const autonomy = normalizeAutonomy(autonomyRaw);
+  const capUsd = meterSummary?.capUsd ?? ctx.capUsd;
+  const spentUsd = meterSummary?.monthToDateUsd ?? 0;
 
   json(res, 200, {
     ok: true,
@@ -56,6 +64,24 @@ export default guard(async function handler(req, res) {
     build: BUILD,
     context: contextStatus(ctx),
     openApi: gate.open ? gate.warning : null,
+
+    autonomy: {
+      armed: autonomy.armed,
+      says: describeAutonomy(autonomy, { capUsd, spentUsd }),
+      backedOff: autonomy.backedOff,
+      disarmedBy: autonomy.disarmedBy,
+      disarmReason: autonomy.disarmReason,
+      lastRunAt: autonomy.lastRunAt,
+      lastRunSummary: autonomy.lastRunSummary,
+      runCount: autonomy.runCount,
+      handoffFloor: autonomy.handoffFloor,
+      handoffsPerWeek: autonomy.handoffsPerWeek,
+      handoffsThisWeek: handoffsInWindow(autonomy, at).length,
+      allowanceLeftUsd: unattendedHeadroom(autonomy, { capUsd, spentUsd }),
+      reserveUsd: autonomy.reserveUsd,
+      selfWatches: watches.filter((w) => w.standedBySelena).length,
+      maxSelfWatches: autonomy.maxSelfWatches,
+    },
 
     headline: {
       activeFindings: counts.active ?? 0,

@@ -96,6 +96,18 @@ export const ICONS = {
       <path d="M3 3v10" />
     </S>
   ),
+  // Arming her: the universal power mark.
+  power: () => (
+    <S>
+      <path d="M8 2v6" />
+      <path d="M4.4 4.6a5 5 0 1 0 7.2 0" />
+    </S>
+  ),
+  stop: () => (
+    <S>
+      <rect x="3.4" y="3.4" width="9.2" height="9.2" rx="1.6" />
+    </S>
+  ),
 };
 
 export function Icon({ name }) {

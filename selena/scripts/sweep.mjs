@@ -62,11 +62,14 @@ function summary(line) {
 
 let exitCode = 0;
 const reportedAll = [];
+const stoodAll = [];
+const handedAll = [];
 
 try {
   const due = await call('/api/cron');
   console.log(`${due.due.length} watch(es) due, ${due.staleFindings.length} finding(s) needing a re-check`);
   for (const w of due.due) console.log(`  due: ${w.name} (${w.cadence}, last run ${w.lastRunAt ?? 'never'})`);
+  if (due.autonomy) console.log(`autonomy: ${due.autonomy.says}`);
 
   if (!due.context?.store?.durable) {
     console.log('WARNING: storage is not durable, so watches cannot remember what they already reported. Set DATABASE_URL.');
@@ -89,6 +92,21 @@ try {
       console.log(`  re-checked ${r.id}: ${r.summary ?? r.error ?? 'no change'}`);
     }
 
+    // What she did on her own authority. Kept separate from what the watches
+    // found, because "she decided to do this" and "a watch you approved found
+    // this" are different things and only one of them needs your judgement.
+    for (const s of result.stood ?? []) {
+      console.log(`  STOOD HER OWN WATCH: ${s.name} — ${s.why}`);
+      stoodAll.push(s);
+    }
+    for (const h of result.handed ?? []) {
+      console.log(`  HANDED TO JASON [level ${h.strength}] ${h.oneLine} — ${h.delivered ? 'delivered' : 'delivery failed'}`);
+      handedAll.push(h);
+    }
+    for (const n of result.notes ?? []) console.log(`  note: ${n}`);
+    if (result.says) console.log(`  ${result.says}`);
+    if (result.outOfAllowance) break;
+
     remaining = Number(result.remainingDue) || 0;
     if (remaining > 0 && pass < PASSES) await sleep(5000);
   }
@@ -108,9 +126,23 @@ try {
   } else {
     summary('Nothing new. Every watch looked and nothing had moved, which is the system working rather than failing.');
   }
+  if (handedAll.length) {
+    summary('');
+    summary(`**${handedAll.length} sent to Jason on her own**`);
+    summary('');
+    for (const h of handedAll) summary(`- **[level ${h.strength}]** ${h.oneLine} — ${h.delivered ? 'delivered' : '**delivery failed**'}`);
+  }
+  if (stoodAll.length) {
+    summary('');
+    summary(`**${stoodAll.length} watch(es) she stood herself**`);
+    summary('');
+    for (const s of stoodAll) summary(`- ${s.name} — ${s.why}`);
+  }
+
   summary('');
   summary('| | |');
   summary('| --- | --- |');
+  if (dash.autonomy) summary(`| autonomy | ${dash.autonomy.armed ? 'armed' : 'not armed'} |`);
   summary(`| real openings (level 4+) | ${h.realOpenings ?? 0} |`);
   summary(`| active findings | ${h.activeFindings ?? 0} |`);
   summary(`| Jason can build | ${h.buildable ?? 0} |`);

@@ -209,3 +209,31 @@ test('a sentence that is not a command is never bent into one', () => {
     assert.equal(parsed.ok, false, `"${text}" was read as ${parsed.verb}: ${parsed.understood}`);
   }
 });
+
+test('arming and standing down are recognised, and never confused with stopping', () => {
+  // "stop working on your own" and "stop everything" differ by how much they
+  // undo. Reading the first as the second pauses every watch you set up, which
+  // is real work destroyed by a parser being greedy.
+  for (const text of ['arm', 'work on your own', 'search on your own', 'off you go']) {
+    const p = parseCommand(text);
+    assert.equal(p.ok, true, `"${text}" should parse`);
+    assert.equal(p.verb, 'arm', `"${text}" -> ${p.verb}`);
+    assert.equal(p.args.on, true);
+    assert.equal(p.needsConfirm, true, 'arming her must always wait for a second press');
+  }
+
+  for (const text of ['stand down', 'disarm', 'stop working on your own', 'stop looking on your own']) {
+    const p = parseCommand(text);
+    assert.equal(p.ok, true, `"${text}" should parse`);
+    assert.equal(p.verb, 'arm', `"${text}" -> ${p.verb}`);
+    assert.equal(p.args.on, false);
+  }
+
+  // And the blunter phrasings still mean stop everything.
+  for (const text of ['stop', 'stop everything', 'pause everything']) {
+    assert.equal(parseCommand(text).verb, 'stop', `"${text}" should still stop everything`);
+  }
+
+  // Arming spends nothing by itself; it is the switch, not the work.
+  assert.equal(parseCommand('arm').estimateUsd, 0);
+});

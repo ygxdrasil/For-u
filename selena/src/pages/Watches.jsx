@@ -113,6 +113,8 @@ export default function Watches({ data, refresh }) {
         </Banner>
       ) : null}
 
+      <AutonomyPanel autonomy={state.autonomy} onChange={load} />
+
       {state.proposals?.length ? (
         <div className="card" style={{ marginBottom: 14 }}>
           <h3>She found these on her own ({state.proposals.length})</h3>
@@ -279,5 +281,106 @@ export default function Watches({ data, refresh }) {
         </>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Her working alone, with the numbers that bound it and a way to change them.
+ *
+ * The rail has the switch because the switch has to be everywhere. This has
+ * the settings, because a number you can change from any page is a number you
+ * change by accident.
+ */
+function AutonomyPanel({ autonomy: a, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [form, setForm] = useState(null);
+
+  useEffect(() => {
+    if (a && !form) {
+      setForm({
+        reserveUsd: a.reserveUsd,
+        handoffFloor: a.handoffFloor,
+        handoffsPerWeek: a.handoffsPerWeek,
+        maxSelfWatches: a.maxSelfWatches,
+        quietRunsBeforeBackoff: a.quietRunsBeforeBackoff ?? 3,
+        errorRunsBeforeStop: a.errorRunsBeforeStop ?? 3,
+      });
+    }
+  }, [a]);
+
+  if (!a) return null;
+
+  const save = async (ev) => {
+    ev.preventDefault();
+    setBusy(true);
+    setError(null);
+    const res = await api.watchAction('settings', form);
+    setBusy(false);
+    if (res.ok) await onChange();
+    else setError(res.error);
+  };
+
+  const num = (key, label, hint, min, max) => (
+    <div className="field" key={key}>
+      <label>{label}</label>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={key === 'reserveUsd' ? '0.5' : '1'}
+        value={form?.[key] ?? ''}
+        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+      />
+      <span className="small muted">{hint}</span>
+    </div>
+  );
+
+  return (
+    <div className={`card ${a.armed ? 'accent' : ''}`} style={{ marginBottom: 14 }}>
+      <div className="head" style={{ marginBottom: 8 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Working on her own {a.armed ? <Pill tone="ok">armed</Pill> : <Pill>stood down</Pill>}</h3>
+          <p className="small" style={{ margin: '4px 0 0' }}>{a.says}</p>
+        </div>
+        <button className="small" onClick={() => setOpen(!open)}>
+          {open ? 'Hide the limits' : 'The limits'}
+        </button>
+      </div>
+
+      {a.armed ? (
+        <p className="small muted" style={{ margin: 0 }}>
+          Twice a day she reads the free sources with no topic from you, stands her own watches on what looks real, researches
+          them, and sends anything that reaches level {a.handoffFloor} straight to Jason — {a.handoffsThisWeek} of{' '}
+          {a.handoffsPerWeek} sent this week. She has {a.selfWatches ?? 0} of her own watches running, out of {a.maxSelfWatches}.
+        </p>
+      ) : (
+        <p className="small muted" style={{ margin: 0 }}>
+          Nothing happens unless you ask. The switch is at the bottom of the sidebar, on every page.
+        </p>
+      )}
+
+      {open && form ? (
+        <form onSubmit={save} style={{ marginTop: 12 }} className="limits">
+          <div className="row">
+            {num('reserveUsd', 'Held back for you ($)', 'she can never spend this', 0, 100)}
+            {num('handoffFloor', 'Level needed for Jason', '5 is the top of the ladder', 1, 5)}
+            {num('handoffsPerWeek', 'Handoffs a week', 'however good the week is', 0, 50)}
+            {num('maxSelfWatches', 'Watches she may stand', 'her own, not yours', 1, 100)}
+            {num('quietRunsBeforeBackoff', 'Quiet runs before she slows', 'stops her re-reading the same posts', 1, 50)}
+            {num('errorRunsBeforeStop', 'Failures before she stops', 'broken is not the same as quiet', 1, 50)}
+            <button className="primary" type="submit" disabled={busy}>
+              {busy ? 'Saving…' : 'Save the limits'}
+            </button>
+          </div>
+          {error ? <p className="small" style={{ color: 'var(--warn)' }}>{error}</p> : null}
+          <p className="small muted" style={{ margin: 0 }}>
+            Lowering the level needed for Jason is the one that matters. At level 4 he gets things one loud customer is paying
+            for; at level 5 he only gets things several people pay for and agree are wrong.
+          </p>
+        </form>
+      ) : null}
+    </div>
   );
 }

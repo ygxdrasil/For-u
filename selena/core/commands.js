@@ -59,6 +59,15 @@ export const VERBS = {
     spends: true,
     consequential: true,
   },
+  arm: {
+    summary: 'set her working on her own, or stand her down',
+    examples: ['arm', 'work on your own', 'stand down', 'stop working on your own'],
+    spends: false,
+    // Consequential rather than spending: arming does not itself cost anything,
+    // but it is the switch that lets everything else cost something without
+    // you there. It gets the second press.
+    consequential: true,
+  },
   help: { summary: 'list what she understands', examples: ['help', '?'], spends: false },
 };
 
@@ -129,6 +138,21 @@ const RULES = [
     verb: 'archive',
     test: /^(?:archive|shelve|put away|hide)\s+(.+)$/i,
     build: (m) => ({ verb: 'archive', args: { target: strip(m[1].replace(/^(the|that)\s+/i, '')) } }),
+  },
+
+  // ---- arm / stand down -------------------------------------------------
+  // Before the stop rule. "stop working on your own" must disarm her, not
+  // pause every watch — those are different amounts of damage to undo, and the
+  // sentence plainly names the one she should do.
+  {
+    verb: 'arm',
+    test: /^(?:stand\s*down|disarm|stop\s+(?:working|looking|searching)\s+on\s+your\s+own|stop\s+(?:working|running)\s+by\s+yourself)\s*$/i,
+    build: () => ({ verb: 'arm', args: { on: false } }),
+  },
+  {
+    verb: 'arm',
+    test: /^(?:arm|arm\s+yourself|go\s+(?:to\s+)?work|work\s+on\s+your\s+own|search\s+on\s+your\s+own|look\s+on\s+your\s+own|run\s+by\s+yourself|off\s+you\s+go)\s*$/i,
+    build: () => ({ verb: 'arm', args: { on: true } }),
   },
 
   // ---- stop everything (before per-watch pause, or it swallows it) ------
@@ -288,6 +312,10 @@ export function describe(parsed) {
       return `archive the finding matching "${a.target}"`;
     case 'explore':
       return 'go looking on your own and propose things worth watching — reading is free, one cheap model call to find the pattern';
+    case 'arm':
+      return a.on
+        ? 'work on your own from now on: roam, stand your own watches, research them, and hand level-5 findings to Jason without asking'
+        : 'stand down — no roaming, no watches on a schedule, nothing sent to Jason unless I say so';
     case 'help':
       return 'list what you can tell me';
     default:

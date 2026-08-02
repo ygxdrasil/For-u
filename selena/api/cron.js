@@ -14,6 +14,8 @@ import { json, methodGuard, readBody, guard } from '../core/http.js';
 import { createContext, contextStatus } from '../core/context.js';
 import { gateRequest } from '../core/auth.js';
 import { dueWatches, runWatch, staleFindings, reverifyFinding } from '../core/watches.js';
+import { readAutonomy, describeAutonomy } from '../core/autonomy.js';
+import { runPass } from '../core/pass.js';
 import { clampNumber, nowIso } from '../core/util.js';
 
 export default guard(async function handler(req, res) {
@@ -29,18 +31,41 @@ export default guard(async function handler(req, res) {
   const findings = await ctx.store.listFindings({ status: 'active', limit: 200 });
   const stale = staleFindings(findings, { at });
 
+  const autonomy = await readAutonomy(ctx.store);
+
   if (req.method === 'GET') {
+    const money = await ctx.meter.summary().catch(() => ({ monthToDateUsd: 0, capUsd: ctx.capUsd }));
     return json(res, 200, {
       ok: true,
       at,
       due: due.map((w) => ({ id: w.id, name: w.name, cadence: w.cadence, lastRunAt: w.lastRunAt })),
       staleFindings: stale.slice(0, 20).map((f) => ({ id: f.id, oneLine: f.demand.oneLine, lastVerifiedAt: f.lastVerifiedAt })),
+      autonomy: { armed: autonomy.armed, says: describeAutonomy(autonomy, { capUsd: money.capUsd, spentUsd: money.monthToDateUsd }) },
       context: contextStatus(ctx),
     });
   }
 
   const body = await readBody(req);
   const limit = clampNumber(body.limit, 1, 10, 2);
+
+  // Armed, the whole pass runs from one place: watches, then roaming, then her
+  // own watches, then the handoff. Unarmed, this endpoint keeps its original
+  // behaviour of running due watches and nothing else, so a scheduler that has
+  // been set up for months does not change what it does the day autonomy ships.
+  if (autonomy.armed && body.autonomous !== false) {
+    const pass = await runPass(ctx, { limit, at });
+    return json(res, 200, {
+      ok: true,
+      at,
+      autonomous: true,
+      dueCount: due.length,
+      ...pass,
+      remainingDue: Math.max(0, due.length - (pass.ran?.length ?? 0)),
+      elapsedMs: ctx.deadline.elapsedMs,
+      says: describeAutonomy(pass.autonomy, { capUsd: ctx.capUsd, spentUsd: (await ctx.store.getMonthlySpend().catch(() => 0)) }),
+      context: contextStatus(ctx),
+    });
+  }
 
   const ran = [];
   const reported = [];

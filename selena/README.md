@@ -77,6 +77,8 @@ also the command bar:
 watch bookkeeping for UK tradespeople daily
 dig into invoice chasing for trades, deep
 go looking
+work on your own
+stand down
 run
 pause the invoice watch
 show level 5
@@ -120,6 +122,43 @@ the same subject coming back a month later is itself a signal.
 
 Every proposal cites the posts it came from, and a proposal citing a URL she
 did not actually read is discarded by the same ledger that governs findings.
+
+---
+
+## Setting her going
+
+The switch is at the bottom of the sidebar, on every page, and it is one press.
+Armed, twice a day she reads with no topic from you, **stands her own watches**
+on what looks real, researches them, files findings, and sends the strongest
+**straight to Jason without asking**.
+
+That last step overrides the deliberate-handoff rule this project started with.
+It was overridden deliberately. Everything below is the trade for it, and every
+one is a number in `core/autonomy.js` checked in code — not a prompt asking her
+nicely:
+
+| Brake | Default | What it stops |
+|---|---|---|
+| **Reserve** | $2 of the $10 cap | She can never spend the month before you have asked her anything. Her ceiling is $8; yours is always there. |
+| **Handoff floor** | level 5 | Many paying, many complaining, **and the complaints agree**. A level-4 finding never goes unattended, however buildable. |
+| **Weekly ceiling** | 3 | However good a week is, Jason gets at most three on her authority. Enforced *within* a single pass, not just across passes. |
+| **Quiet backoff** | 3 runs | Three passes finding nothing and she roams every other pass instead, rather than re-reading the same posts every twelve hours. One find resets it. |
+| **Error stop** | 3 runs | Three failed passes and she disarms herself and says so. Broken is not the same as quiet, and retrying on a schedule is how you spend a month finding that out. |
+| **Provenance halt** | always on | A run that had claims deleted for citing something it never read files **nothing** — not the parts that checked out. Attended you can judge; unattended there is nobody to. |
+| **Her own watches** | 8 | A ceiling on watches she stands for herself, each recorded with why she looked there. |
+
+She refuses to arm at all without a model key or without `DATABASE_URL`.
+Arming her to fail on a schedule looks like it worked, which is worse than not
+arming her.
+
+**Stop everything** is in the rail too: it disarms her *and* pauses every watch,
+from any page. Typing `stop everything` does the same thing — pausing the
+watches while leaving her armed to roam and hand things over is the most
+dangerous possible reading of those words, so it is not the one she takes.
+
+Roaming happens **after** the watches on every pass. Finding new things is the
+exciting part and it is the part that should be starved first: a watch you
+approved has already earned its money and a new subject has not.
 
 ---
 
@@ -306,6 +345,10 @@ things they hold in place:
 - no sentence that is not a command is ever bent into one, and rule order
   cannot silently turn "pause everything" into a watch called "everything"
 - the scheduler workflow is valid YAML and every npm script points at a real file
+- she starts disarmed, a mangled record cannot read as armed, and no brake can
+  be widened by a bad number or reset by a settings change
+- two passes running at once cannot lose a counter increment — for an error
+  counter that would mean the brake never trips
 - the deploy stays at or under eleven serverless functions, and every one of
   them has a `maxDuration` — an undeclared route silently gets Vercel's 10s
   default, which is shorter than research's own budget
@@ -324,6 +367,8 @@ core/       the headless engine — no HTTP, no React, no cron
   sources.js     the source policy, enforced
   community.js   Hacker News and Stack Exchange — keyless, quoted verbatim
   explore.js     going looking with no topic; proposes, never files
+  autonomy.js    the brakes: reserve, floor, ceiling, backoff, stop
+  pass.js        one unattended pass: watch → roam → stand → hand over
   peers.js       where Jason and Grace are, and proof the line works
   meter.js       prices, and the hard stop
 api/        one file per route, each a single path segment — eleven of them,

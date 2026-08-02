@@ -22,6 +22,8 @@ import { runResearch } from '../core/research.js';
 import { createWatch, runWatch } from '../core/watches.js';
 import { handToJason } from '../core/jason.js';
 import { explore, saveProposals } from '../core/explore.js';
+import { arm as armHer, disarm, readAutonomy, describeAutonomy } from '../core/autonomy.js';
+import { stopEverything } from '../core/pass.js';
 import { summarizeFinding } from '../core/schema.js';
 import { phraseSimilarity } from '../core/util.js';
 
@@ -223,11 +225,41 @@ export default guard(async function handler(req, res) {
       return done({ watch: updated, message: `"${updated.name}" is now ${updated.state}.` });
     }
 
+    case 'arm': {
+      if (a.on) {
+        // The same two refusals as the switch in the rail. Arming her to fail
+        // on a schedule is worse than not arming her, because it looks like it
+        // worked.
+        if (!ctx.llm) return done({ executed: false, problem: `I cannot read anything without a model key, so working on my own would just schedule failures. ${ctx.llmError}` });
+        if (!ctx.store.durable) {
+          return done({
+            executed: false,
+            problem:
+              'Storage is in memory, so I would forget what I already reported between cold starts and report the same thing every run — and my own brakes would reset with it. Set DATABASE_URL first.',
+          });
+        }
+        const state = await armHer(ctx.store, {});
+        const money = await ctx.meter.summary().catch(() => ({ capUsd: ctx.capUsd, monthToDateUsd: 0 }));
+        return done({
+          autonomy: { armed: true },
+          message: `Working on my own from now on. ${describeAutonomy(state, { capUsd: money.capUsd, spentUsd: money.monthToDateUsd })} Only level 5 goes to Jason, and stop everything is in the sidebar.`,
+        });
+      }
+      await disarm(ctx.store, { by: 'you' });
+      return done({ autonomy: { armed: false }, message: 'Stood down. Your watches still run on their schedule; I will not go looking or send anything on my own.' });
+    }
+
     case 'stop': {
-      const watches = await ctx.store.listWatches();
-      const active = watches.filter((w) => w.state === 'active');
-      for (const w of active) await ctx.store.putWatch({ ...w, state: 'paused' });
-      return done({ paused: active.map((w) => w.name), message: `Paused ${active.length} watch(es). Nothing will run on a schedule until you resume them.` });
+      // "stop everything" means everything: the watches AND her working alone.
+      // Pausing the watches while leaving her armed to roam and hand things
+      // over would be the most dangerous possible reading of the words.
+      const outcome = await stopEverything(ctx.store);
+      const was = await readAutonomy(ctx.store);
+      return done({
+        paused: outcome.paused,
+        autonomy: { armed: was.armed },
+        message: `Paused ${outcome.paused.length} watch(es) and stood down. Nothing runs on a schedule, and nothing goes to Jason, until you say so.`,
+      });
     }
 
     case 'open':

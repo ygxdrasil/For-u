@@ -137,9 +137,19 @@ export function describeChange(previous, current) {
 /**
  * Run one watch and decide whether it is worth saying anything.
  *
+ * `haltOnUnsourced` is passed by the unattended pass and nothing else. When a
+ * run had claims deleted for citing a source it never read, the survivors are
+ * discarded too rather than filed. Attended, you can look at the note and
+ * judge; unattended there is nobody to judge, and a finding assembled partly
+ * from invention is the one failure this whole system exists to refuse.
+ *
+ * It is an explicit argument rather than a flag on `deps` on purpose: deps is
+ * shared across every watch in a sweep, and a per-run setting written onto it
+ * leaks into the next watch. That has already happened once here.
+ *
  * @returns {{watch, result, reported:boolean, change:object|null, reason:string}}
  */
-export async function runWatch(watch, deps) {
+export async function runWatch(watch, deps, { haltOnUnsourced = false } = {}) {
   const now = deps.now ?? nowIso;
   const store = deps.store;
 
@@ -170,6 +180,17 @@ export async function runWatch(watch, deps) {
   if (!result.finding) {
     await store.putWatch(updated);
     return { watch: updated, result, reported: false, change: null, reason: `nothing to report (${result.status})` };
+  }
+
+  // The provenance brake. Nothing is stored, nothing is reported, and the run
+  // is still counted against the watch — it cost money and it happened.
+  if (haltOnUnsourced && clampNumber(result.ledgerViolations, 0, 1e6, 0) > 0) {
+    const reason = `${result.ledgerViolations} claim(s) cited a source this run never read, so the whole finding was dropped rather than filed unattended`;
+    updated.lastStatus = 'halted';
+    updated.lastError = reason;
+    await store.putWatch(updated);
+    await store.addActivity({ kind: 'autonomy', level: 'error', message: `${watch.name}: ${reason}`, watchId: watch.id });
+    return { watch: updated, result: { ...result, finding: null, status: 'halted' }, reported: false, change: null, reason };
   }
 
   const finding = result.finding;

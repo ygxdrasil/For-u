@@ -581,3 +581,107 @@ details.raw pre {
 .proposal .topic { font-weight: 600; font-size: 14px; }
 .proposal .who { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
 .proposal .why { font-size: 12.5px; margin-top: 8px; color: var(--ink-2); }
+
+/* ---------- the arming panel in the rail ---------- */
+
+/*
+ * This sits between the nav and the footer, and it is the only part of the
+ * chrome that can start her spending money. It is styled to be noticed when
+ * armed and quiet when not — the reverse would make "on" the invisible state,
+ * which for a thing that works while you are asleep is the wrong way round.
+ */
+.railauto { padding: 10px; border-top: 1px solid var(--line-2); }
+
+.armswitch {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 10px; border-radius: 9px;
+  background: var(--panel-2); border: 1px solid var(--line-2);
+  color: var(--ink-2); text-align: left;
+}
+.armswitch:hover { border-color: var(--line); }
+.armswitch.on {
+  background: linear-gradient(90deg, var(--ember-soft), transparent);
+  border-color: var(--ember-line);
+  color: var(--ember);
+}
+.armswitch .track {
+  flex: 0 0 30px; width: 30px; height: 17px; border-radius: 20px;
+  background: var(--line-2); border: 1px solid var(--line);
+  position: relative; transition: background 160ms ease;
+}
+.armswitch.on .track { background: var(--ember-2); border-color: var(--ember); }
+.armswitch .knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--ink-3); transition: transform 160ms ease, background 160ms ease;
+}
+.armswitch.on .knob { transform: translateX(13px); background: #fff; box-shadow: 0 0 8px var(--ember-glow); }
+.armswitch .what { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.armswitch .what .t { font-size: 12.5px; font-weight: 600; }
+.armswitch .what .s { font-size: 10.5px; color: var(--ink-3); font-weight: 400; }
+
+.armerror {
+  margin-top: 8px; padding: 8px 9px; border-radius: 7px;
+  background: rgba(229, 161, 60, 0.08); border: 1px solid rgba(229, 161, 60, 0.3);
+  color: var(--warn); font-size: 11px; line-height: 1.45;
+}
+
+.doingnow {
+  display: flex; align-items: flex-start; gap: 7px;
+  margin-top: 9px; font-size: 11px; color: var(--ink-2); line-height: 1.4;
+}
+.doingnow.idle { color: var(--ink-3); font-family: var(--mono); font-size: 10.5px; }
+.doingnow .pulse {
+  flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; margin-top: 4px;
+  background: var(--ember); box-shadow: 0 0 8px var(--ember-glow);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.allowance { margin-top: 10px; }
+.allowance .bar { height: 4px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.allowance .bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--ember-2), var(--ember)); }
+.allowance .figs {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-top: 5px; font-family: var(--mono); font-size: 10px; color: var(--ink-2);
+}
+
+.railnote { margin-top: 8px; font-size: 10.5px; color: var(--ink-3); line-height: 1.45; }
+.railnote.warn { color: var(--warn); }
+
+.stopall {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; margin-top: 10px; padding: 7px 0;
+  background: transparent; border: 1px solid var(--line-2); border-radius: 8px;
+  color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+}
+.stopall:hover { border-color: rgba(217, 59, 42, 0.5); color: var(--ember); }
+
+.stopconfirm { margin-top: 10px; }
+.stopconfirm p { margin: 0 0 7px; font-size: 11.5px; color: var(--ink-2); line-height: 1.4; }
+.stopconfirm div { display: flex; gap: 6px; }
+button.danger { background: var(--ember-2); border-color: var(--ember); color: #fff; }
+button.danger:hover { background: var(--ember); }
+
+/* Collapsed, the switch survives as a pressable dot. An arming control that
+   disappears when the rail narrows is worse than not having one. */
+.railauto.collapsed { padding: 10px 8px; display: flex; justify-content: center; }
+.armdot {
+  width: 34px; height: 34px; border-radius: 9px; padding: 0;
+  display: grid; place-items: center;
+  background: var(--panel-2); border: 1px solid var(--line-2); color: var(--ink-3);
+}
+.armdot.on {
+  background: var(--ember-soft); border-color: var(--ember-line); color: var(--ember);
+  box-shadow: 0 0 0 1px rgba(255, 92, 57, 0.12), 0 0 14px rgba(255, 92, 57, 0.18);
+}
+
+/*
+ * The limits form. `.row` lays fields out side by side and aligns them to the
+ * baseline, which puts a trailing hint span level with the input instead of
+ * under it — six of those in a row read as one run-on sentence with boxes in
+ * it. These fields stack their own contents and keep the number boxes narrow,
+ * since none of these values is wider than two digits.
+ */
+.limits .field { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 148px; }
+.limits .field input { width: 100%; max-width: 92px; }
+.limits .field .small { line-height: 1.35; }
