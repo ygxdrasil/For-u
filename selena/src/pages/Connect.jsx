@@ -208,6 +208,9 @@ export default function Connect({ data }) {
 
       {error ? <Banner title="Problem">{error}</Banner> : null}
 
+      {/* ---- the verified set, one press ---- */}
+      {(state.starters ?? []).length ? <StarterSet state={state} onDone={load} busy={busy} setBusy={setBusy} setError={setError} /> : null}
+
       {/* ---- what is already connected ---- */}
       {connectors.length === 0 ? (
         <Empty>Nothing connected yet. Pick something below.</Empty>
@@ -456,5 +459,106 @@ export default function Connect({ data }) {
         ))}
       </div>
     </>
+  );
+}
+
+/**
+ * The verified set.
+ *
+ * Every one of these was probed against the live API — URL, field map and link
+ * template — and the counts shown are what actually came back on the day. The
+ * point is to remove the step where you fill in six forms from somebody's API
+ * docs and get one path wrong, which produces a source that answers 200 and
+ * reads nothing.
+ *
+ * The two groups are doing different jobs and are labelled as such: forums are
+ * people saying what they need, reviews are people who have ALREADY PAID
+ * saying what is wrong with what they bought. Only the second kind can carry a
+ * finding past level 3 on its own.
+ */
+function StarterSet({ state, onDone, busy, setBusy, setError }) {
+  const [picked, setPicked] = useState(null);
+  const [result, setResult] = useState(null);
+
+  const starters = state.starters ?? [];
+  const already = new Set((state.connectors ?? []).map((c) => c.starterId).filter(Boolean));
+  const chosen = picked ?? new Set(state.defaultSet ?? []);
+
+  const toggle = (id) => {
+    const next = new Set(chosen);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPicked(next);
+  };
+
+  const connect = async () => {
+    setBusy('starters');
+    setError(null);
+    const res = await api.peerAction('add-starters', { ids: [...chosen].filter((id) => !already.has(id)) });
+    setBusy(null);
+    if (!res.ok) return setError(res.error);
+    setResult(res.data);
+    await onDone();
+  };
+
+  const toAdd = [...chosen].filter((id) => !already.has(id)).length;
+  const group = (g) => starters.filter((s) => s.group === g);
+
+  return (
+    <div className="card accent" style={{ marginBottom: 14 }}>
+      <h3>Ready to connect</h3>
+      <p className="small" style={{ marginTop: -4 }}>
+        Each of these was checked against the live API — the URL, which fields hold the words, and how to build the link.
+        The numbers are what actually came back when it was checked, on {state.startersCheckedOn}. Nothing here needs a key.
+      </p>
+
+      {['forum', 'reviews'].map((g) => (
+        <div key={g} style={{ marginTop: 10 }}>
+          <div className="detail" style={{ marginBottom: 6 }}>
+            {g === 'forum'
+              ? 'FORUMS — people saying what they need. Asks and complaints; never proof anyone is paying.'
+              : 'REVIEWS — people who have already paid, saying what is wrong with it. The rare source that can reach level 4 on its own.'}
+          </div>
+          {group(g).map((s) => {
+            const on = chosen.has(s.id);
+            const have = already.has(s.id);
+            return (
+              <label key={s.id} className={`starter ${on ? 'on' : ''} ${have ? 'have' : ''}`}>
+                <input type="checkbox" checked={have || on} disabled={have} onChange={() => toggle(s.id)} />
+                <span>
+                  <span className="n">
+                    {s.name} {have ? <Pill tone="ok">connected</Pill> : null}{' '}
+                    {(s.gives ?? []).map((x) => (
+                      <Pill key={x} tone={x === 'paying' ? 'ok' : ''}>
+                        {x}
+                      </Pill>
+                    ))}
+                  </span>
+                  <span className="w">{s.why}</span>
+                  <span className="v">
+                    checked: {s.verified}
+                    {s.searchable === false ? ' · reads the latest reviews every run rather than searching for your topic' : ''}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      ))}
+
+      <div className="row" style={{ marginTop: 12, alignItems: 'center' }}>
+        <button className="primary" onClick={connect} disabled={busy === 'starters' || toAdd === 0}>
+          {busy === 'starters' ? 'Connecting…' : toAdd ? `Connect ${toAdd} source${toAdd === 1 ? '' : 's'}` : 'All connected'}
+        </button>
+        <span className="small muted">Nothing is read until you press test, or until her next run.</span>
+      </div>
+
+      {result ? (
+        <p className="small" style={{ marginBottom: 0, marginTop: 8 }}>
+          {result.note}
+          {result.skipped?.length ? ` Skipped: ${result.skipped.map((s) => `${s.name ?? s.id} (${s.why})`).join(', ')}.` : ''}
+        </p>
+      ) : null}
+    </div>
   );
 }

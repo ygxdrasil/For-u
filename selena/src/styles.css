@@ -710,3 +710,20 @@ button.danger:hover { background: var(--ember); }
 .proposal .topic { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .peer .top .name + * { margin-left: 2px; }
 .peer .quote cite a { word-break: break-all; }
+
+/* ---------- the verified starter set ---------- */
+
+.starter {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 9px 11px; margin-bottom: 5px;
+  border: 1px solid var(--line-2); border-radius: 9px; background: var(--panel-2);
+  cursor: pointer;
+}
+.starter:hover { border-color: var(--line); }
+.starter.on { border-color: var(--ember-line); background: linear-gradient(90deg, var(--ember-soft), var(--panel-2)); }
+.starter.have { opacity: 0.6; cursor: default; }
+.starter input { margin-top: 2px; flex: 0 0 auto; accent-color: var(--ember); }
+.starter > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.starter .n { font-size: 13px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.starter .w { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+.starter .v { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }

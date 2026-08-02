@@ -149,8 +149,35 @@ Two kinds, because those are the two things that exist:
   session-based spec. She tries the current shape first, falls back to the
   handshake, and remembers which the server speaks so the probe is paid once.
 
-Recipes for Discourse, App Store reviews and public contract awards come
-pre-filled — all three verified against the live APIs, not written from memory.
+**Ready to connect** sits at the top of that page: six sources already worked
+out, each probed against the live API — the URL, the field map and the link
+template — with the counts shown being what actually came back on the day.
+One press connects the lot.
+
+| | Gives | Checked |
+|---|---|---|
+| Shopify Community | asks, complaints | 50 of 50 posts citable |
+| n8n Community | asks, complaints | 50 of 50 posts citable |
+| Make.com Community | asks, complaints | 50 of 50 posts citable |
+| **Booksy Biz** reviews (barbers, salons) | **paying**, complaints | 50 citable, 8 at ≤3 stars |
+| **Fresha for business** reviews | **paying**, complaints | 50 citable, 20 at ≤3 stars |
+| **Tradify** reviews (trades) | **paying**, complaints | 50 citable, 14 at ≤3 stars |
+| **ServiceM8** reviews (field service) | **paying**, complaints | 50 citable, 15 at ≤3 stars |
+| **Square POS** reviews | **paying**, complaints | 50 citable, 30 at ≤3 stars |
+
+The review feeds are the valuable half, and deliberately the *business-side*
+apps: Booksy and Fresha each have a consumer app with far more ratings whose
+reviews are people rating their haircut. These are the ones the shop pays for,
+so a complaint is a paying customer saying what is wrong — the shape of a
+level-4 finding, from a free source.
+
+A review feed is a standing corpus, not a search: it names one app and always
+returns its most recent reviews, so no search term is bolted onto it and the
+page says so rather than implying otherwise.
+
+Recipes for a Discourse forum of your own, App Store reviews for any other app,
+and public contract awards are below that — all verified against the live APIs
+too, not written from memory.
 
 Three things hold:
 
@@ -414,6 +441,7 @@ core/       the headless engine — no HTTP, no React, no cron
   community.js   Hacker News and Stack Exchange — keyless, quoted verbatim
   explore.js     going looking with no topic; proposes, never files
   connectors.js  the APIs and MCP servers you plug in yourself
+  starters.js    the verified set, probed live and ready to connect
   autonomy.js    the brakes: reserve, floor, ceiling, backoff, stop
   pass.js        one unattended pass: watch → roam → stand → hand over
   peers.js       where Jason and Grace are, and proof the line works

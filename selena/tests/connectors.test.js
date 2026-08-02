@@ -444,3 +444,72 @@ test('a failed source says what it asked for, with any key redacted', async () =
   assert.ok(!outcome.detail.includes('SUPERSECRET'), 'and a key in the query string must never be echoed into a log');
   assert.match(outcome.detail, /api_key=%E2%80%A6|api_key=…/);
 });
+
+test('every verified starter is internally consistent', async () => {
+  // These ship pre-filled, so a typo in one is a source that silently reads
+  // nothing and nobody ever fills in a form to notice. The live probe proved
+  // they work on the day; this proves the file has not drifted since.
+  const { STARTERS, DEFAULT_SET, starterById, connectorInputFor } = await import('../core/starters.js');
+  const { assertFetchAllowed } = await import('../core/sources.js');
+
+  assert.ok(STARTERS.length >= 6);
+  const ids = new Set();
+
+  for (const s of STARTERS) {
+    assert.ok(!ids.has(s.id), `${s.id} appears twice`);
+    ids.add(s.id);
+
+    assert.match(s.url, /^https:\/\//, `${s.id} must be https`);
+    assert.doesNotThrow(() => assertFetchAllowed(s.url), `${s.id} points at a host the policy blocks`);
+    assert.ok(s.itemsPath, `${s.id} needs to say where the list is`);
+    assert.ok(s.textPath, `${s.id} needs to say where the words are`);
+    // Exactly one way of getting a link. Neither is not a source; both is
+    // ambiguous about which wins.
+    assert.ok(Boolean(s.urlPath) !== Boolean(s.urlTemplate), `${s.id} must have either a link path or a link template, not both or neither`);
+    assert.ok(s.why && s.why.length > 40, `${s.id} must say why it is worth having`);
+    assert.ok(s.verified, `${s.id} must record what was actually checked`);
+    assert.ok(['forum', 'reviews'].includes(s.group));
+
+    // A searchable source must have somewhere to put the term; a fixed corpus
+    // must not pretend to.
+    if (s.searchable) assert.ok(s.url.includes('{query}') || s.method === 'POST', `${s.id} is searchable but has nowhere to put the term`);
+    else assert.ok(!s.url.includes('{query}'), `${s.id} is not searchable but has a {query} placeholder`);
+
+    // Only reviews may claim to prove payment: a forum post is somebody
+    // talking, and letting it count as paying would break the ladder.
+    if (s.gives.includes('paying')) assert.equal(s.group, 'reviews', `${s.id} claims paying evidence but is not a review source`);
+  }
+
+  for (const id of DEFAULT_SET) assert.ok(starterById(id), `the default set names ${id}, which does not exist`);
+  // The default set has to include at least one source that can prove payment,
+  // or a fresh install can never get past level 2.
+  assert.ok(DEFAULT_SET.some((id) => starterById(id).gives.includes('paying')), 'the default set must include a paying source');
+
+  // The shape handed to addConnector must actually be accepted by it.
+  const store = freshStore();
+  for (const s of STARTERS) {
+    const result = await addConnector(store, connectorInputFor(s), SECRET);
+    assert.equal(result.ok, true, `${s.id} was rejected by addConnector: ${result.error}`);
+  }
+  assert.equal((await listConnectors(store)).length, STARTERS.length);
+});
+
+test('a fixed review feed is not given a search term it cannot use', async () => {
+  // A review feed names one app and always returns its most recent reviews.
+  // Appending ?q= would be a lie about what it does and, on a stricter API,
+  // an error.
+  const store = freshStore();
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return { ok: true, status: 200, text: async () => JSON.stringify({ feed: { entry: [] } }) };
+  };
+
+  const added = await addConnector(
+    store,
+    { kind: 'rest', name: 'reviews', url: 'https://itunes.apple.com/gb/rss/customerreviews/page=1/id=1/json', searchable: false, itemsPath: 'feed.entry[]' },
+    SECRET,
+  );
+  await readConnector(await getConnector(store, added.connector.id, SECRET), 'invoice chasing', { secret: SECRET, fetchImpl });
+  assert.equal(urls[0], 'https://itunes.apple.com/gb/rss/customerreviews/page=1/id=1/json', 'the URL is the whole query');
+});

@@ -459,6 +459,12 @@ export async function addConnector(store, input, secret) {
     // is POST-only and answers 405 to a GET. A connector that could only GET
     // would quietly exclude every search API built that way.
     method: String(input.method ?? '').toUpperCase() === 'POST' ? 'POST' : 'GET',
+    // A review feed names one app and always returns its most recent reviews.
+    // It is a standing corpus, not a search, so no term is bolted onto it and
+    // the HUD can say what it actually does instead of implying it looks for
+    // your topic.
+    searchable: input.searchable !== false,
+    starterId: input.starterId ?? null,
     bodyTemplate: String(input.bodyTemplate ?? '').slice(0, 2000) || null,
     map: {
       itemsPath: String(input.itemsPath ?? '').slice(0, 200) || null,
@@ -521,6 +527,9 @@ function restUrlFor(connector, query, token) {
   let url;
   if (connector.url.includes('{query}')) {
     url = connector.url.replaceAll('{query}', encoded);
+  } else if (connector.searchable === false) {
+    // Nothing to substitute and nothing to append: the URL is the whole query.
+    url = connector.url;
   } else if (connector.method === 'POST') {
     // The term goes in the body for a POST. Bolting ?q= on as well sends the
     // search twice, in two places, and some APIs reject an unknown parameter
