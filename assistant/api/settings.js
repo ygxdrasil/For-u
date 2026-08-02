@@ -10,7 +10,7 @@ import { createStore } from '../core/store.js';
 import { json, methodGuard, readBody } from '../core/http.js';
 import { describeServerConfig, saveServerConfig, savePrefs } from '../core/settings.js';
 import { activeFacts, remember, correct, retire } from '../core/memory.js';
-import { listPeers, savePeer, removePeer } from '../core/peers.js';
+import { listPeers, savePeer, removePeer, askPeer } from '../core/peers.js';
 import { requireSession } from './auth.js';
 
 export default async function handler(req, res) {
@@ -58,6 +58,29 @@ export default async function handler(req, res) {
   // Peers: the other AIs Jason may ask when a specification is incomplete.
   if (req.body.peer) {
     const p = req.body.peer;
+
+    // Testing goes through askPeer — the SAME call Jason makes mid-build, not a
+    // parallel one written for the button. A test that exercises a different
+    // path proves the path nobody uses.
+    if (p.action === 'test') {
+      const startedAt = Date.now();
+      const result = await askPeer(store, {
+        name: p.name,
+        question:
+          'This is a connection test from Jason, an n8n workflow builder. Reply with one short sentence confirming you received it and saying what you are.',
+      });
+      return json(res, 200, {
+        ok: true,
+        test: {
+          reached: result.ok === true,
+          peer: result.peer ?? p.name,
+          answer: result.ok ? String(result.answer ?? '').slice(0, 600) : null,
+          error: result.ok ? null : result.error,
+          ms: Date.now() - startedAt,
+        },
+      });
+    }
+
     try {
       const peers = p.action === 'remove' ? await removePeer(store, p.name) : await savePeer(store, p);
       return json(res, 200, { ok: true, peers });

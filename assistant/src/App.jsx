@@ -1219,6 +1219,8 @@ function Peers() {
   const [peers, setPeers] = useState([]);
   const [draft, setDraft] = useState({ name: '', url: '', protocol: 'json', token: '' });
   const [note, setNote] = useState(null);
+  const [tests, setTests] = useState({});
+  const [testing, setTesting] = useState(null);
 
   const load = () => fetch('/api/settings').then((r) => r.json()).then((r) => setPeers(r.peers ?? []));
   useEffect(() => { load(); }, []);
@@ -1227,6 +1229,19 @@ function Peers() {
     const r = await post('/api/settings', { peer: draft });
     if (!r.ok) return setNote(r.error);
     setPeers(r.peers); setDraft({ name: '', url: '', protocol: 'json', token: '' }); setNote('Added');
+  };
+
+  /**
+   * Ask the peer a real question through the same call Jason makes mid-build.
+   * The answer is shown verbatim rather than reduced to a tick, because a
+   * reachable endpoint that returns something useless is not a working peer —
+   * and only reading what came back tells you which you have.
+   */
+  const test = async (name) => {
+    setTesting(name);
+    const r = await post('/api/settings', { peer: { action: 'test', name } });
+    setTesting(null);
+    setTests((t) => ({ ...t, [name]: r.test ?? { reached: false, error: r.error ?? 'No answer from the server.' } }));
   };
 
   return (
@@ -1238,15 +1253,38 @@ function Peers() {
       </div>
 
       {peers.map((p) => (
-        <div className="setting" key={p.name}>
-          <div>
-            <div className="n">{p.name}</div>
-            <div className="h">{p.protocol} · {p.hasToken ? 'has a token' : 'no token'}</div>
+        <div key={p.name}>
+          <div className="setting">
+            <div>
+              <div className="n">{p.name}</div>
+              <div className="h">{p.protocol} · {p.hasToken ? 'has a token' : 'no token'}</div>
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+              <button className="ghost" style={{ padding: '3px 8px', fontSize: 11 }} disabled={testing === p.name} onClick={() => test(p.name)}>
+                {testing === p.name ? 'asking…' : 'Test'}
+              </button>
+              <button className="ghost" style={{ padding: '3px 8px', fontSize: 11 }}
+                onClick={async () => { const r = await post('/api/settings', { peer: { action: 'remove', name: p.name } }); if (r.ok) { setPeers(r.peers); setTests((t) => ({ ...t, [p.name]: undefined })); } }}>
+                Remove
+              </button>
+            </div>
           </div>
-          <button className="ghost" style={{ padding: '3px 8px', fontSize: 11 }}
-            onClick={async () => { const r = await post('/api/settings', { peer: { action: 'remove', name: p.name } }); if (r.ok) setPeers(r.peers); }}>
-            Remove
-          </button>
+
+          {tests[p.name] && (
+            <div className={`notice ${tests[p.name].reached ? '' : 'unknown'}`} style={{ marginTop: -2 }}>
+              {tests[p.name].reached ? (
+                <>
+                  <span style={{ color: 'var(--worked)' }}>Answered in {tests[p.name].ms}ms.</span>
+                  {' '}Read it and decide whether that is a peer worth asking:
+                  <div className="mono" style={{ marginTop: 6, color: 'var(--ink)', whiteSpace: 'pre-wrap' }}>
+                    {tests[p.name].answer?.trim() || '(it replied, but with nothing in it)'}
+                  </div>
+                </>
+              ) : (
+                <>Could not get an answer — so he would ask you instead of guessing. {tests[p.name].error}</>
+              )}
+            </div>
+          )}
         </div>
       ))}
 
