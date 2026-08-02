@@ -15,8 +15,23 @@ import React from 'react';
  *      the logs instead of from a description of a white rectangle
  */
 
+/**
+ * The same fault, reported once.
+ *
+ * A render error usually repeats — React retries, an interval fires again, the
+ * user presses Try again — and a boundary that reports every occurrence turns
+ * one bug into thousands of log lines and a bill. The first one carries the
+ * stack; the rest add nothing.
+ */
+const alreadyReported = new Set();
+const REPORT_LIMIT = 12;
+
 const report = (kind, error, extra = {}) => {
   try {
+    const fingerprint = `${kind}:${String(error?.message ?? error).slice(0, 200)}`;
+    if (alreadyReported.has(fingerprint) || alreadyReported.size >= REPORT_LIMIT) return;
+    alreadyReported.add(fingerprint);
+
     navigator.sendBeacon?.(
       '/api/clientlog',
       new Blob(
