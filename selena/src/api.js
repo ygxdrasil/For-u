@@ -99,6 +99,9 @@ export const api = {
   tokens: () => call('/api/auth', { method: 'POST', body: { action: 'list-tokens' } }),
   tokenAction: (action, payload = {}) => call('/api/auth', { method: 'POST', body: { action: `${action}-token`, ...payload } }),
 
+  // Keys you paste rather than deploy. Values only ever travel one way: in.
+  keyAction: (action, payload = {}) => call('/api/auth', { method: 'POST', body: { action: `${action}-key`, ...payload } }),
+
   peers: () => call('/api/peers'),
   peerAction: (action, payload = {}) => call('/api/peers', { method: 'POST', body: { action, ...payload } }),
 };

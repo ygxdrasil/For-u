@@ -218,6 +218,36 @@ never sent back to the browser.
 
 ---
 
+## Keys: paste, or deploy
+
+Every key can be an environment variable, and every key can be pasted on the
+**Settings** page instead. Getting an Etsy keystring approved and then having
+to open a dashboard, add a variable and wait for a rebuild is three steps too
+many, none of which happens where you are standing when the key arrives.
+
+One rule between them: **the environment always wins where it is set**, the
+same as Jason's endpoint and for the same reason — when the two disagree you
+want the answer to be the one in your deploy config, not the one somebody
+clicked. If both exist the page says so and names the one being ignored.
+
+- **Test it** makes a real call to the real service with the value you just
+  typed, *before* it is stored. Etsy refuses a keystring on its own with
+  "Shared secret is required in x-api-key header", and the dashboard shows the
+  two halves in separate columns — so pasting half of it is the obvious mistake
+  and this is where you find out, not in a sweep next Tuesday.
+- **Values go one way only.** They are encrypted with the same secret that
+  signs your sign-in, and the status endpoint reports whether a key is set,
+  where it came from, and the last four characters. Nothing else.
+- **Forgetting one really removes it.** That is the single exception to "never
+  delete anything ever": that rule is about evidence and findings, which are
+  the record. A revoked credential is a liability, not an audit trail — what is
+  kept is that it was cleared, and when.
+
+`DATABASE_URL` and `SESSION_SECRET` are deliberately not pasteable: the first
+is read before the store exists, and the second is what decrypts this table.
+
+---
+
 ## Setting her going
 
 The switch is at the bottom of the sidebar, on every page, and it is one press.

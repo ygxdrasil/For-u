@@ -313,7 +313,15 @@ export function assertFetchAllowed(url) {
 }
 
 /** What the HUD shows, and what the prompts are told. */
-export function sourceStatus(env = process.env) {
+/**
+ * @param env      the environment
+ * @param resolved optional map of key name -> { value, source }, from
+ *                 core/keys.js. A key pasted on the Settings page is just as
+ *                 real as one in the environment, and reporting Etsy as dark
+ *                 while she is happily calling it would be a lie on screen.
+ */
+export function sourceStatus(env = process.env, resolved = null) {
+  const hasKey = (name) => Boolean(env?.[name] || resolved?.[name]?.value);
   return SOURCES.map((s) => ({
     id: s.id,
     name: s.name,
@@ -328,11 +336,12 @@ export function sourceStatus(env = process.env) {
     // needs no key is live the moment it is deployed — reporting Hacker News
     // and Stack Exchange as "dark" because they have no env var to check was
     // an honest-looking lie about two sources that work out of the box.
-    live: s.access === 'official-api' ? (s.requiresEnv ? Boolean(env[s.requiresEnv]) : true) : true,
+    live: s.access === 'official-api' ? (s.requiresEnv ? hasKey(s.requiresEnv) : true) : true,
     needsKey: Boolean(s.requiresEnv),
+    keySource: s.requiresEnv ? (env?.[s.requiresEnv] ? 'environment' : (resolved?.[s.requiresEnv]?.source ?? null)) : null,
     blockedReason:
-      s.access === 'official-api' && s.requiresEnv && !env[s.requiresEnv]
-        ? `${s.requiresEnv} is not set, so this source is dark. Everything else keeps working without it.`
+      s.access === 'official-api' && s.requiresEnv && !hasKey(s.requiresEnv)
+        ? `${s.requiresEnv} is not set, so this source is dark. Paste one on the Settings page, or set it in the environment. Everything else keeps working without it.`
         : null,
   }));
 }

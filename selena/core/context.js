@@ -32,23 +32,36 @@ export async function createContext({
 } = {}) {
   const store = storeOverride ?? (await createStore({ databaseUrl: env.DATABASE_URL, now }));
 
+  // Keys may be pasted on the Settings page instead of deployed. The
+  // environment always wins where it is set, and the store is only read for
+  // the ones missing from it — so a fully env-configured deployment pays
+  // nothing for this on any request.
+  const { resolveKeys } = await import('./keys.js');
+  const keys = await resolveKeys(store, env, async () => {
+    const { getSessionSecret } = await import('./password.js');
+    return getSessionSecret(store, env);
+  });
+  const keyOf = (name) => keys[name]?.value ?? null;
+
   const capUsd = Number.isFinite(Number(env.MONTHLY_USD_CAP)) ? Number(env.MONTHLY_USD_CAP) : 10;
   const meter = createMeter({ store, capUsd, now });
 
   let llm = null;
   let llmError = null;
   try {
-    if (env.GEMINI_API_KEY || clientFactory) {
-      llm = createLlm({ apiKey: env.GEMINI_API_KEY ?? 'test', meter, clientFactory });
+    if (keyOf('GEMINI_API_KEY') || clientFactory) {
+      llm = createLlm({ apiKey: keyOf('GEMINI_API_KEY') ?? 'test', meter, clientFactory });
     } else {
-      llmError = 'GEMINI_API_KEY is not set. Selena can show her state and answer from the record, but she cannot read the web, and she will not invent a finding in place of reading one.';
+      llmError = keys.GEMINI_API_KEY?.unreadable
+        ? 'A Gemini key is stored but cannot be decrypted — SESSION_SECRET has changed since it was saved. Paste it again on the Settings page.'
+        : 'No Gemini key is set. Selena can show her state and answer from the record, but she cannot read the web, and she will not invent a finding in place of reading one. Paste one on the Settings page or set GEMINI_API_KEY.';
     }
   } catch (err) {
     llmError = err.message;
   }
 
   const ledger = createLedger({ now });
-  const etsy = createEtsy({ apiKey: env.ETSY_API_KEY ?? null, ledger, fetchImpl });
+  const etsy = createEtsy({ apiKey: keyOf('ETSY_API_KEY'), ledger, fetchImpl });
   // Hacker News and Stack Exchange need no key, so they are always available.
   // They give asks, never proof of payment, and the ladder knows the difference.
   const community = createCommunity({ fetchImpl });
@@ -81,6 +94,7 @@ export async function createContext({
     now,
     fetchImpl,
     env,
+    keys,
     capUsd,
     /** Written into the activity feed by the pipeline as it goes. */
     onEvent: async (event) => {
@@ -98,7 +112,8 @@ export function contextStatus(ctx) {
   return {
     store: { kind: ctx.store.kind, durable: ctx.store.durable, note: ctx.store.note ?? null, degraded: Boolean(ctx.store.degraded) },
     model: { configured: Boolean(ctx.llm), error: ctx.llmError },
-    etsy: { configured: ctx.etsy.available },
+    etsy: { configured: ctx.etsy.available, keySource: ctx.keys?.ETSY_API_KEY?.source ?? null },
+    keySources: Object.fromEntries(Object.entries(ctx.keys ?? {}).map(([k, v]) => [k, v.source])),
     community: { configured: Boolean(ctx.community) },
     capUsd: ctx.capUsd,
   };

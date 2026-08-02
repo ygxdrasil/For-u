@@ -182,6 +182,6 @@ export default guard(async function handler(req, res) {
       elapsedMs: r.elapsedMs,
     })),
 
-    sources: sourceStatus(),
+    sources: sourceStatus(process.env, ctx.keys),
   });
 });

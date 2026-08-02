@@ -22,6 +22,7 @@
  */
 
 import { json, methodGuard, readBody, guard } from '../core/http.js';
+import { keyStatus, setKey, clearKey, MANAGED_KEYS } from '../core/keys.js';
 import { createStore } from '../core/store.js';
 import { extractToken, authenticateAdmin, rotateToken, retireToken, listTokens } from '../core/auth.js';
 import crypto from 'node:crypto';
@@ -45,6 +46,77 @@ import {
   clearFailures,
   WeakPasswordError,
 } from '../core/password.js';
+
+/** Status only. This function is the reason a key value can never leak. */
+async function keysFor(store) {
+  return keyStatus(store, process.env, await getSessionSecret(store).catch(() => null));
+}
+
+/**
+ * Prove a pasted key before trusting it.
+ *
+ * One read-only call to the service it belongs to, made with the value you
+ * just typed and BEFORE it is stored. A key that is going to 403 should do it
+ * while you are looking at the box, not silently in a sweep next Tuesday.
+ *
+ * Etsy is the reason this exists: it refuses a keystring on its own with
+ * "Shared secret is required in x-api-key header", and pasting only the
+ * keystring is the obvious mistake to make from their dashboard, which shows
+ * the two in separate columns.
+ */
+async function probeKey(name, value, store) {
+  if (!value) return { ok: false, verdict: 'nothing to test', detail: 'Paste the key first.' };
+  const timeout = AbortSignal.timeout(12_000);
+
+  try {
+    if (name === 'ETSY_API_KEY') {
+      const res = await fetch('https://openapi.etsy.com/v3/application/listings/active?keywords=test&limit=1', {
+        headers: { 'x-api-key': value, accept: 'application/json' },
+        signal: timeout,
+      });
+      const body = await res.text();
+      if (res.ok) {
+        let count = null;
+        try {
+          count = JSON.parse(body)?.count ?? null;
+        } catch {
+          /* the status is the answer; the count is a bonus */
+        }
+        return { ok: true, verdict: 'working', detail: count === null ? 'Etsy accepted it.' : `Etsy accepted it — ${count} listings matched a test search.` };
+      }
+      return {
+        ok: false,
+        verdict: res.status === 403 ? 'Etsy refused it' : `Etsy answered ${res.status}`,
+        detail: /shared secret/i.test(body)
+          ? 'Etsy needs BOTH halves, joined by a colon: keystring:shared_secret. The dashboard shows them in separate columns.'
+          : body.slice(0, 220),
+      };
+    }
+
+    if (name === 'GEMINI_API_KEY') {
+      // Listing models costs nothing and needs no tokens, so a test never
+      // shows up on the bill.
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(value)}`, { signal: timeout });
+      const body = await res.text();
+      if (res.ok) return { ok: true, verdict: 'working', detail: 'Google accepted it. Listing models costs nothing, so this test is free.' };
+      return { ok: false, verdict: `Google answered ${res.status}`, detail: body.slice(0, 220) };
+    }
+
+    if (name === 'JASON_TOKEN') {
+      // There is nothing to call it against from here without also knowing
+      // where he lives, and saying "looks fine" would be a guess.
+      return {
+        ok: null,
+        verdict: 'cannot be tested from here',
+        detail: 'A token only means anything against an endpoint. Press Test on the Connections page instead — that sends one real line to Jason and shows what he said.',
+      };
+    }
+  } catch (err) {
+    return { ok: false, verdict: err.name === 'TimeoutError' ? 'no answer in 12 seconds' : 'could not reach the service', detail: err.message };
+  }
+
+  return { ok: null, verdict: 'no test available', detail: null };
+}
 
 function bootstrapMatches(req) {
   const expected = process.env.SELENA_TOKEN;
@@ -89,6 +161,9 @@ export default guard(async function handler(req, res) {
       minPasswordLength: MIN_PASSWORD_LENGTH,
       sessionDays: SESSION_MAX_AGE_DAYS,
       storeNote: store.durable ? null : store.note,
+      // Which keys are set and where each came from. Never a value — only
+      // whether, from where, and the last four characters.
+      keys: signedIn ? await keysFor(store) : undefined,
     });
   }
 
@@ -202,6 +277,46 @@ export default guard(async function handler(req, res) {
   // ---- Jason's bearer tokens --------------------------------------------
   // Always the bootstrap token, even when signed in and even in open mode: an
   // API that can mint its own credentials is not protected, it is decorative.
+  // ---- keys you paste rather than deploy ---------------------------------
+  // Behind the session, not behind the bootstrap token: pasting a key is a
+  // thing the owner does from the page they are already signed in to. Reading
+  // one back is impossible by design, so a session is the right bar.
+  if (action === 'set-key' || action === 'clear-key' || action === 'test-key') {
+    if (!signedIn) {
+      return json(res, 401, { ok: false, error: 'Sign in first — keys are managed from the Settings page.' });
+    }
+
+    const name = String(body.name ?? '').trim().toUpperCase();
+    if (!MANAGED_KEYS[name]) {
+      return json(res, 400, { ok: false, error: `"${name}" is not a key Selena manages. Use one of: ${Object.keys(MANAGED_KEYS).join(', ')}.` });
+    }
+    if (process.env[name] && action !== 'test-key') {
+      // Storing one that the environment overrides would look like it worked
+      // and change nothing, which is the worst kind of setting.
+      return json(res, 409, {
+        ok: false,
+        error: `${name} is set in the environment, which always wins. Remove it there first, or change it there instead — a key stored here would be ignored.`,
+      });
+    }
+
+    if (action === 'clear-key') {
+      await clearKey(store, name);
+      await store.addActivity({ kind: 'auth', level: 'info', message: `${name} was cleared` });
+      return json(res, 200, { ok: true, keys: await keysFor(store) });
+    }
+
+    if (action === 'test-key') {
+      const result = await probeKey(name, String(body.value ?? '').trim(), store);
+      return json(res, 200, { ok: true, result });
+    }
+
+    const secret = await getSessionSecret(store);
+    const saved = await setKey(store, name, body.value, secret);
+    if (!saved.ok) return json(res, 400, saved);
+    await store.addActivity({ kind: 'auth', level: 'info', message: `${name} was set (${saved.fingerprint})` });
+    return json(res, 201, { ok: true, ...saved, keys: await keysFor(store) });
+  }
+
   if (action === 'mint-token' || action === 'retire-token' || action === 'list-tokens') {
     const admin = authenticateAdmin(req);
     if (!admin.ok) return json(res, 401, { ok: false, error: admin.error });

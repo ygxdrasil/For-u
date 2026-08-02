@@ -145,6 +145,8 @@ export default function Settings({ data, auth, refreshAuth }) {
           </details>
         </div>
 
+        <Keys auth={auth} refreshAuth={refreshAuth} />
+
         <div className="card">
           <h3>Server configuration</h3>
           <div className="list">
@@ -259,5 +261,125 @@ Authorization: Bearer <token>`}
         </pre>
       </div>
     </>
+  );
+}
+
+/**
+ * Keys you can paste, instead of keys you have to redeploy for.
+ *
+ * Getting an Etsy keystring approved and then having to open a dashboard, add
+ * an environment variable and wait for a rebuild is three steps too many, and
+ * none of them happens where you are standing when the key arrives.
+ *
+ * Three rules, all visible on screen:
+ *   - the environment always wins, and says so when it does
+ *   - a value goes in and never comes back; only the last four characters do
+ *   - Test makes a real call to the real service before you save, because a
+ *     403 next Tuesday is a terrible way to find out you pasted half of it
+ */
+function Keys({ auth, refreshAuth }) {
+  const [values, setValues] = useState({});
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null);
+  const [results, setResults] = useState({});
+
+  const keys = auth?.keys ?? [];
+  if (!keys.length) return null;
+
+  const act = async (action, name, extra = {}) => {
+    setBusy(name + action);
+    setError(null);
+    const res = await api.keyAction(action, { name, ...extra });
+    setBusy(null);
+    if (!res.ok) return setError(res.error);
+    if (res.data.result) setResults({ ...results, [name]: res.data.result });
+    else {
+      setResults({ ...results, [name]: null });
+      setValues({ ...values, [name]: '' });
+      await refreshAuth?.();
+    }
+  };
+
+  return (
+    <div className="card">
+      <h3>Keys</h3>
+      <p className="small muted" style={{ marginTop: -4 }}>
+        Paste a key here and she uses it on the next run — no redeploy. Anything set in the environment wins over
+        anything typed here, and says so. Values are encrypted before they are stored and never sent back to this page.
+      </p>
+
+      {error ? <p className="small" style={{ color: 'var(--warn)' }}>{error}</p> : null}
+
+      {keys.map((k) => {
+        const fromEnv = k.source === 'environment';
+        const result = results[k.name];
+        return (
+          <div className="peer" key={k.name} style={{ marginTop: 10 }}>
+            <div className="top">
+              <span>
+                <span className="name">{k.label}</span>{' '}
+                {k.set ? <Pill tone="ok">set</Pill> : <Pill tone="warn">not set</Pill>}{' '}
+                {k.source ? <Pill>{fromEnv ? 'from the environment' : 'pasted here'}</Pill> : null}{' '}
+                {k.fingerprint ? <span className="mono small muted">{k.fingerprint}</span> : null}
+              </span>
+              {k.set && !fromEnv ? (
+                <button className="small" onClick={() => act('clear', k.name)} disabled={busy === k.name + 'clear'}>
+                  Forget it
+                </button>
+              ) : null}
+            </div>
+
+            <div className="small" style={{ marginTop: 4 }}>{k.why}</div>
+
+            {k.alsoStored ? (
+              <div className="small" style={{ color: 'var(--warn)', marginTop: 6 }}>
+                There is also one stored here, and it is being ignored — the environment wins. Remove {k.name} there if
+                you meant to use the pasted one.
+              </div>
+            ) : null}
+
+            {fromEnv ? (
+              <div className="small muted" style={{ marginTop: 6 }}>
+                Set as <code className="mono">{k.name}</code> in the environment. Change it there.
+              </div>
+            ) : (
+              <>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <div className="field" style={{ flex: 2 }}>
+                    <label>{k.format}</label>
+                    <input
+                      type="password"
+                      value={values[k.name] ?? ''}
+                      placeholder={k.hint}
+                      onChange={(e) => setValues({ ...values, [k.name]: e.target.value })}
+                      spellCheck="false"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <button onClick={() => act('test', k.name, { value: (values[k.name] ?? '').trim() })} disabled={busy || !(values[k.name] ?? '').trim()}>
+                    {busy === k.name + 'test' ? 'Checking…' : 'Test it'}
+                  </button>
+                  <button className="primary" onClick={() => act('set', k.name, { value: (values[k.name] ?? '').trim() })} disabled={busy || !(values[k.name] ?? '').trim()}>
+                    {busy === k.name + 'set' ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+                {k.where ? (
+                  <div className="small muted">
+                    Get one at <code className="mono">{k.where}</code>
+                  </div>
+                ) : null}
+              </>
+            )}
+
+            {result ? (
+              <div className="verdict" style={{ marginTop: 8 }}>
+                <Pill tone={result.ok === true ? 'ok' : result.ok === false ? 'warn' : ''}>{result.verdict}</Pill>{' '}
+                {result.detail ? <span className="small">{result.detail}</span> : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
