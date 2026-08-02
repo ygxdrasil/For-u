@@ -139,14 +139,22 @@ test('a REST source is read, and its posts land in the ledger', async () => {
   );
   const connector = await getConnector(store, added.connector.id, SECRET);
 
-  const read = [];
-  const ledger = { read: (url) => read.push(url) };
+  // The REAL ledger, not a double. A hand-made stub with a read() method is
+  // what let ledger.read() ship and throw on every live run while every test
+  // passed — the same mistake as a database driver double that accepted a
+  // call shape the real driver refuses. Use the real thing.
+  const { createLedger } = await import('../core/ledger.js');
+  const ledger = createLedger({});
   const outcome = await readConnector(connector, 'invoice chasing', { secret: SECRET, fetchImpl, ledger });
 
   assert.equal(outcome.ok, true);
   assert.equal(outcome.asks.length, 1);
   assert.equal(outcome.asks[0].source, 'trade forum');
-  assert.deepEqual(read, ['https://forum.example.com/t/9'], 'what she read must be recorded, or claims citing it get deleted');
+  assert.deepEqual(
+    ledger.citable().map((e) => e.url),
+    ['https://forum.example.com/t/9'],
+    'what she read must be in the ledger, or claims citing it get deleted',
+  );
 
   // The term is substituted and encoded, and the key rides in the header.
   assert.equal(calls[0].url, 'https://forum.example.com/api?q=invoice%20chasing');
@@ -544,4 +552,36 @@ test('a per-run ceiling on sources is reported, never silent', async () => {
   // A source that was never asked has not failed. Counting it as one would
   // read as "3 of your sources are broken".
   assert.equal(out.read, 3, 'skipped is not the same as failed');
+});
+
+test('sources on one host are read one at a time; different hosts run together', async () => {
+  // Nine sources read strictly in series measured 17.9 seconds — a third of a
+  // serverless budget spent waiting, with later sources cut off by the
+  // deadline. The gap exists so one server is not hammered, not so the run is
+  // slow, so it applies within a host and not across them.
+  const store = freshStore();
+  for (let i = 0; i < 3; i += 1) await addConnector(store, { kind: 'rest', name: `apple${i}`, url: `https://itunes.apple.com/feed${i}?q={query}` }, SECRET);
+  for (let i = 0; i < 3; i += 1) await addConnector(store, { kind: 'rest', name: `other${i}`, url: `https://host${i}.example.com/api?q={query}` }, SECRET);
+
+  const inFlight = {};
+  const fetchImpl = async (url) => {
+    const host = new URL(url).host;
+    inFlight[host] = (inFlight[host] ?? 0) + 1;
+    assert.ok(inFlight[host] <= 1, `${host} had ${inFlight[host]} requests in flight at once`);
+    try {
+      await new Promise((r) => setTimeout(r, 30));
+      return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+    } finally {
+      inFlight[host] -= 1;
+    }
+  };
+
+  const started = Date.now();
+  const out = await gatherFromConnectors(store, 'x', { secret: SECRET, fetchImpl, gapMs: 40 });
+  const elapsed = Date.now() - started;
+
+  assert.equal(out.attempted, 6);
+  // In series that is six requests plus six gaps, over 400ms. Grouped by host
+  // it is three chains of one running alongside one chain of three.
+  assert.ok(elapsed < 400, `took ${elapsed}ms — the host groups are not running together`);
 });

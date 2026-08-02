@@ -580,7 +580,11 @@ export async function readConnector(connector, query, { secret, fetchImpl = glob
       }
       const payload = payloadFromToolResult(called.result);
       const mapped = mapItems(payload, connector.map, { source: connector.name });
-      if (ledger) for (const a of mapped.asks) ledger.read(a.url, { via: `connector:${connector.name}` });
+      // record(), not read(). The real ledger has no read() — a test double
+      // that accepted one meant every connected source threw in a live run
+      // while passing every test. The same class of bug as the database driver
+      // that only failed on first contact with a real connection.
+      if (ledger) for (const a of mapped.asks) ledger.record({ url: a.url, status: 200, via: 'direct-fetch', title: a.title, domain: null });
       return { ok: true, asks: mapped.asks, seen: mapped.seen, missingUrl: mapped.missingUrl, dialect: called.dialect };
     }
 
@@ -634,7 +638,7 @@ export async function readConnector(connector, query, { secret, fetchImpl = glob
       };
     }
     const mapped = mapItems(payload, connector.map, { source: connector.name });
-    if (ledger) for (const a of mapped.asks) ledger.read(a.url, { via: `connector:${connector.name}` });
+    if (ledger) for (const a of mapped.asks) ledger.record({ url: a.url, status: 200, via: 'direct-fetch', title: a.title, domain: null });
     return { ok: true, asks: mapped.asks, seen: mapped.seen, missingUrl: mapped.missingUrl, status: res.status };
   } catch (err) {
     return { ok: false, asks: [], detail: err.name === 'TimeoutError' ? `no answer within ${Math.round(timeoutMs / 1000)}s` : err.message };
@@ -721,17 +725,57 @@ export async function gatherFromConnectors(store, query, { secret, fetchImpl = g
     });
   }
 
+  /**
+   * By host, in parallel; within a host, one at a time with a gap.
+   *
+   * Nine sources read strictly one after another measured 17.9 seconds — a
+   * third of a serverless function's whole budget spent waiting on other
+   * people's servers, and enough that later sources were being cut off by the
+   * deadline rather than read. They are nine DIFFERENT hosts, so waiting for
+   * each before starting the next buys politeness nobody asked for.
+   *
+   * Two hosts are never hit at once from this loop, which is the part that
+   * actually matters: the gap exists so one server is not hammered, not so
+   * the run is slow.
+   */
+  const byHost = new Map();
   for (const connector of live) {
-    if (deadline?.tooLateFor(6_000)) {
-      failures.push({ name: connector.name, detail: 'skipped — not enough time left in this run' });
-      continue;
+    let host;
+    try {
+      host = new URL(connector.url).host;
+    } catch {
+      host = connector.id;
     }
-    attempted += 1;
-    // Straight from the store, so the token is still sealed.
-    const outcome = await readConnector({ ...connector, sealed: true }, query, { secret, fetchImpl, ledger });
-    if (outcome.ok) asks.push(...outcome.asks);
-    else failures.push({ name: connector.name, detail: outcome.detail, status: outcome.status ?? null });
-    if (gapMs) await new Promise((r) => setTimeout(r, gapMs));
+    if (!byHost.has(host)) byHost.set(host, []);
+    byHost.get(host).push(connector);
+  }
+
+  const results = await Promise.all(
+    [...byHost.values()].map(async (group) => {
+      const out = { asks: [], failures: [], attempted: 0 };
+      for (const connector of group) {
+        if (deadline?.tooLateFor(6_000)) {
+          out.failures.push({ name: connector.name, detail: 'skipped — not enough time left in this run', skipped: true });
+          continue;
+        }
+        out.attempted += 1;
+        // Straight from the store, so the token is still sealed.
+        const outcome = await readConnector({ ...connector, sealed: true }, query, { secret, fetchImpl, ledger });
+        if (outcome.ok) out.asks.push(...outcome.asks);
+        else out.failures.push({ name: connector.name, detail: outcome.detail, status: outcome.status ?? null });
+        // Only worth waiting when this host has another request coming.
+        if (gapMs && group.length > 1) await new Promise((r) => setTimeout(r, gapMs));
+      }
+      return out;
+    }),
+  );
+
+  for (const r of results) {
+    asks.push(...r.asks);
+    // A source skipped for lack of time has not failed either; it belongs with
+    // the notices so "read 6 of 9" does not read as six broken sources.
+    for (const f of r.failures) (f.skipped ? notices : failures).push(f);
+    attempted += r.attempted;
   }
 
   // `failures` are sources that were asked and did not answer. `notices` are

@@ -65,10 +65,6 @@ export async function createContext({
       const secret = await getSessionSecret(store, env);
       return gatherFromConnectors(store, query, { secret, fetchImpl, ledger: withLedger, deadline });
     },
-    async count() {
-      const { listConnectors } = await import('./connectors.js');
-      return (await listConnectors(store)).filter((c) => c.enabled !== false).length;
-    },
   };
 
   return {
