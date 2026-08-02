@@ -1063,6 +1063,52 @@ await check('commissioning research needs a yes, like anything else that spends'
   } finally { globalThis.fetch = realFetch; }
 });
 
+await check('the dashboard hands back the conversation it was asked for', async () => {
+  const { createStore, resetStoreCache } = await import('../core/store.js');
+  const { setupPassword, sessionSecret } = await import('../core/settings.js');
+  const { issueSession, sessionCookie } = await import('../core/secrets.js');
+  process.env.ALLOW_MEMORY_AUTH = '1';
+  resetStoreCache();
+  const store = await createStore({ databaseUrl: null });
+  await setupPassword(store, 'stress-test-password');
+  const cookie = sessionCookie(issueSession(await sessionSecret(store))).split(';')[0];
+
+  await store.saveSession({
+    id: 'kept',
+    messages: [
+      { role: 'user', parts: [{ text: 'build the lead pipeline' }] },
+      { role: 'model', parts: [{ functionCall: { name: 'search_nodes', args: {} } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'search_nodes', response: { ok: true } } }] },
+      { role: 'model', parts: [{ text: 'Built it and tested it.' }] },
+    ],
+  });
+
+  const handler = (await import('../api/dashboard.js')).default;
+  const chunks = [];
+  const res = {
+    statusCode: 0, headers: {},
+    setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
+    end(c) { if (c) chunks.push(String(c)); this.text = chunks.join(''); },
+    get body() { try { return JSON.parse(this.text ?? ''); } catch { return null; } },
+  };
+  await handler({ method: 'GET', url: '/api/dashboard?sessionId=kept', headers: { cookie } }, res);
+
+  assert.equal(res.statusCode, 200, res.text?.slice(0, 120));
+  const said = res.body.sections.conversation.data;
+  assert.equal(said.length, 2, `expected the two spoken turns, got ${JSON.stringify(said)}`);
+  assert.deepEqual(said.map((m) => m.role), ['user', 'jason']);
+  // Tool machinery is not replayed as dialogue.
+  assert.doesNotMatch(JSON.stringify(said), /functionCall|functionResponse|search_nodes/);
+
+  const none = { ...res, text: null };
+  const res2 = { ...res, statusCode: 0, text: null };
+  const chunks2 = [];
+  res2.end = (c) => { if (c) chunks2.push(String(c)); res2.text = chunks2.join(''); };
+  Object.defineProperty(res2, 'body', { get() { try { return JSON.parse(res2.text ?? ''); } catch { return null; } } });
+  await handler({ method: 'GET', url: '/api/dashboard', headers: { cookie } }, res2);
+  assert.equal(res2.body.sections.conversation.data, null, 'it returned a conversation nobody asked for');
+});
+
 await check('a minted token works once and is never shown again', async () => {
   const { createStore } = await import('../core/store.js');
   process.env.AGENT_TOKEN = 'stress-agent-token';

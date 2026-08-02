@@ -444,6 +444,68 @@ export function buildToolRegistry(ctx) {
     },
 
     {
+      name: 'resolve_finding',
+      say: () => 'marking that one as dealt with',
+      description:
+        'Mark an open finding as resolved, once the workflow it refers to has actually run successfully. Requires the id of a SUCCESSFUL execution as evidence — you may not close a finding because you believe you fixed it, only because you watched it work.',
+      parameters: {
+        type: 'object',
+        properties: {
+          findingId: { type: 'string' },
+          executionId: { type: 'string', description: 'A successful execution of the same workflow, read back from n8n.' },
+        },
+        required: ['findingId', 'executionId'],
+      },
+      handler: async ({ findingId, executionId }) => {
+        // Named plainly, before anything can interpolate "undefined" into a
+        // sentence and hand back an error nobody can act on.
+        if (!findingId) return fail('Which finding? Send the id from the list of what needs a look.');
+        if (!executionId) return fail('Which execution proves it works? I do not close anything without one.');
+        if (!n8n) return needsN8n();
+
+        // The same rule as every other success sentence in this system: an
+        // execution, read back, or no claim. Believing it is fixed is not
+        // evidence that it is.
+        let execution;
+        try {
+          execution = await n8n.getExecution(executionId);
+        } catch (e) {
+          return fail(`Could not read execution ${executionId}, so I cannot close anything on the strength of it: ${e.message}`);
+        }
+
+        const assessment = assessExecution({ execution });
+        if (assessment.verdict !== 'worked') {
+          return fail(
+            `Execution ${executionId} is "${assessment.verdict}", not a success, so it is not evidence that this is fixed. ${assessment.detail}`,
+            { assessment },
+          );
+        }
+
+        const open = await store.listFindings({ status: 'open' });
+        const finding = open.find((f) => f.id === findingId);
+        if (!finding) return fail(`No open finding with id ${findingId}.`);
+
+        if (finding.workflowId && execution.workflowId && String(finding.workflowId) !== String(execution.workflowId)) {
+          return fail(
+            `That execution belongs to workflow ${execution.workflowId}, but the finding is about ${finding.workflowId}. A success somewhere else is not evidence about this.`,
+          );
+        }
+
+        const updated = await store.updateFinding(findingId, {
+          status: 'resolved',
+          resolvedAt: new Date().toISOString(),
+          resolvedBy: `execution ${executionId}`,
+        });
+
+        return ok({
+          finding: updated,
+          evidence: assessment.evidence,
+          note: `Closed on the evidence of execution ${executionId}. The record is kept and can be reopened.`,
+        });
+      },
+    },
+
+    {
       name: 'list_snapshots',
       say: () => 'looking at earlier versions',
       description: 'List saved snapshots of previous workflow versions, so a change can be reviewed or rolled back.',

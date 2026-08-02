@@ -39,11 +39,21 @@ export default async function handler(req, res) {
   const session = await requireSession(req, store, res);
   if (!session.ok) return json(res, 401, { ok: false, error: session.error });
 
+  // The conversation on screen belongs to the same authenticated read as
+  // everything else it shows. Without this a refresh leaves the page blank
+  // while he still remembers, which reads as him having forgotten.
+  const askedFor = (() => {
+    try { return new URL(req.url, 'http://local').searchParams.get('sessionId'); } catch { return null; }
+  })();
+
   const config = await resolveConfig(req, store);
   const prefs = await loadPrefs(store);
   const n8n = config.n8nBaseUrl && config.n8nApiKey ? createN8nClient({ baseUrl: config.n8nBaseUrl, apiKey: config.n8nApiKey }) : null;
 
-  const [settings, workflows, executions, findings, spend, snapshots] = await Promise.all([
+  // Gathered by NAME, not by position. Inserting a section into a positional
+  // destructure silently shifts every later one — spend quietly held the
+  // conversation, and nothing about the response looked wrong.
+  const gathered = await Promise.all([
     section('settings', () => describeServerConfig(store)),
 
     section('workflows', async () => {
@@ -80,6 +90,17 @@ export default async function handler(req, res) {
     }),
 
     section('findings', () => store.listFindings({ status: 'open' })),
+
+    section('conversation', async () => {
+      if (!askedFor) return null;
+      const stored = await store.getSession(askedFor);
+      // Only the spoken turns. Tool calls and their results are machinery: they
+      // belong in the terminal while they happen, not replayed as dialogue.
+      return (stored?.messages ?? [])
+        .map((m) => ({ role: m.role === 'model' ? 'jason' : 'user', text: (m.parts ?? []).map((p) => p.text).filter(Boolean).join('\n') }))
+        .filter((m) => m.text.trim())
+        .slice(-24);
+    }),
     section('spend', async () => ({
       monthToDateUsd: await store.getMonthlySpend(),
       capUsd: Number(config.monthlyCapUsd ?? 8),
@@ -88,6 +109,9 @@ export default async function handler(req, res) {
     })),
     section('snapshots', () => store.listSnapshots(null)),
   ]);
+
+  const sections = Object.fromEntries(gathered.map((s) => [s.name, s]));
+  const { settings, workflows, executions, spend } = sections;
 
   // Jason's own vitals. This is how a stale deploy or a drifted node index gets
   // caught before it produces a confidently wrong answer, rather than after.
@@ -121,14 +145,7 @@ export default async function handler(req, res) {
       encryption: settings.data?.encryption ?? null,
       n8n: { configured: Boolean(n8n), reachable: reachability.data?.reachable ?? false, authorised: reachability.data?.authorised ?? null, error: reachability.error ?? reachability.data?.error ?? null },
     },
-    sections: {
-      settings,
-      workflows,
-      executions,
-      findings,
-      spend,
-      snapshots,
-    },
+    sections,
   });
 }
 

@@ -195,7 +195,24 @@ function Jason({ onSignOut }) {
   // Held in a ref as well as state: the 'done' frame needs the latest drawing
   // synchronously, and reading state there would capture a stale closure.
   const lastCanvas = useRef(null);
-  const sessionId = useRef(`s_${Math.random().toString(36).slice(2)}`);
+  // Kept across reloads. Regenerated on every page load, a refresh — or a phone
+  // evicting the tab — started a brand new conversation, so he lost everything
+  // you were in the middle of and the old one was orphaned server-side. It read
+  // as him being forgetful; it was the page throwing the thread away.
+  const sessionId = useRef(
+    (() => {
+      try {
+        const kept = localStorage.getItem('jason.session');
+        if (kept) return kept;
+        const fresh = `s_${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem('jason.session', fresh);
+        return fresh;
+      } catch {
+        return `s_${Math.random().toString(36).slice(2)}`;
+      }
+    })(),
+  );
+  const restored = useRef(false);
 
   const prefs = data?.sections?.settings?.data?.prefs;
   const n8nBaseUrl = data?.sections?.settings?.data?.n8nBaseUrl ?? null;
@@ -203,7 +220,11 @@ function Jason({ onSignOut }) {
   const [signedOut, setSignedOut] = useState(false);
 
   const refresh = useCallback(() => {
-    fetch('/api/dashboard')
+    // The conversation is only wanted once, to put the screen back after a
+    // reload. Asking for it on every poll would read it out of the database
+    // twice a minute forever and throw it away each time.
+    const wantConversation = !restored.current;
+    fetch(`/api/dashboard${wantConversation ? `?sessionId=${encodeURIComponent(sessionId.current)}` : ''}`)
       .then(async (r) => {
         // A poll that quietly fails leaves the numbers on screen looking
         // current when nobody is reading them any more.
@@ -211,7 +232,22 @@ function Jason({ onSignOut }) {
         setSignedOut(false);
         return r.json();
       })
-      .then((d) => { if (d?.ok) { setData(d); setCheckedAt(new Date().toISOString()); } })
+      .then((d) => {
+        if (!d?.ok) return;
+        setData(d);
+        setCheckedAt(new Date().toISOString());
+
+        // Once, on the first read: put back what was said before the reload, so
+        // the screen agrees with what he remembers. Never on later polls, which
+        // would trample a conversation in flight.
+        if (!restored.current) {
+          restored.current = true;
+          const prior = d.sections?.conversation?.data;
+          if (Array.isArray(prior) && prior.length) {
+            setMessages((current) => (current.length ? current : prior.map((m) => ({ ...m, restored: true }))));
+          }
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -382,6 +418,19 @@ function Jason({ onSignOut }) {
     { label: folded ? 'Show panel' : 'Hide panel', hint: 'panel', run: () => setFolded((f) => !f) },
     ...wf.map((w) => ({ label: `Open ${w.name} in n8n`, hint: 'n8n', run: () => openInN8n(w.id) })),
     ...wf.map((w) => ({ label: `Edit ${w.name} here`, hint: 'terminal', run: () => loadIntoTerminal(w.id) })),
+    {
+      label: 'Start a new conversation',
+      hint: 'chat',
+      run: () => {
+        const fresh = `s_${Math.random().toString(36).slice(2)}`;
+        try { localStorage.setItem('jason.session', fresh); } catch { /* private mode */ }
+        sessionId.current = fresh;
+        restored.current = true;
+        setMessages([]);
+        setCanvas(null);
+        setCalls([]);
+      },
+    },
     { label: 'Sign out', hint: '', run: onSignOut },
   ], [wf, folded, n8nBaseUrl]);
 
@@ -467,7 +516,7 @@ function Jason({ onSignOut }) {
           <div className="panel-body">
             {section === 'overview' && <Overview data={data} />}
             {section === 'workflows' && <Workflows data={data} onOpen={openInN8n} onEdit={loadIntoTerminal} canOpen={Boolean(n8nBaseUrl)} />}
-            {section === 'broke' && <Broke findings={findings} />}
+            {section === 'broke' && <Broke findings={findings} onChanged={refresh} />}
             {section === 'memory' && <Memory />}
             {section === 'settings' && <Settings onSaved={refresh} />}
           </div>
@@ -1008,10 +1057,21 @@ const Workflows = ({ data, onOpen, onEdit, canOpen }) => {
   );
 };
 
-const Broke = ({ findings }) =>
-  !findings.length ? (
-    <div className="empty">Nothing has failed since the last check. That's what I know — not a promise everything ran.</div>
-  ) : (
+const Broke = ({ findings, onChanged }) => {
+  const [busy, setBusy] = useState(null);
+
+  const resolve = async (id) => {
+    setBusy(id);
+    const r = await post('/api/findings', { action: 'resolve', id });
+    setBusy(null);
+    if (r.ok) onChanged?.();
+  };
+
+  if (!findings.length) {
+    return <div className="empty">Nothing has failed since the last check. That's what I know — not a promise everything ran.</div>;
+  }
+
+  return (
     <>
       {findings.map((f) => (
         <div className="item" key={f.id}>
@@ -1021,10 +1081,20 @@ const Broke = ({ findings }) =>
             <span className="when">{ago(f.at)}</span>
           </div>
           <div className="meta">{f.failingNode ?? 'unknown step'} — {f.error ?? 'no message'}</div>
+          <div className="row" style={{ marginTop: 6 }}>
+            {/* Without this the count only ever went up: you could fix the
+                workflow, watch it run clean, and still be told it needed a
+                look. Marking it dealt with keeps the record — it is a status,
+                not an erasure. */}
+            <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} disabled={busy === f.id} onClick={() => resolve(f.id)}>
+              {busy === f.id ? '…' : 'Dealt with'}
+            </button>
+          </div>
         </div>
       ))}
     </>
   );
+};
 
 function Vitals({ vitals }) {
   const [more, setMore] = useState(false);
