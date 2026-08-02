@@ -931,6 +931,59 @@ await check('a peer that cannot be reached is reported as a question, not a tick
   }
 });
 
+await check('a question reaches a peer that expects "question", not "text"', async () => {
+  // Selena's /api/ask reads body.question ?? body.q. Jason sent only { text },
+  // so the question arrived empty and came back as a 400 that read like a
+  // broken peer rather than two AIs using different words for the same thing.
+  const { savePeer, askPeer } = await import('../core/peers.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/api/ask', protocol: 'json', token: 'sel_abc' });
+
+  let received = null;
+  const res = await askPeer(store, {
+    question: 'what counts as a qualified lead?',
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      received = body;
+      // Her actual contract, verbatim.
+      const question = String(body.question ?? body.q ?? '').trim();
+      if (!question) return new Response(JSON.stringify({ ok: false, error: 'Send { "question": "..." }.' }), { status: 400 });
+      return new Response(JSON.stringify({ ok: true, route: 'stored', question, answer: 'Budget over 10k and a named decision maker.', confidence: 'high' }), { status: 200 });
+    },
+  });
+
+  assert.equal(res.ok, true, `she refused it: ${res.error}`);
+  assert.match(res.answer, /Budget over 10k/, 'her answer did not come back');
+  assert.ok(received.question, 'the question was not sent under the name she reads');
+});
+
+await check('a wrong address is explained rather than reported as a number', async () => {
+  const { savePeer, askPeer } = await import('../core/peers.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/', protocol: 'json' });
+
+  const res = await askPeer(store, {
+    question: 'anything',
+    fetchImpl: async () => new Response('Method Not Allowed', { status: 405 }),
+  });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /wrong path/i, 'a 405 was reported without saying what it means');
+});
+
+await check('a peer that answers "I do not know" is a refusal, never knowledge', async () => {
+  const { savePeer, askPeer } = await import('../core/peers.js');
+  const store = createMemoryStore();
+  await savePeer(store, { name: 'selena', url: 'https://selena.invalid/api/ask', protocol: 'json' });
+
+  // Her 422: a real answer, but not a confident one.
+  const res = await askPeer(store, {
+    question: 'what should the threshold be?',
+    fetchImpl: async () => new Response(JSON.stringify({ ok: false, answer: 'I could not establish that.', confidence: 'low' }), { status: 422 }),
+  });
+  assert.equal(res.ok, false, 'a refusal was passed off as an answer');
+  assert.match(res.error, /could not establish/i, 'her own words were dropped in favour of a status code');
+});
+
 await check('a minted token works once and is never shown again', async () => {
   const { createStore } = await import('../core/store.js');
   process.env.AGENT_TOKEN = 'stress-agent-token';
