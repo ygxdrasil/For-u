@@ -1041,3 +1041,71 @@ test('a workflow that will not draw does not stop the work', async () => {
   assert.notEqual(out.status, 'model_error', out.reply);
   assert.ok(['ok', 'continuing'].includes(out.status), `a preview problem produced status ${out.status}: ${out.reply}`);
 });
+
+test('a workflow is created without the one field that blocked creating it', async () => {
+  // "request/body/active is read-only" — n8n refuses `active` on create, and
+  // this client sent it deliberately, to force the workflow inactive. So a
+  // finished, validated, correct workflow could not be saved AT ALL. The intent
+  // survives without the field: n8n creates workflows inactive anyway, and the
+  // read-back proves it rather than the request asserting it.
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const seen = [];
+  // As strict as the real thing: names the offending property and refuses.
+  const strictN8n = async (url, init) => {
+    const path = new URL(url).pathname.replace('/api/v1', '');
+    const method = init?.method ?? 'GET';
+    const reply = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+
+    if (method === 'POST' && path === '/workflows') {
+      const body = JSON.parse(init.body);
+      seen.push(body);
+      for (const readOnly of ['active', 'id', 'createdAt', 'versionId', 'tags', 'isArchived']) {
+        if (readOnly in body) return reply({ message: `request/body/${readOnly} is read-only` }, 400);
+      }
+      return reply({ id: 'new1', ...body, active: false });
+    }
+    return reply({ id: 'new1', name: 'X', active: false, nodes: [], connections: {} });
+  };
+
+  const client = createN8nClient({ baseUrl: 'https://n8n.invalid', apiKey: 'k', fetchImpl: strictN8n });
+
+  // Handed everything a workflow READ BACK FROM n8n carries, which is what an
+  // update is built from and where the read-only fields come from.
+  const out = await client.createWorkflow({
+    id: 'old-id', name: 'Maps → Email Scraper', nodes: [], connections: {}, settings: {},
+    active: true, createdAt: '2026-01-01', versionId: 'v1', tags: [{ id: 't' }], isArchived: true, triggerCount: 0,
+  });
+
+  assert.equal(out.workflow.id, 'new1', 'the workflow was not created');
+  assert.equal(seen.length, 1, 'it took more than one attempt to send an acceptable body');
+  assert.ok(!('active' in seen[0]), 'active was sent, which is the thing n8n refuses');
+  assert.ok(!('id' in seen[0]) && !('versionId' in seen[0]) && !('isArchived' in seen[0]), `read-only fields were sent: ${Object.keys(seen[0])}`);
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['connections', 'name', 'nodes', 'settings']);
+});
+
+test('a field a newer n8n refuses is dropped and the save goes through', async () => {
+  // Which fields are writable varies by n8n version. The error names the
+  // property, so this reads the answer rather than guessing combinations — and
+  // says afterwards what it could not send.
+  const { createN8nClient } = await import('../core/n8nClient.js');
+  const attempts = [];
+  const fussy = async (url, init) => {
+    const method = init?.method ?? 'GET';
+    const reply = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+    if (method === 'POST') {
+      const body = JSON.parse(init.body);
+      attempts.push(Object.keys(body));
+      if ('pinData' in body) return reply({ message: 'request/body/pinData is read-only' }, 400);
+      return reply({ id: 'new1', ...body });
+    }
+    return reply({ id: 'new1', active: false });
+  };
+
+  const client = createN8nClient({ baseUrl: 'https://n8n.invalid', apiKey: 'k', fetchImpl: fussy });
+  const out = await client.createWorkflow({ name: 'X', nodes: [], connections: {}, pinData: { A: [] } });
+
+  assert.equal(out.workflow.id, 'new1', 'a workflow was lost to one unsupported field');
+  assert.equal(attempts.length, 2, 'it did not retry without the field n8n named');
+  assert.deepEqual(out.fieldsNotAccepted, ['pinData'], 'it dropped a field without saying so');
+});

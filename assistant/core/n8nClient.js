@@ -201,10 +201,72 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
   // -------------------------------------------------------------------------
   // writes — each one reads back
 
+  /**
+   * What the n8n API will actually accept in a workflow body.
+   *
+   * It is strict, and it gets stricter between versions: `active` is READ-ONLY
+   * on create, and sending it — which this client did, deliberately, to force a
+   * workflow inactive — is rejected outright:
+   *
+   *   request/body/active is read-only
+   *
+   * So a finished, validated, correct workflow could not be saved at all. The
+   * intent survives without the field: n8n creates workflows inactive anyway,
+   * activation is its own endpoint, and the read-back afterwards proves it
+   * rather than asserting it.
+   *
+   * Everything else that comes back on a GET — id, createdAt, versionId, tags,
+   * isArchived, triggerCount, shared, meta — is read-only too, which matters
+   * because updates are built from a workflow that was READ first.
+   */
+  const WRITABLE = ['name', 'nodes', 'connections', 'settings', 'staticData', 'pinData'];
+
+  const writableOnly = (workflow) => {
+    const payload = {};
+    for (const field of WRITABLE) {
+      if (workflow?.[field] !== undefined) payload[field] = workflow[field];
+    }
+    return payload;
+  };
+
+  /**
+   * Send it; if n8n names a field it will not accept, drop that field and send
+   * it once more.
+   *
+   * This is not guessing at the API — the error says exactly which property is
+   * the problem, so this reads the answer rather than trying combinations. It
+   * exists because "which fields are writable" varies by n8n version, and the
+   * alternative is a workflow that cannot be saved on an instance one release
+   * ahead of whatever was tested.
+   */
+  async function sendWorkflow(method, path, payload) {
+    const dropped = [];
+    let body = payload;
+
+    for (let attempt = 0; attempt < WRITABLE.length + 1; attempt++) {
+      try {
+        return { result: await request(method, path, { body }), dropped };
+      } catch (err) {
+        const complaint = String(err.message ?? '');
+        const named =
+          complaint.match(/request\/body\/([A-Za-z0-9_]+) is read-only/)?.[1] ??
+          complaint.match(/must NOT have additional properties.*?"([A-Za-z0-9_]+)"/)?.[1] ??
+          complaint.match(/property "?([A-Za-z0-9_]+)"? is not allowed/i)?.[1];
+
+        if (!named || !(named in body)) throw err;
+
+        const { [named]: _removed, ...rest } = body;
+        body = rest;
+        dropped.push(named);
+      }
+    }
+    throw new N8nError('n8n rejected every field of this workflow, which should be impossible.', { url: path });
+  }
+
   async function createWorkflow(workflow) {
-    // Always created inactive. Activation is a separate, explicit act.
-    const payload = { ...workflow, active: false };
-    const created = await request('POST', '/workflows', { body: payload });
+    // Created inactive — by not asking for anything else. `active` is read-only
+    // on this endpoint, so stating the intent in the body is what BLOCKED it.
+    const { result: created, dropped } = await sendWorkflow('POST', '/workflows', writableOnly(workflow));
 
     // No id back means we do not know what we just made. Carrying on would
     // send the next request to /workflows/undefined and then report on a
@@ -214,10 +276,18 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     }
 
     const readBack = await getWorkflow(created.id).catch(() => null);
+
+    // Inactive is checked, not assumed. If an instance ever created one live,
+    // that is the one thing here worth knowing immediately.
+    if (readBack?.active === true) {
+      await setActive(created.id, false).catch(() => null);
+    }
+
     return {
       workflow: created,
       confirmed: Boolean(readBack?.id),
       readBack,
+      fieldsNotAccepted: dropped.length ? dropped : undefined,
     };
   }
 
@@ -232,9 +302,15 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
         'updateWorkflow requires a snapshotId. Snapshot the current version before overwriting it — the previous version must always be recoverable.',
       );
     }
-    const updated = await request('PUT', `/workflows/${encodeURIComponent(id)}`, { body: workflow });
+    const { result: updated, dropped } = await sendWorkflow('PUT', `/workflows/${encodeURIComponent(id)}`, writableOnly(workflow));
     const readBack = await getWorkflow(id).catch(() => null);
-    return { workflow: updated, confirmed: Boolean(readBack?.id), readBack, snapshotId };
+    return {
+      workflow: updated,
+      confirmed: Boolean(readBack?.id),
+      readBack,
+      snapshotId,
+      fieldsNotAccepted: dropped.length ? dropped : undefined,
+    };
   }
 
   /**

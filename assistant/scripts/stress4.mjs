@@ -474,13 +474,31 @@ await check('there is still no way to delete anything', async () => {
 });
 
 await check('a workflow is created switched off even when asked for switched on', async () => {
+  // The guarantee is "it ends up off", not "we said off in the body" — saying
+  // it in the body is what n8n rejects outright (active is read-only), and a
+  // test written against the mechanism happily passed while nothing could be
+  // saved at all.
   let sent = null;
   const c = client(async (url, init) => {
-    if (init?.method === 'POST') { sent = JSON.parse(init.body); return jsonResponse({ id: 'new1', ...sent }); }
+    if (init?.method === 'POST') { sent = JSON.parse(init.body); return jsonResponse({ id: 'new1', ...sent, active: false }); }
     return jsonResponse({ id: 'new1', active: false });
   });
   await c.createWorkflow({ name: 'X', nodes: [], connections: {}, active: true });
-  assert.equal(sent.active, false, 'a workflow was created live because the caller asked for it');
+  assert.ok(!('active' in sent), 'active was sent at all, which n8n refuses — read-only on create');
+});
+
+await check('a workflow that somehow comes back live is switched off again', async () => {
+  // The read-back is what makes "created inactive" true rather than assumed.
+  const paths = [];
+  const c = client(async (url, init) => {
+    const path = new URL(url).pathname.replace('/api/v1', '');
+    paths.push(`${init?.method ?? 'GET'} ${path}`);
+    if (init?.method === 'POST' && path === '/workflows') return jsonResponse({ id: 'new1', active: true });
+    if (path === '/workflows/new1/deactivate') return jsonResponse({ id: 'new1', active: false });
+    return jsonResponse({ id: 'new1', active: paths.some((p) => p.includes('deactivate')) ? false : true });
+  });
+  await c.createWorkflow({ name: 'X', nodes: [], connections: {} });
+  assert.ok(paths.some((p) => p.includes('deactivate')), 'a workflow that came back live was left running');
 });
 
 await check('consecutive calls to the same resource are spaced out', async () => {
