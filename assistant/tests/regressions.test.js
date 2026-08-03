@@ -1220,3 +1220,61 @@ test('a tool called with junk answers instead of throwing', async () => {
     }
   }
 });
+
+test('a duplicate on the second page of a big instance is still found', async () => {
+  // The check read one page. On an instance with more workflows than that, the
+  // copy being looked for may not be on it — and a duplicate created because
+  // we did not look far enough is worse than no check at all, because nothing
+  // here can delete it afterwards.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const target = {
+    name: 'Halmstad scraper',
+    nodes: [{ id: 't', name: 'Every morning', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [0, 0], parameters: {} }],
+    connections: {},
+  };
+  const all = [
+    ...Array.from({ length: 120 }, (_, i) => ({ id: `w${i}`, name: `Filler ${i}`, active: false, nodes: [], connections: {} })),
+    { id: 'deep', active: false, ...target },
+  ];
+
+  let created = 0;
+  const n8n = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      const u = new URL(url);
+      const path = u.pathname.replace('/api/v1', '');
+      const method = init?.method ?? 'GET';
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (path === '/credentials' || path === '/tags') return reply({ data: [] });
+      if (method === 'POST' && path === '/workflows') { created++; return reply({ id: 'new', ...JSON.parse(init.body) }); }
+      if (method === 'GET' && path === '/workflows') {
+        const from = Number(u.searchParams.get('cursor') ?? 0);
+        const page = all.slice(from, from + 50);
+        return reply({ data: page, nextCursor: from + 50 < all.length ? String(from + 50) : null });
+      }
+      return reply({ id: 'deep', active: false, ...target });
+    },
+  });
+
+  const save = buildToolRegistry({ n8n, store: createMemoryStore(), approvals: [] }).find((t) => t.name === 'save_workflow');
+  const out = await save.handler({ mode: 'create', workflow: target });
+  assert.equal(created, 0, 'a second copy was created because the check stopped at the first page');
+  assert.equal(out.alreadyExisted, true);
+});
+
+test('no tool takes its own approval as an argument', async () => {
+  // A gate with the key taped to it. Self-approval is the shape most likely to
+  // be attempted by a model that has read something persuasive, and the
+  // defence is that the argument does not exist.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const tools = buildToolRegistry({ store: createMemoryStore(), n8n: null, approvals: [] });
+  for (const tool of tools) {
+    const schema = JSON.stringify(tool.parameters ?? {});
+    assert.ok(
+      !/"(approved|approval|approvals|confirm|confirmed|force|override)"\s*:/.test(schema),
+      `${tool.name} accepts its own approval as an argument`,
+    );
+  }
+});

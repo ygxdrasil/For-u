@@ -468,8 +468,28 @@ export function buildToolRegistry(ctx) {
               connections: w?.connections ?? {},
             });
             try {
-              const existing = (await n8n.listWorkflows({ limit: 50 }))?.data ?? [];
-              const already = existing.find((w) => w?.name === payload.name && w?.nodes && fingerprint(w) === fingerprint(payload));
+              // Paged, because the copy being looked for is not necessarily on
+              // the first page — and a duplicate created because we did not
+              // look far enough is worse than no check at all, since nothing
+              // here can delete it afterwards. Bounded, and it says so if it
+              // stopped early rather than implying it saw everything.
+              const PAGES = 10;
+              let cursor = null;
+              let already = null;
+              let seen = 0;
+              let ranOut = false;
+              for (let page = 0; page < PAGES; page++) {
+                const res = await n8n.listWorkflows({ limit: 50, cursor });
+                const batch = res?.data ?? [];
+                seen += batch.length;
+                already = batch.find((w) => w?.name === payload.name && w?.nodes && fingerprint(w) === fingerprint(payload));
+                cursor = res?.nextCursor ?? null;
+                if (already || !cursor || !batch.length) break;
+                if (page === PAGES - 1 && cursor) ranOut = true;
+              }
+              if (ranOut) {
+                onStatus(`Checked ${seen} workflows for an existing copy and there are more; carrying on.`);
+              }
               if (already) {
                 // The tags are still outstanding work: the request was "make
                 // this exist, tagged", and only the first half was already
