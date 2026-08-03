@@ -1278,3 +1278,126 @@ test('no tool takes its own approval as an argument', async () => {
     );
   }
 });
+
+test('a snapshot can actually be put back, and putting it back is reversible', async () => {
+  // list_snapshots said they existed "so a change can be reviewed or rolled
+  // back", and nothing could roll one back. The safety net under every update
+  // could be listed and never used, which is not a safety net.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const wf = {
+    id: 'wf1', versionId: 'v1', name: 'Leads', active: false, connections: {},
+    nodes: [
+      { id: 't', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
+      { id: 's', name: 'Good version', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [200, 0], parameters: { mode: 'manual' } },
+    ],
+  };
+  const n8n = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname.replace('/api/v1', '');
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (path === '/credentials' || path === '/tags') return reply({ data: [] });
+      if ((init?.method ?? 'GET') === 'PUT') { Object.assign(wf, JSON.parse(init.body)); return reply(wf); }
+      return reply(wf);
+    },
+  });
+
+  const store = createMemoryStore();
+  const tools = buildToolRegistry({ n8n, store, approvals: [] });
+  const save = tools.find((t) => t.name === 'save_workflow');
+  const restore = tools.find((t) => t.name === 'restore_snapshot');
+  assert.ok(restore, 'there is still no way to restore a snapshot');
+
+  const changed = await save.handler({
+    mode: 'update', id: 'wf1', reason: 'a change to regret',
+    workflow: { name: 'Leads', nodes: [wf.nodes[0], { ...wf.nodes[1], name: 'Regrettable version' }], connections: {} },
+  });
+  assert.equal(wf.nodes[1].name, 'Regrettable version');
+
+  const back = await restore.handler({ snapshotId: changed.snapshotId, reason: 'it was wrong' });
+  assert.equal(back.ok, true, back.error);
+  assert.equal(wf.nodes[1].name, 'Good version', 'the old version did not come back');
+  assert.ok(back.snapshotId, 'restoring did not snapshot what it replaced, so the undo cannot be undone');
+
+  const redo = await restore.handler({ snapshotId: back.snapshotId });
+  assert.equal(redo.ok, true, redo.error);
+  assert.equal(wf.nodes[1].name, 'Regrettable version', 'the version the restore replaced was unrecoverable');
+});
+
+test('an update does not overwrite an edit made in n8n while he was working', async () => {
+  // Read a workflow, work for forty seconds, write it back — and anyone who
+  // touched it in between has their change replaced by his. Nothing is deleted
+  // technically; the effect is that their work vanished without a word, which
+  // is the failure this whole project exists to avoid.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const live = { id: 'wf1', versionId: 'v8', name: 'Leads', active: false, connections: {}, nodes: [{ id: 'h', name: 'Edited by hand', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [0, 0], parameters: { mode: 'manual' } }] };
+  let written = 0;
+  const n8n = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname.replace('/api/v1', '');
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (path === '/credentials' || path === '/tags') return reply({ data: [] });
+      if ((init?.method ?? 'GET') === 'PUT') { written++; Object.assign(live, JSON.parse(init.body)); return reply(live); }
+      return reply(live);
+    },
+  });
+
+  const store = createMemoryStore();
+  const save = buildToolRegistry({ n8n, store, approvals: [] }).find((t) => t.name === 'save_workflow');
+  // A trigger, so the refusal under test is the version check rather than the
+  // validator refusing a workflow nothing starts.
+  const mine = {
+    name: 'Leads', versionId: 'v7',
+    nodes: [
+      { id: 'tg', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
+      { id: 'm', name: 'His version', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [200, 0], parameters: { mode: 'manual' } },
+    ],
+    connections: { Start: { main: [[{ node: 'His version', type: 'main', index: 0 }]] } },
+  };
+
+  const refused = await save.handler({ mode: 'update', id: 'wf1', workflow: mine, reason: 'the asked-for change' });
+  assert.equal(refused.ok, false, "a hand-edit was overwritten without a word");
+  assert.equal(refused.changedUnderneath, true);
+  assert.equal(written, 0, 'it wrote anyway');
+  assert.equal(live.nodes[0].name, 'Edited by hand');
+
+  // Once it is a decision rather than an accident, it goes through — and what
+  // it replaced is recoverable.
+  const forced = await save.handler({ mode: 'update', id: 'wf1', workflow: mine, reason: 'user said go ahead', overwriteChangesSince: 'v7' });
+  assert.equal(forced.ok, true, forced.error);
+  assert.equal(live.nodes[1].name, 'His version');
+  assert.equal((await store.getSnapshot(forced.snapshotId)).workflow.nodes[0].name, 'Edited by hand', 'the overwritten edit was not snapshotted');
+});
+
+test('archiving is a door that opens both ways', async () => {
+  // "Never delete, archive instead" only means something if archive can be
+  // undone. A one-way archive is deletion with a nicer name.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+  const wf = { id: 'wf1', name: 'Old thing', isArchived: false, active: false, nodes: [], connections: {} };
+  const n8n = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url) => {
+      const path = new URL(url).pathname.replace('/api/v1', '');
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (path.endsWith('/archive')) { wf.isArchived = true; return reply(wf); }
+      if (path.endsWith('/unarchive')) { wf.isArchived = false; return reply(wf); }
+      return reply(wf);
+    },
+  });
+
+  const tools = buildToolRegistry({ n8n, store: createMemoryStore(), approvals: [] });
+  await tools.find((t) => t.name === 'archive_workflow').handler({ id: 'wf1' });
+  assert.equal(wf.isArchived, true);
+
+  const back = tools.find((t) => t.name === 'unarchive_workflow');
+  assert.ok(back, 'nothing can bring an archived workflow back');
+  assert.equal((await back.handler({ id: 'wf1' })).ok, true);
+  assert.equal(wf.isArchived, false);
+  assert.equal(wf.active, false, 'bringing it back started it running, which nobody asked for');
+});

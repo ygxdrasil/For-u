@@ -336,6 +336,25 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     };
   }
 
+  /**
+   * Bring an archived workflow back.
+   *
+   * "Never delete, archive instead" is only true if archiving is a door that
+   * opens both ways. Without this, archive was deletion with a nicer name and
+   * an extra step — the thing was gone as far as anyone using this could tell.
+   */
+  async function unarchiveWorkflow(id) {
+    await request('POST', `/workflows/${encodeURIComponent(id)}/unarchive`);
+    const readBack = await getWorkflow(id).catch(() => null);
+    return {
+      archived: readBack?.isArchived ?? null,
+      confirmed: readBack?.isArchived === false,
+      // Coming back out of the archive must never start it running.
+      active: readBack?.active ?? null,
+      readBack,
+    };
+  }
+
   /** Archive rather than delete. Preserves the workflow and its history. */
   async function archiveWorkflow(id) {
     try {
@@ -445,6 +464,7 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     updateWorkflow,
     setActive,
     archiveWorkflow,
+    unarchiveWorkflow,
     runWorkflow,
     latestExecution,
     ping,

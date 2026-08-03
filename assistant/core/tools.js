@@ -393,10 +393,15 @@ export function buildToolRegistry(ctx) {
             description: 'Tag names to attach, created if they do not exist. Use "system:<short-name>" for every workflow belonging to the same system.',
           },
           reason: { type: 'string', description: 'Why this change is being made — recorded with the snapshot.' },
+          overwriteChangesSince: {
+            type: 'string',
+            description:
+              'Only after the user has said to go ahead: the version you were working from, when the workflow has changed in n8n since you read it. Overwriting somebody\'s hand-edit is a decision they make, not one you make.',
+          },
         },
         required: ['mode', 'workflow'],
       },
-      handler: async ({ mode, id, workflow, tags, reason }) => {
+      handler: async ({ mode, id, workflow, tags, reason, overwriteChangesSince }) => {
         if (!n8n) return needsN8n();
 
         const validation = await validateWorkflow(workflow);
@@ -535,6 +540,33 @@ export function buildToolRegistry(ctx) {
             if (!id) return fail('mode "update" needs the workflow id.');
             onStatus('Snapshotting the current version before changing it…');
             const current = await n8n.getWorkflow(id);
+
+            /**
+             * Somebody may have opened n8n and changed this while he was
+             * thinking.
+             *
+             * Reading a workflow, working for forty seconds and writing it
+             * back is a lost update. Their change goes into a snapshot they do
+             * not know exists — nothing was deleted, technically, and the
+             * effect is that their work vanished with no word about it. That
+             * is the failure this whole project is built to avoid, arriving
+             * through the one door left open.
+             *
+             * n8n stamps a versionId on every save. When the workflow being
+             * written carries one, it says which version the edit was based
+             * on, and a mismatch means somebody else got there first. Nothing
+             * is refused when there is no version to compare — building
+             * something from scratch has nobody to race.
+             */
+            const basedOn = workflow?.versionId ?? null;
+            if (basedOn && current?.versionId && basedOn !== current.versionId && overwriteChangesSince !== basedOn) {
+              return fail(
+                `"${current.name}" changed in n8n since I read it — I was working from version ${basedOn} and it is now ${current.versionId}. ` +
+                  'Somebody edited it in the editor while I was building. I have not written anything, because that would have replaced their work with mine. ' +
+                  'Tell me to go ahead and I will overwrite it (the version that is there now is snapshotted first, so it can be brought back), or ask me to read it again and redo the change on top of theirs.',
+                { changedUnderneath: true, basedOnVersion: basedOn, currentVersion: current.versionId, workflowId: id },
+              );
+            }
             const snap = await store.snapshot({
               workflowId: id,
               name: current?.name ?? null,
@@ -697,6 +729,94 @@ export function buildToolRegistry(ctx) {
           return ok(await n8n.archiveWorkflow(id));
         } catch (e) {
           return fail(`Could not archive: ${e.message}`);
+        }
+      },
+    },
+
+    {
+      name: 'restore_snapshot',
+      say: (a) => `putting back the version saved as ${a.snapshotId ?? 'a snapshot'}`,
+      description:
+        'Put a previous version of a workflow back. Every update snapshots what it replaced, and this is what makes that snapshot worth having — without it the history can be listed and never used. The restore itself snapshots what it replaces, so undoing an undo is possible too.',
+      parameters: {
+        type: 'object',
+        properties: {
+          snapshotId: { type: 'string', description: 'From list_snapshots.' },
+          reason: { type: 'string', description: 'Why this is being rolled back — recorded with the new snapshot.' },
+        },
+        required: ['snapshotId'],
+      },
+      handler: async ({ snapshotId, reason }) => {
+        if (!n8n) return needsN8n();
+        if (!snapshotId) return fail('Which snapshot? list_snapshots shows them.');
+
+        const snap = await store.getSnapshot(snapshotId);
+        if (!snap) return fail(`No snapshot called ${snapshotId}. list_snapshots shows what there is.`);
+        if (!snap.workflow?.nodes) {
+          return fail(`Snapshot ${snapshotId} holds no workflow — it was taken when the workflow could not be read, so there is nothing in it to put back.`);
+        }
+        if (!snap.workflowId) return fail(`Snapshot ${snapshotId} does not say which workflow it belongs to.`);
+
+        try {
+          // What is there now goes into a snapshot first. An undo that cannot
+          // itself be undone is just another one-way door.
+          const current = await n8n.getWorkflow(snap.workflowId);
+          const undo = await store.snapshot({
+            workflowId: snap.workflowId,
+            name: current?.name ?? null,
+            workflow: current,
+            reason: `before restoring ${snapshotId}${reason ? `: ${reason}` : ''}`,
+          });
+
+          const res = await n8n.updateWorkflow(snap.workflowId, snap.workflow, { snapshotId: undo.id });
+          const readBack = res.readBack ?? (await n8n.getWorkflow(snap.workflowId).catch(() => null));
+          return ok({
+            restored: true,
+            id: snap.workflowId,
+            fromSnapshot: snapshotId,
+            snapshotId: undo.id,
+            confirmed: res.confirmed,
+            readiness: await (async () => {
+              try {
+                const creds = await n8n.listCredentials();
+                return assessReadiness(readBack ?? snap.workflow, {
+                  credentials: (creds?.data ?? creds ?? []).map((c) => ({ id: c.id, name: c.name, type: c.type })),
+                });
+              } catch {
+                return null;
+              }
+            })(),
+            note: `Put back the version from ${snap.at}. What was there instead is saved as ${undo.id}, so this can be undone as well.`,
+          });
+        } catch (e) {
+          return fail(`Could not restore ${snapshotId}: ${e.message}`);
+        }
+      },
+    },
+
+    {
+      name: 'unarchive_workflow',
+      say: (a) => `bringing ${a.id ?? 'it'} back out of the archive`,
+      description:
+        'Bring an archived workflow back into the list. Archiving is how things are retired here instead of deleting them, which only means anything if it can be undone. It comes back switched off, whatever it was before.',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      handler: async ({ id }) => {
+        if (!n8n) return needsN8n();
+        if (!id) return fail('Which workflow?');
+        try {
+          const res = await n8n.unarchiveWorkflow(id);
+          return ok({
+            ...res,
+            note: res.confirmed
+              ? 'Back in the list, and still switched off — bringing something back is not the same as starting it.'
+              : 'n8n accepted it but reading it back did not confirm it came out of the archive.',
+          });
+        } catch (e) {
+          return fail(`Could not unarchive ${id}: ${e.message}`);
         }
       },
     },
