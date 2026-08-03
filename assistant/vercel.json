@@ -47,6 +47,8 @@
       "maxDuration": 15
     }
   },
+  "_comment_ignoreCommand": "Build only when something in THIS directory changed. Two projects deploy from this one repo — Jason from assistant/ and Selena from selena/ — so every push used to build both, and two builds per push exhausted the Hobby plan's daily deployment limit in an afternoon. Vercel skips the build when this exits 0, which is exactly what `git diff --quiet` does when nothing here moved.",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- .",
   "git": {
     "deploymentEnabled": {
       "main": true,

@@ -604,3 +604,28 @@ test('a model call we abort ourselves is reported as running out of time', async
     (err) => err instanceof ModelTimeoutError,
   );
 });
+
+test('neither project builds the other one s commits', async () => {
+  // Two Vercel projects deploy from this one repo — Jason from assistant/ and
+  // Selena from selena/ — so every push built both. Two builds per push
+  // exhausted the Hobby plan's daily deployment limit in an afternoon, and
+  // then nothing deployed at all for 24 hours: the work was written, tested,
+  // committed, pushed, and not running, which is the same as not done.
+  //
+  // Vercel skips a build when ignoreCommand exits 0, which is what
+  // `git diff --quiet` does when nothing in that directory changed.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const url = await import('node:url');
+  const here = path.dirname(url.fileURLToPath(import.meta.url));
+
+  for (const config of [path.join(here, '..', 'vercel.json'), path.join(here, '..', '..', 'selena', 'vercel.json')]) {
+    if (!fs.existsSync(config)) continue; // the other project may not be checked out
+    const parsed = JSON.parse(fs.readFileSync(config, 'utf8'));
+    assert.match(
+      String(parsed.ignoreCommand ?? ''),
+      /git diff --quiet/,
+      `${path.basename(path.dirname(config))}/vercel.json has no ignoreCommand, so it rebuilds on commits that do not touch it`,
+    );
+  }
+});
