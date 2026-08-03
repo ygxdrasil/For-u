@@ -12,7 +12,7 @@
 
 import { createStore } from './store.js';
 import { createMeter } from './meter.js';
-import { createLlm, TIERS, ModelTimeoutError } from './llm.js';
+import { createLlm, TIERS, ModelTimeoutError, ModelsBusyError } from './llm.js';
 import { createN8nClient } from './n8nClient.js';
 import { buildToolRegistry } from './tools.js';
 import { catalogMeta } from './nodeIndex.js';
@@ -288,6 +288,23 @@ export async function run(input, hooks = {}) {
         stoppedBecause = 'deadline';
         break;
       }
+
+      // Every model busy is not a fault in anything the user owns, and it is
+      // not the same as a broken request. Mid-turn it is worth more than the
+      // error: whatever was already done is reported, and the work so far is
+      // kept so "carry on" picks it up rather than starting again.
+      if (err instanceof ModelsBusyError) {
+        const done = steps.map((s) => s.tool).join(', ');
+        if (input.sessionId) await saveConversation();
+        return result({
+          status: 'model_busy',
+          reply: done
+            ? `${err.message}\n\nBefore that I had done: ${done}. Ask me to carry on when it comes back.`
+            : err.message,
+          spend: await meter.summary(),
+        });
+      }
+
       return result({ status: 'model_error', reply: `The model call failed: ${err.message}`, spend: await meter.summary() });
     }
 

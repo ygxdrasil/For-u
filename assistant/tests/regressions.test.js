@@ -629,3 +629,77 @@ test('neither project builds the other one s commits', async () => {
     );
   }
 });
+
+test('a model that is merely busy falls through to the next one', async () => {
+  // The real thing, verbatim from a live call:
+  //   {"error":{"code":503,"message":"This model is currently experiencing high
+  //   demand. Spikes in demand are usually temporary...","status":"UNAVAILABLE"}}
+  // That is Google having a spike, not a fault in the request, the key, or
+  // anything in the user's n8n — and there has been a fallback chain for
+  // exactly this shape of problem the whole time. It was thrown instead, and
+  // reported as "the model call failed", which reads like the opposite.
+  const { createLlm, TIERS } = await import('../core/llm.js');
+  const { createMeter } = await import('../core/meter.js');
+  const asked = [];
+  const llm = createLlm({
+    apiKey: 'k',
+    meter: createMeter({ store: createMemoryStore(), capUsd: 100 }),
+    clientFactory: () => ({ models: { generateContent: async ({ model }) => {
+      asked.push(model);
+      if (model === TIERS.chat.models[0]) {
+        throw new Error('{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}');
+      }
+      return { text: 'answered by the next model', functionCalls: [], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } };
+    } } }),
+  });
+
+  const out = await llm.generate({ tier: 'chat', contents: [], systemInstruction: 'x', timeoutMs: 30_000 });
+  assert.equal(out.text, 'answered by the next model');
+  assert.equal(asked[0], TIERS.chat.models[0]);
+  assert.equal(asked[1], TIERS.chat.models[0], 'the busy model was abandoned without a second try — spikes are usually seconds');
+  assert.equal(asked[2], TIERS.chat.models[1], 'it never moved on to the next model in the tier');
+});
+
+test('every model busy is said plainly, and is not called a failure', async () => {
+  const { createLlm, ModelsBusyError } = await import('../core/llm.js');
+  const { createMeter } = await import('../core/meter.js');
+  const busy = () => ({ models: { generateContent: async () => {
+    throw new Error('{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}');
+  } } });
+
+  const llm = createLlm({ apiKey: 'k', meter: createMeter({ store: createMemoryStore(), capUsd: 100 }), clientFactory: busy });
+  await assert.rejects(
+    // A short deadline so the retry pauses are skipped and the test is quick.
+    () => llm.generate({ tier: 'chat', contents: [], systemInstruction: 'x', timeoutMs: 1000 }),
+    (err) => {
+      assert.ok(err instanceof ModelsBusyError, `threw ${err.name}`);
+      assert.match(err.message, /busy|spike/i);
+      assert.match(err.message, /not a fault in your setup/i);
+      return true;
+    },
+  );
+
+  // Enough budget that the model is actually reached — with a 3s deadline the
+  // turn ends on time before it ever calls one, which is a different outcome.
+  const out = await run({ text: 'what is running?', config: cfg, store: createMemoryStore(), llmClientFactory: busy, deadlineMs: 15_000 }, {});
+  assert.equal(out.status, 'model_busy', `a busy model produced status ${out.status}`);
+  assert.doesNotMatch(out.reply, /The model call failed/);
+  assert.match(out.reply, /try again in a minute/i);
+});
+
+test('a busy model does not eat the deadline waiting to retry', async () => {
+  // Sleeping through someone's remaining time is how a serverless request
+  // returns nothing at all instead of returning something late.
+  const { createLlm } = await import('../core/llm.js');
+  const { createMeter } = await import('../core/meter.js');
+  let calls = 0;
+  const llm = createLlm({
+    apiKey: 'k',
+    meter: createMeter({ store: createMemoryStore(), capUsd: 100 }),
+    clientFactory: () => ({ models: { generateContent: async () => { calls++; throw new Error('503 UNAVAILABLE'); } } }),
+  });
+  const started = Date.now();
+  await assert.rejects(() => llm.generate({ tier: 'chat', contents: [], systemInstruction: 'x', timeoutMs: 900 }));
+  assert.equal(calls, 3, 'with no time to spare it should try each model once and stop');
+  assert.ok(Date.now() - started < 1500, `it waited ${Date.now() - started}ms with under a second of budget`);
+});

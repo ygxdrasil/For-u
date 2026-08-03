@@ -88,6 +88,47 @@ function looksRetired(err) {
   return m.includes('not found') || m.includes('404') || m.includes('is not supported') || m.includes('deprecated');
 }
 
+/**
+ * Busy is not broken.
+ *
+ * "This model is currently experiencing high demand" — 503 UNAVAILABLE — is
+ * Google having a spike, not a fault in the request, the key, or anything in
+ * the user's n8n. Reported as "the model call failed" it reads like the latter,
+ * and there is nothing to do about it except be told to wait.
+ *
+ * There is already a fallback chain for exactly this shape of problem, and a
+ * demand spike on one model is rarely a spike on all of them. So an overloaded
+ * model is retried once after a pause, then handed to the next model in the
+ * tier, and only if every one is busy does it become an answer.
+ */
+function looksOverloaded(err) {
+  const m = String(err?.message ?? err).toLowerCase();
+  return (
+    m.includes('503') ||
+    m.includes('unavailable') ||
+    m.includes('overloaded') ||
+    m.includes('high demand') ||
+    m.includes('429') ||
+    m.includes('resource_exhausted') ||
+    m.includes('too many requests')
+  );
+}
+
+export class ModelsBusyError extends Error {
+  constructor(tried) {
+    super(
+      `Every model I can use is busy right now — Google is refusing new requests for them, which is a spike at their end and not a fault in your setup or your workflows. Nothing was changed. Try again in a minute. (Tried: ${tried.map((t) => t.model).join(', ')}.)`,
+    );
+    this.name = 'ModelsBusyError';
+    this.tried = tried;
+  }
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One pause before giving up on a busy model. Spikes are usually seconds. */
+const BUSY_RETRY_MS = 1500;
+
 export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }) {
   if (!apiKey) throw new Error('Gemini API key is required');
   assertThinkingBudgets(tiers);
@@ -108,124 +149,151 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
     if (!spec) throw new Error(`Unknown tier "${tier}"`);
 
     const tried = [];
+    let busy = false;
 
     for (const model of spec.models) {
-      // Hard stop BEFORE the request. Checking after means paying to find out.
-      const approxInputTokens = Math.ceil(
-        (systemInstruction.length + JSON.stringify(contents).length) / 4,
-      );
-      await meter.assertCanSpend({ model, inputTokens: approxInputTokens, maxOutputTokens: spec.maxOutputTokens });
+      let retriedThisModel = false;
 
-      const config = {
-        systemInstruction,
-        maxOutputTokens: spec.maxOutputTokens,
-        // A thinking budget of 0 disables it; -1 would hand the model an
-        // automatic budget, which is exactly the unbounded spend we don't want.
-        thinkingConfig: { thinkingBudget: spec.thinkingBudget },
-      };
+      // Retried in place when the model is merely busy; `break` moves to the
+      // next model in the tier, `continue` tries this one again.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // Hard stop BEFORE the request. Checking after means paying to find out.
+        // Re-checked on a retry too: a retry is a second billable request.
+        const approxInputTokens = Math.ceil(
+          (systemInstruction.length + JSON.stringify(contents).length) / 4,
+        );
+        await meter.assertCanSpend({ model, inputTokens: approxInputTokens, maxOutputTokens: spec.maxOutputTokens });
 
-      if (functionDeclarations?.length) {
-        // Built-in search and function calling cannot be sent together — the
-        // request is rejected outright — so this adapter never offers search.
-        config.tools = [{ functionDeclarations }];
-      }
-
-      // A model call with no time limit is the serverless killer: the platform
-      // stops the function at ITS limit and returns nothing at all — no error,
-      // no partial answer, nothing. Bounding the call here means a slow model
-      // costs a truthful "I ran out of time" instead of silence.
-      const deadline = timeoutMs && timeoutMs > 0 ? timeoutMs : null;
-      const callModel = async (cfg) => {
-        if (!deadline) return client.models.generateContent({ model, contents, config: cfg });
-
-        const controller = new AbortController();
-        let timer;
-        let timedOut = false;
-        const expired = new Promise((_, reject) => {
-          timer = setTimeout(() => {
-            timedOut = true;
-            controller.abort();
-            reject(new ModelTimeoutError(model, deadline));
-          }, deadline);
-        });
-        try {
-          // The signal is passed as well as raced: aborting stops us waiting,
-          // but the request itself is still billed, so the race is what
-          // guarantees we return in time.
-          return await Promise.race([client.models.generateContent({ model, contents, config: { ...cfg, abortSignal: controller.signal } }), expired]);
-        } catch (err) {
-          // Aborting makes the SDK reject too, and that rejection can win the
-          // race. It says "aborted", which is true and useless: the caller
-          // checks for ModelTimeoutError to stop gracefully and say what it
-          // managed to do, and an ordinary error there produces a bare "the
-          // model call failed" instead. Whatever the abort threw, if we are the
-          // ones who aborted it, this is a timeout.
-          if (timedOut && !(err instanceof ModelTimeoutError)) throw new ModelTimeoutError(model, deadline);
-          throw err;
-        } finally {
-          clearTimeout(timer);
-        }
-      };
-
-      try {
-        let res;
-        try {
-          res = await callModel(config);
-        } catch (err) {
-          // Not every model accepts a thinking budget, and the cheapest tiers
-          // are the most likely to reject one. Retry once without it rather
-          // than failing the whole request over a config field — and say which
-          // happened rather than silently degrading.
-          if (!/thinking|thought/i.test(String(err?.message ?? '')) || config.thinkingConfig === undefined) throw err;
-          const { thinkingConfig, ...withoutThinking } = config;
-          res = await callModel(withoutThinking);
-        }
-
-        const usage = res.usageMetadata ?? {};
-        const priced = await meter.record({ model, usage, label: label ?? tier });
-
-        const text = res.text ?? '';
-        const calls = res.functionCalls ?? [];
-
-        /**
-         * WHY the model stopped, which the happy path never has to ask.
-         *
-         * MAX_TOKENS is the dangerous one: the reply arrives, the request is
-         * 200, nothing throws, and the last sentence simply stops. Presented as
-         * a finished answer it is indistinguishable from one — the only failure
-         * in this adapter that looks exactly like success. SAFETY and RECITATION
-         * matter for a different reason: they produce an empty reply that used
-         * to be blamed on the thinking budget, sending anyone reading it to
-         * change a setting that was never the problem.
-         */
-        const finishReason = res.candidates?.[0]?.finishReason ?? null;
-        const truncated = finishReason === 'MAX_TOKENS';
-
-        // An empty answer with no tool call is the silent-failure signature.
-        // Surface it as an explicit condition rather than an empty reply.
-        const empty = !text.trim() && !calls.length;
-
-        return {
-          model,
-          text,
-          functionCalls: calls,
-          finishReason,
-          truncated,
-          empty,
-          emptyReason: empty
-            ? finishReason && finishReason !== 'STOP'
-              ? `${model} returned no text and no tool call, and stopped because of ${finishReason}. That is the model refusing or being cut off — not the thinking budget.`
-              : `${model} returned no text and no tool call. Thinking tokens used: ${usage.thoughtsTokenCount ?? 0} of a ${spec.maxOutputTokens} output allowance.`
-            : null,
-          usage: priced,
-          raw: res,
+        const config = {
+          systemInstruction,
+          maxOutputTokens: spec.maxOutputTokens,
+          // A thinking budget of 0 disables it; -1 would hand the model an
+          // automatic budget, which is exactly the unbounded spend we don't want.
+          thinkingConfig: { thinkingBudget: spec.thinkingBudget },
         };
-      } catch (err) {
-        tried.push({ model, error: err.message });
-        if (!looksRetired(err)) throw err;
+
+        if (functionDeclarations?.length) {
+          // Built-in search and function calling cannot be sent together — the
+          // request is rejected outright — so this adapter never offers search.
+          config.tools = [{ functionDeclarations }];
+        }
+
+        // A model call with no time limit is the serverless killer: the platform
+        // stops the function at ITS limit and returns nothing at all — no error,
+        // no partial answer, nothing. Bounding the call here means a slow model
+        // costs a truthful "I ran out of time" instead of silence.
+        const deadline = timeoutMs && timeoutMs > 0 ? timeoutMs : null;
+        const callModel = async (cfg) => {
+          if (!deadline) return client.models.generateContent({ model, contents, config: cfg });
+
+          const controller = new AbortController();
+          let timer;
+          let timedOut = false;
+          const expired = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+              reject(new ModelTimeoutError(model, deadline));
+            }, deadline);
+          });
+          try {
+            // The signal is passed as well as raced: aborting stops us waiting,
+            // but the request itself is still billed, so the race is what
+            // guarantees we return in time.
+            return await Promise.race([client.models.generateContent({ model, contents, config: { ...cfg, abortSignal: controller.signal } }), expired]);
+          } catch (err) {
+            // Aborting makes the SDK reject too, and that rejection can win the
+            // race. It says "aborted", which is true and useless: the caller
+            // checks for ModelTimeoutError to stop gracefully and say what it
+            // managed to do, and an ordinary error there produces a bare "the
+            // model call failed" instead. Whatever the abort threw, if we are the
+            // ones who aborted it, this is a timeout.
+            if (timedOut && !(err instanceof ModelTimeoutError)) throw new ModelTimeoutError(model, deadline);
+            throw err;
+          } finally {
+            clearTimeout(timer);
+          }
+        };
+
+        try {
+          let res;
+          try {
+            res = await callModel(config);
+          } catch (err) {
+            // Not every model accepts a thinking budget, and the cheapest tiers
+            // are the most likely to reject one. Retry once without it rather
+            // than failing the whole request over a config field — and say which
+            // happened rather than silently degrading.
+            if (!/thinking|thought/i.test(String(err?.message ?? '')) || config.thinkingConfig === undefined) throw err;
+            const { thinkingConfig, ...withoutThinking } = config;
+            res = await callModel(withoutThinking);
+          }
+
+          const usage = res.usageMetadata ?? {};
+          const priced = await meter.record({ model, usage, label: label ?? tier });
+
+          const text = res.text ?? '';
+          const calls = res.functionCalls ?? [];
+
+          /**
+           * WHY the model stopped, which the happy path never has to ask.
+           *
+           * MAX_TOKENS is the dangerous one: the reply arrives, the request is
+           * 200, nothing throws, and the last sentence simply stops. Presented as
+           * a finished answer it is indistinguishable from one — the only failure
+           * in this adapter that looks exactly like success. SAFETY and RECITATION
+           * matter for a different reason: they produce an empty reply that used
+           * to be blamed on the thinking budget, sending anyone reading it to
+           * change a setting that was never the problem.
+           */
+          const finishReason = res.candidates?.[0]?.finishReason ?? null;
+          const truncated = finishReason === 'MAX_TOKENS';
+
+          // An empty answer with no tool call is the silent-failure signature.
+          // Surface it as an explicit condition rather than an empty reply.
+          const empty = !text.trim() && !calls.length;
+
+          return {
+            model,
+            text,
+            functionCalls: calls,
+            finishReason,
+            truncated,
+            empty,
+            emptyReason: empty
+              ? finishReason && finishReason !== 'STOP'
+                ? `${model} returned no text and no tool call, and stopped because of ${finishReason}. That is the model refusing or being cut off — not the thinking budget.`
+                : `${model} returned no text and no tool call. Thinking tokens used: ${usage.thoughtsTokenCount ?? 0} of a ${spec.maxOutputTokens} output allowance.`
+              : null,
+            usage: priced,
+            raw: res,
+          };
+        } catch (err) {
+          tried.push({ model, error: err.message });
+
+          if (looksOverloaded(err)) {
+            busy = true;
+            // One short pause and the same model again — but only if the caller
+            // has time to spare. Spending someone's deadline sitting in a sleep
+            // is how a request returns nothing at all instead of something.
+            if (!retriedThisModel && (!deadline || deadline > BUSY_RETRY_MS * 3)) {
+              retriedThisModel = true;
+              await wait(BUSY_RETRY_MS);
+              continue;
+            }
+            break; // next model in the chain
+          }
+
+          if (looksRetired(err)) break; // next model in the chain
+          throw err;
+        }
       }
     }
 
+    // Every model busy is a different sentence from every model gone. One says
+    // wait a minute; the other says the chain needs updating.
+    if (busy) throw new ModelsBusyError(tried);
     throw new NoModelAvailableError(tried);
   }
 
