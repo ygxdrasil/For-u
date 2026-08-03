@@ -17,6 +17,7 @@ import { validateWorkflow } from './validate.js';
 import { assessExecution } from './assess.js';
 import { remember, activeFacts } from './memory.js';
 import { askPeer, listPeers } from './peers.js';
+import { fetchPublicUrl, BlockedUrlError } from './web.js';
 
 /** Actions that need explicit confirmation: sending and spending. Nothing else. */
 export const APPROVAL_REQUIRED = {
@@ -25,6 +26,10 @@ export const APPROVAL_REQUIRED = {
   // Asking a peer what it already knows is free. Telling it to go and find out
   // is spending — at the far end, on the same person's money.
   COMMISSION_RESEARCH: 'commission_research',
+  // Reading a public API is a read. Anything that is not a read — a POST, a
+  // PUT, a DELETE at someone else's URL — is sending, and sending needs a yes
+  // whether the recipient is a person or an endpoint.
+  SEND_REQUEST: 'send_http_request',
 };
 
 const ok = (data) => ({ ok: true, ...data });
@@ -38,7 +43,7 @@ const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
  * @param {(s:string)=>void} ctx.onStatus
  */
 export function buildToolRegistry(ctx) {
-  const { n8n = null, store, approvals = [], prefs = {}, onStatus = () => {} } = ctx;
+  const { n8n = null, store, approvals = [], prefs = {}, onStatus = () => {}, fetchImpl = globalThis.fetch, resolveHost = undefined } = ctx;
 
   const needsN8n = () =>
     fail('No n8n connection is configured. Paste your n8n base URL and API key in Settings first.');
@@ -111,6 +116,91 @@ export function buildToolRegistry(ctx) {
           return ok({ credentials: items });
         } catch (e) {
           return fail(`Could not list credentials: ${e.message}`);
+        }
+      },
+    },
+
+    {
+      name: 'read_api',
+      say: (a) => `reading ${(() => { try { return new URL(a.url).hostname; } catch { return 'the documentation'; } })()}`,
+      description:
+        "Read a page or call an API on the public internet. This is how you find out what an API actually looks like instead of guessing at it or stopping: fetch its documentation, fetch its OpenAPI spec, or call an endpoint and look at the real response. Use it before writing HTTP Request node parameters for a service you do not already know for certain. GET and HEAD are free and need no permission. Any other method is sending, and sending needs the owner's yes.",
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'A full http or https URL on the public internet.' },
+          method: { type: 'string', description: 'GET by default. HEAD is also free. Anything else needs approval first.' },
+          headers: { type: 'object', description: 'Headers to send, e.g. an API key the user has given you FOR THIS REQUEST. Never invent one and never reuse a credential from n8n — n8n does not hand them out.' },
+          body: { type: 'string', description: 'Request body, only for methods that take one.' },
+        },
+        required: ['url'],
+      },
+      handler: async ({ url, method = 'GET', headers = {}, body = null }) => {
+        // Asked without one, say which thing is missing. "undefined is not a
+        // URL" is true and useless, and it is what the model reads back.
+        if (!url || typeof url !== 'string') return fail('Which URL? Give me the full address, including https://.');
+        const verb = String(method).toUpperCase();
+
+        // Reading is a read. Anything else is a request that arrives at
+        // somebody's server as an action, and that is the same category as
+        // sending a message — it needs a yes, whoever the recipient is.
+        if (!['GET', 'HEAD'].includes(verb) && !approvals.includes(APPROVAL_REQUIRED.SEND_REQUEST)) {
+          return {
+            ok: false,
+            needsApproval: APPROVAL_REQUIRED.SEND_REQUEST,
+            error: `A ${verb} to ${String(url).slice(0, 120)} is a request that does something at the other end, not a read. I need you to confirm before I send it.`,
+          };
+        }
+
+        try {
+          const res = await fetchPublicUrl(url, { method: verb, headers, body, timeoutMs: 12_000, fetchImpl, resolve: resolveHost });
+          return ok({
+            url: res.url,
+            status: res.status,
+            contentType: res.contentType,
+            redirectedThrough: res.redirectedThrough,
+            json: res.json,
+            // Enough to learn an API from, not so much that one page eats the
+            // whole request budget. Everything here is billed as input on every
+            // later step of the same turn.
+            text: res.text ? res.text.slice(0, 12_000) : null,
+            truncated: res.truncated || (res.text?.length ?? 0) > 12_000,
+          });
+        } catch (e) {
+          if (e instanceof BlockedUrlError) return fail(`I will not fetch that: ${e.message}`, { blocked: true });
+          return fail(e.message);
+        }
+      },
+    },
+
+    {
+      name: 'get_credential_schema',
+      say: (a) => `checking what a ${a.type ?? 'credential'} needs`,
+      description:
+        'The exact fields a credential type needs, so you can tell the owner precisely what to create rather than describing it vaguely. You cannot create credentials yourself and you must never ask for a secret in conversation — say the type, a name, and which fields to fill, and they will do it in n8n where secrets belong.',
+      parameters: {
+        type: 'object',
+        properties: { type: { type: 'string', description: 'The credential type name, e.g. httpHeaderAuth, httpQueryAuth, googleApi.' } },
+        required: ['type'],
+      },
+      handler: async ({ type }) => {
+        if (!n8n) return needsN8n();
+        if (!type) return fail('Which credential type?');
+        try {
+          const schema = await n8n.credentialSchema(type);
+          const props = schema?.properties ?? {};
+          return ok({
+            type,
+            fields: Object.entries(props).map(([name, spec]) => ({
+              name,
+              label: spec?.displayName ?? name,
+              required: Array.isArray(schema?.required) ? schema.required.includes(name) : undefined,
+              secret: Boolean(spec?.typeOptions?.password),
+            })),
+            howToCreate: `In n8n: Credentials → New → search "${type}" → fill the fields above → Save. Then tell me the name you gave it and I will use it. Do not paste the secret to me; it belongs in n8n, not in a conversation.`,
+          });
+        } catch (e) {
+          return fail(`Could not read the schema for "${type}": ${e.message}. The type name may be wrong — list_credentials shows the types already in use.`);
         }
       },
     },

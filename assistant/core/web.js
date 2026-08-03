@@ -119,7 +119,11 @@ export function readableText(html) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/[ \t]+/g, ' ')
-    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+    // Trim each line before collapsing blank runs, or every paragraph break
+    // arrives padded with the spaces that used to be tags — noise that is
+    // billed as input on every later step of the same turn.
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 

@@ -149,6 +149,19 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     return request('GET', `/executions/${encodeURIComponent(id)}`, { query: { includeData } });
   }
 
+  /**
+   * The fields a credential type actually needs.
+   *
+   * So "I need a Google Places key" can become "create a credential of type
+   * httpQueryAuth called Places, with name=key and value=<your key>" — an
+   * instruction someone can follow in twenty seconds, rather than a hunt
+   * through a dropdown of four hundred types. The secrets themselves are never
+   * involved here: this is the shape of the form, not what goes in it.
+   */
+  async function credentialSchema(type) {
+    return request('GET', `/credentials/schema/${encodeURIComponent(type)}`);
+  }
+
   async function listTags() {
     return request('GET', '/tags');
   }
@@ -347,6 +360,7 @@ export function createN8nClient({ baseUrl, apiKey, fetchImpl = globalThis.fetch 
     listWorkflows,
     getWorkflow,
     listCredentials,
+    credentialSchema,
     listExecutions,
     getExecution,
     listTags,
