@@ -187,3 +187,45 @@ test('every policy entry is complete, because a half-written one reads as permis
     assert.ok(note.length > 30, `${host} needs to say why there is no route`);
   }
 });
+
+test('a person keeps the same id between the sheet and the send', () => {
+  // The bug this catches: contactSheet minted a fresh random id per call, so
+  // the personId you got from the sheet never matched on the send that
+  // followed — and "never message the same person twice" keys on exactly that
+  // id, so every message would have looked like a first one. Every existing
+  // test called contactSheet once and saw nothing wrong.
+  const finding = {
+    id: 'f_stable',
+    demand: { inTheirWords: [quote('https://news.ycombinator.com/item?id=3', 'bob'), quote('https://community.n8n.io/t/x/9', 'ann')] },
+  };
+
+  const first = contactSheet(finding);
+  const second = contactSheet(finding);
+  assert.deepEqual(first.people.map((p) => p.id), second.people.map((p) => p.id), 'two calls must name the same people');
+
+  // Different findings, or different posts, are different people.
+  const other = contactSheet({ ...finding, id: 'f_other' });
+  assert.notEqual(other.people[0].id, first.people[0].id, 'the same person on another finding is tracked separately');
+  assert.notEqual(first.people[0].id, first.people[1].id);
+});
+
+test('a published address outranks a forum thread, and a guessed one is never used', () => {
+  const withEmail = contactSheet({
+    id: 'f1',
+    demand: {
+      inTheirWords: [
+        quote('https://news.ycombinator.com/item?id=1', 'bob'),
+        { ...quote('https://github.com/o/r/issues/2', 'ann'), author: { handle: 'ann', profile: null, email: 'ann@example.com' } },
+      ],
+    },
+  });
+  assert.equal(withEmail.people[0].reachability, 'email', 'an address they published needs nobody’s account and breaks nobody’s rules');
+  assert.equal(withEmail.people[0].email, 'ann@example.com');
+
+  // Anything that is not an address is not turned into one.
+  for (const bad of ['not-an-email', 'ann@', '@example.com', '', null, undefined, 'ann example.com']) {
+    const s = contactSheet({ id: 'f1', demand: { inTheirWords: [{ ...quote('https://x.example/1', 'z'), author: { handle: 'z', email: bad } }] } });
+    assert.equal(s.people[0].email, null, `"${String(bad)}" must not become an address`);
+    assert.notEqual(s.people[0].reachability, 'email');
+  }
+});

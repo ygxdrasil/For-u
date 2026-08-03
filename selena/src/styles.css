@@ -787,3 +787,42 @@ button.danger:hover { background: var(--ember); }
 }
 .replybox textarea { resize: vertical; }
 .replybox p { margin: 2px 0 0; }
+
+/* Preview, then send. The confirmation sits inside the draft it belongs to,
+   so there is no moment where you are agreeing to text you cannot see. */
+.sendbox {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sendbox p { margin: 0; }
+
+/* Adding a sending credential. Each field carries the reason it matters
+   underneath it, because these are the boxes where a wrong value is not a
+   failed request but a message to a stranger from the wrong account. */
+.sender-add {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.sender-add .field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sender-add .field > span:first-child {
+  color: var(--fg);
+  font-size: 12px;
+}
+.sender-add input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font: inherit;
+}

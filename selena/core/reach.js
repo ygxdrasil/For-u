@@ -25,7 +25,7 @@
  * enforced by a test rather than by everyone remembering.
  */
 
-import { nowIso, randomId, hostOf, clampNumber } from './util.js';
+import { nowIso, randomId, stableId, hostOf, clampNumber } from './util.js';
 
 /**
  * What each platform allows, in its own terms rather than in ours.
@@ -114,7 +114,7 @@ export const NO_ROUTE = {
   'usaspending.gov': 'The award names a company rather than a person. That company is contactable through its own public details — this is the one records source where a real conversation is possible, but you find the route yourself.',
 };
 
-export const REACHABILITY = ['reply', 'profile', 'named-only', 'anonymous'];
+export const REACHABILITY = ['email', 'reply', 'profile', 'named-only', 'anonymous'];
 
 /** What each host allows, falling back to "we do not know" rather than "yes". */
 export function policyFor(url) {
@@ -157,15 +157,30 @@ export function contactSheet(finding, { limit = 25 } = {}) {
     const handle = w.author?.handle ?? null;
     const profile = w.author?.profile ?? null;
 
+    // An address the person published themselves, on the page the quote came
+    // from. Never harvested from anywhere else and never guessed from a name —
+    // firstname@company.com is a guess, and a guess sent to a stranger is
+    // somebody else's inbox.
+    const email = w.author?.email && /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(String(w.author.email)) ? String(w.author.email).slice(0, 200) : null;
+
     let reachability = 'anonymous';
-    if (handle && policy?.reply === 'welcome') reachability = 'reply';
+    // An address they published beats everything: it is the one route that
+    // needs nobody's forum account and breaks nobody's rules.
+    if (email) reachability = 'email';
+    else if (handle && policy?.reply === 'welcome') reachability = 'reply';
     else if (handle && profile) reachability = 'profile';
     else if (handle) reachability = 'named-only';
 
     people.push({
-      id: randomId('who'),
+      // Stable, derived from the finding and the post — NOT random. A fresh id
+      // per call meant the id you got from the sheet never matched on the
+      // send that followed it, and the "never message the same person twice"
+      // check keys on it, so every message would have looked like a new one.
+      // Every unit test called contactSheet once and saw nothing wrong.
+      id: stableId('who', finding?.id ?? '', w.url),
       handle,
       profile,
+      email,
       quote: String(w.quote ?? '').slice(0, 600),
       url: w.url,
       date: w.date ?? null,
@@ -178,11 +193,11 @@ export function contactSheet(finding, { limit = 25 } = {}) {
     });
   }
 
-  const rank = { reply: 0, profile: 1, 'named-only': 2, anonymous: 3 };
+  const rank = { email: 0, reply: 1, profile: 2, 'named-only': 3, anonymous: 4 };
   people.sort((a, b) => rank[a.reachability] - rank[b.reachability]);
 
   const counts = people.reduce((m, p) => ({ ...m, [p.reachability]: (m[p.reachability] ?? 0) + 1 }), {});
-  const contactable = people.filter((p) => p.reachability === 'reply' || p.reachability === 'profile').length;
+  const contactable = people.filter((p) => ['email', 'reply', 'profile'].includes(p.reachability)).length;
 
   return {
     people: people.slice(0, clampNumber(limit, 1, 200, 25)),

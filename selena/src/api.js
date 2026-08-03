@@ -102,6 +102,12 @@ export const api = {
   // Keys you paste rather than deploy. Values only ever travel one way: in.
   keyAction: (action, payload = {}) => call('/api/auth', { method: 'POST', body: { action: `${action}-key`, ...payload } }),
 
+  // Sending credentials. A different kind of thing from a read key — one buys
+  // reach, one speaks to a stranger under your name — so they are a separate
+  // pair of calls rather than another key.
+  senders: () => call('/api/auth', { method: 'POST', body: { action: 'list-senders' } }),
+  senderAction: (action, payload = {}) => call('/api/auth', { method: 'POST', body: { action: `${action}-sender`, ...payload } }),
+
   peers: () => call('/api/peers'),
   peerAction: (action, payload = {}) => call('/api/peers', { method: 'POST', body: { action, ...payload } }),
 };

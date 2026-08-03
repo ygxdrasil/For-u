@@ -7,14 +7,17 @@
  *
  * Two rules are visible in the interface rather than only in the code.
  *
- * There is no send button. Every draft has a copy button and a link to the
- * thread, and the sending is done by you, in your own account, having read it.
- * That was set as a hard limit at the start and it is not quietly relaxed
- * because a send button would be convenient here.
+ * SENDING IS TWO PRESSES. She started drafts-only; sending was added later, in
+ * words, for email and the forums with a real write API. What did not change is
+ * that nothing leaves without you reading the exact text first: the preview
+ * returns the bytes that would go out, from which account, and touches no
+ * network. Where no credential exists for a channel there is no send button at
+ * all, which is clearer than one that explains itself away when pressed. Copy
+ * and the thread link stay for everywhere she cannot post — Hacker News above
+ * all, where posting would mean being you.
  *
- * And a reply never moves the evidence level. The panel says so where the
- * reply is recorded, because that is the moment somebody would expect a number
- * to go up.
+ * A REPLY NEVER MOVES THE EVIDENCE LEVEL. The panel says so where the reply is
+ * recorded, because that is the moment somebody would expect a number to go up.
  */
 
 import React, { useState } from 'react';
@@ -22,6 +25,7 @@ import { api } from './api.js';
 import { Pill, Banner, SourceLink } from './components.jsx';
 
 const REACH_LABEL = {
+  email: { text: 'email', tone: 'ok' },
   reply: { text: 'reply in thread', tone: 'ok' },
   profile: { text: 'via profile', tone: 'ok' },
   'named-only': { text: 'named, no route', tone: 'warn' },
@@ -56,6 +60,85 @@ function Copy({ text }) {
     >
       {done ? 'copied' : 'copy'}
     </button>
+  );
+}
+
+/**
+ * Preview, then send. Two presses, never one.
+ *
+ * The preview is not a courtesy — it is the only honest way to check something
+ * irreversible. It returns the exact bytes that would go out, from which
+ * account, to which post, and touches no network. Sending is a second,
+ * deliberate press against text you have already read.
+ */
+function SendControl({ person, findingId, text, onSent }) {
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState(null);
+  const [sent, setSent] = useState(null);
+
+  if (sent) {
+    return (
+      <p className="muted small">
+        Sent as {sent.channel}
+        {sent.postedUrl ? (
+          <>
+            {' — '}
+            <a href={sent.postedUrl} target="_blank" rel="noreferrer noopener">read it</a>
+          </>
+        ) : null}
+        . {sent.left} left before she stops.
+      </p>
+    );
+  }
+
+  return (
+    <div className="sendbox">
+      {!preview ? (
+        <button
+          className="small"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setProblem(null);
+            const res = await api.findingAction('send-preview', { id: findingId, personId: person.id, text });
+            setBusy(false);
+            if (!res.ok) return setProblem(res.error ?? res.data?.reason ?? 'could not preview');
+            if (!res.data.ok) return setProblem(res.data.reason);
+            setPreview(res.data);
+          }}
+        >
+          {busy ? 'Checking…' : 'Send this…'}
+        </button>
+      ) : (
+        <>
+          <p className="muted small">
+            Would post as <strong>{preview.as}</strong> via {preview.channel}
+            {preview.subject ? ` — subject "${preview.subject}"` : ''}. This cannot be undone.
+          </p>
+          <div className="row" style={{ gap: 6 }}>
+            <button
+              className="primary small"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                const res = await api.findingAction('send', { id: findingId, personId: person.id, text: preview.text, subject: preview.subject });
+                setBusy(false);
+                if (!res.ok || !res.data.ok) return setProblem(res.data?.reason ?? res.error ?? 'it did not send');
+                setSent(res.data);
+                onSent?.(res.data);
+              }}
+            >
+              {busy ? 'Sending…' : 'Yes, send it'}
+            </button>
+            <button className="small" onClick={() => setPreview(null)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+      {problem ? <p className="muted small">{problem}</p> : null}
+    </div>
   );
 }
 
@@ -155,6 +238,8 @@ export default function Reach({ finding, refresh }) {
   const [sheet, setSheet] = useState(null);
   const [drafts, setDrafts] = useState(null);
   const [convos, setConvos] = useState(null);
+  const [outbox, setOutbox] = useState(null);
+  const [senders, setSenders] = useState([]);
   const [working, setWorking] = useState(null);
   const [error, setError] = useState(null);
 
@@ -166,10 +251,16 @@ export default function Reach({ finding, refresh }) {
     if (!res.ok) return setError(res.error);
     setSheet(res.data.sheet);
     setConvos(res.data.conversations);
+    setOutbox(res.data.outbox);
+    setSenders(res.data.senders ?? []);
     if (res.data.drafts) setDrafts(res.data.drafts);
   };
 
   const draftFor = (personId) => (drafts ?? []).find((d) => d.personId === personId);
+  const canSendTo = (p) =>
+    senders.some((s) =>
+      p.email ? s.channel === 'email' : s.host && (p.url ?? '').includes(s.host),
+    );
 
   return (
     <div className="card">
@@ -192,6 +283,7 @@ export default function Reach({ finding, refresh }) {
           <div className="row" style={{ gap: 8, margin: '10px 0' }}>
             <Pill tone={sheet.contactable ? 'ok' : 'warn'}>{sheet.summary}</Pill>
             {convos?.asked ? <Pill mono>{convos.line}</Pill> : null}
+            {outbox?.sent || outbox?.failed || outbox?.unconfirmed ? <Pill mono>{outbox.line}</Pill> : null}
           </div>
 
           {sheet.contactable ? (
@@ -206,6 +298,7 @@ export default function Reach({ finding, refresh }) {
           {sheet.people.map((p) => {
             const label = REACH_LABEL[p.reachability] ?? REACH_LABEL.anonymous;
             const draft = draftFor(p.id);
+            const canSend = canSendTo(p);
             return (
               <div className="person" key={p.id}>
                 <div className="row" style={{ gap: 8 }}>
@@ -238,10 +331,14 @@ export default function Reach({ finding, refresh }) {
                       <span className="muted small">{draft.how}</span>
                     </div>
                     {draft.caution ? <p className="muted small">{draft.caution}</p> : null}
+                    {/* Only where a credential exists for that channel. No
+                        button at all is clearer than a button that explains
+                        itself away when pressed. */}
+                    {canSend ? <SendControl person={p} findingId={finding.id} text={draft.text} onSent={() => refresh?.()} /> : null}
                   </div>
                 ) : null}
 
-                {p.reachability === 'reply' || p.reachability === 'profile' ? (
+                {['email', 'reply', 'profile'].includes(p.reachability) ? (
                   <RecordReply
                     person={p}
                     findingId={finding.id}

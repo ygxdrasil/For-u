@@ -39,11 +39,32 @@ and pitching nothing.
 
 Two rules are load-bearing:
 
-**She does not send.** Every draft gets a copy button and a link to the thread;
-you send it, from your account, having read it. That was set as a limit at the
-start and `core/reach.js` contains no network call at all. A test asserts the
-drafts carry no `sent`, `endpoint` or `deliver` field, so a later change cannot
-grow one by accident.
+**Sending is two presses, and only where it can be done honestly.** She began
+drafts-only; sending was added afterwards, deliberately, for email and the
+forums that have a real write API. The preview returns the exact bytes that
+would go out and from which account, and touches no network; sending is a
+second press against text you have already read. Where no credential exists
+there is no send button at all, which is clearer than one that explains itself
+away when pressed.
+
+| Channel | Sends? | Why |
+|---|---|---|
+| Email | yes | A Resend key that is **hers**, and a from-address on your domain. Nobody is impersonated. |
+| Shopify / n8n / Make forums | yes | A Discourse **User API Key you issue** for your own account and revoke there in one click. |
+| Lemmy | yes | Your own token. Community rules still apply and several ban solicitation. |
+| Hacker News | **no** | There is no write API. Posting means driving the web form with your session cookie — logging in as you, which stays refused. |
+| Stack Exchange | **no** | The API exists; comments are for improving the question and a research request gets flagged and deleted. |
+
+The brakes: **five messages per finding, then she stops and waits.** The same
+person is never written to twice, enforced on the record rather than on anyone
+remembering. Nothing on a schedule may send — a test asserts `core/pass.js`,
+`api/cron.js`, `core/research.js` and `core/watches.js` do not import
+`core/outbox.js`, because that is exactly the import somebody adds later while
+being helpful. Every attempt is written down **before** the request, so a
+function killed at its timeout leaves a trace instead of a message that went out
+with no record of it; an unanswered request is reported as `unconfirmed`, never
+folded into "failed". Email carries a footer naming who it is from and how to
+make it stop, appended by the sender rather than left to the drafter.
 
 **A reply never moves the level.** "I'd pay £30 a month" is the most valuable
 sentence in this system and it is *not* evidence of payment — stated intent and
@@ -573,6 +594,8 @@ core/       the headless engine — no HTTP, no React, no cron
   starters.js    the verified set, probed live and ready to connect
   reach.js       who can be talked to, what to say, and what they said back;
                  contains no network call, deliberately
+  outbox.js      the only place that speaks to a stranger: credentials you
+                 issued, five per finding, nothing on a schedule
   autonomy.js    the brakes: reserve, floor, ceiling, backoff, stop
   pass.js        one unattended pass: watch → roam → stand → hand over
   peers.js       where Jason and Grace are, and proof the line works

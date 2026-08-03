@@ -106,7 +106,15 @@ function normalizeQuote(raw, path, problems) {
     // followed up. Only ever the public handle and the public profile link —
     // the same two strings printed next to the post on a page anyone can open.
     author: raw?.author?.handle
-      ? { handle: str(raw.author.handle).slice(0, 80), profile: canonicalUrl(raw.author.profile) ?? null }
+      ? {
+          handle: str(raw.author.handle).slice(0, 80),
+          profile: canonicalUrl(raw.author.profile) ?? null,
+          // Only an address the person published on their own public profile.
+          // Validated here rather than at the point of sending, because a
+          // malformed one that survives this far becomes a message to nobody
+          // or, worse, to somebody else.
+          email: /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(str(raw.author.email)) ? str(raw.author.email).slice(0, 200) : null,
+        }
       : null,
   };
 }

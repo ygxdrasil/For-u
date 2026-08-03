@@ -25,6 +25,7 @@ import { json, methodGuard, readBody, guard } from '../core/http.js';
 import { keyStatus, setKey, clearKey, MANAGED_KEYS } from '../core/keys.js';
 import { createStore } from '../core/store.js';
 import { extractToken, authenticateAdmin, rotateToken, retireToken, listTokens } from '../core/auth.js';
+import { listSenders, addSender, removeSender, CHANNELS } from '../core/outbox.js';
 import crypto from 'node:crypto';
 import {
   PASSWORD_KEY,
@@ -315,6 +316,35 @@ export default guard(async function handler(req, res) {
     if (!saved.ok) return json(res, 400, saved);
     await store.addActivity({ kind: 'auth', level: 'info', message: `${name} was set (${saved.fingerprint})` });
     return json(res, 201, { ok: true, ...saved, keys: await keysFor(store) });
+  }
+
+  // ---- who she may send as ----------------------------------------------
+  // Alongside the read keys rather than on their own route: eleven of Vercel's
+  // twelve functions are used. These are a different KIND of credential from
+  // the ones above — a read key buys reach, one of these speaks to a stranger
+  // under your name — so the interface says so rather than listing them
+  // together as "keys".
+  if (action === 'list-senders' || action === 'add-sender' || action === 'remove-sender') {
+    if (!signedIn) return json(res, 401, { ok: false, error: 'Sign in first — sending credentials are managed from the Settings page.' });
+
+    if (action === 'list-senders') {
+      return json(res, 200, { ok: true, senders: await listSenders(store), channels: CHANNELS });
+    }
+    if (action === 'remove-sender') {
+      const out = await removeSender(store, String(body.id ?? ''));
+      await store.addActivity({ kind: 'auth', level: 'info', message: 'a sending credential was removed' });
+      return json(res, 200, { ok: true, ...out, senders: await listSenders(store) });
+    }
+
+    const secret = await getSessionSecret(store);
+    const added = await addSender(store, body.sender ?? body, secret);
+    if (!added.ok) return json(res, 400, added);
+    await store.addActivity({
+      kind: 'auth',
+      level: 'info',
+      message: `she may now send as ${added.sender.username ?? added.sender.fromEmail} on ${added.sender.host ?? added.sender.channel}`,
+    });
+    return json(res, 201, { ok: true, ...added, senders: await listSenders(store) });
   }
 
   if (action === 'mint-token' || action === 'retire-token' || action === 'list-tokens') {

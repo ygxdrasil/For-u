@@ -21,6 +21,7 @@ import { gateRequest } from '../core/auth.js';
 import { summarizeFinding, FINDING_STATUS } from '../core/schema.js';
 import { reverifyFinding, staleFindings } from '../core/watches.js';
 import { contactSheet, draftOpeners, recordConversation, conversationSummary } from '../core/reach.js';
+import { sendOne, outboxSummary, listSenders } from '../core/outbox.js';
 import { nowIso } from '../core/util.js';
 
 export default guard(async function handler(req, res) {
@@ -103,8 +104,8 @@ export default guard(async function handler(req, res) {
   if (action === 'contact-sheet') {
     const sheet = contactSheet(finding, { limit: Number(body.limit) || 25 });
     // Drafting costs a model call, so it only happens when asked for.
-    const drafts = body.draft === true ? await draftOpeners(finding, sheet.people.filter((p) => p.reachability === 'reply' || p.reachability === 'profile'), ctx) : null;
-    return json(res, 200, { ok: true, sheet, drafts, conversations: conversationSummary(finding), context: contextStatus(ctx) });
+    const drafts = body.draft === true ? await draftOpeners(finding, sheet.people.filter((p) => ['email', 'reply', 'profile'].includes(p.reachability)), ctx) : null;
+    return json(res, 200, { ok: true, sheet, drafts, conversations: conversationSummary(finding), outbox: outboxSummary(finding), senders: await listSenders(ctx.store), context: contextStatus(ctx) });
   }
 
   // ---- what they said back ----------------------------------------------
@@ -128,8 +129,25 @@ export default guard(async function handler(req, res) {
     });
   }
 
+  // ---- send one, or preview exactly what would go ------------------------
+  // `preview` is not a courtesy: it is the only honest way to check something
+  // irreversible, so the interface always calls it first and a send is a
+  // second, separate press.
+  if (action === 'send' || action === 'send-preview') {
+    const sheet = contactSheet(finding);
+    const person = sheet.people.find((p) => p.id === body.personId) ?? null;
+    if (!person) return json(res, 404, { ok: false, error: 'That person is not on this finding’s contact sheet.' });
+    if (!body.text) return json(res, 400, { ok: false, error: 'There is no message to send.' });
+
+    const out = await sendOne(finding, person, String(body.text).slice(0, 4000), ctx, {
+      preview: action === 'send-preview',
+      subject: body.subject ? String(body.subject).slice(0, 200) : null,
+    });
+    return json(res, 200, { ok: out.ok, ...out, finding: undefined, outbox: outboxSummary(out.finding ?? finding) });
+  }
+
   return json(res, 400, {
     ok: false,
-    error: `Unknown action "${action}". Use archive, restore, supersede, reverify, contact-sheet or record-reply. There is no delete.`,
+    error: `Unknown action "${action}". Use archive, restore, supersede, reverify, contact-sheet, record-reply, send-preview or send. There is no delete.`,
   });
 });

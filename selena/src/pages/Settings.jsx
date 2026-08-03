@@ -9,6 +9,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, getToken, setToken, ago } from '../api.js';
 import { Pill, Empty, Banner } from '../components.jsx';
+import Senders from '../Senders.jsx';
 
 function Flag({ on, label, why }) {
   return (
@@ -146,6 +147,7 @@ export default function Settings({ data, auth, refreshAuth }) {
         </div>
 
         <Keys auth={auth} refreshAuth={refreshAuth} />
+        <Senders />
 
         <div className="card">
           <h3>Server configuration</h3>
