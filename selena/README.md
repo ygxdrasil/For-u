@@ -347,6 +347,22 @@ is, so a memory-only deployment signs you out when it sleeps.
    `selena`. It is deliberately separate from `assistant/` so a bad build here
    can never take Jason down.
 
+   `vercel.json` sets `ignoreCommand` to `git diff --quiet HEAD^ HEAD -- .`,
+   which builds only when something in this directory changed. Two projects
+   deploy from this one repo, so every push used to build both, and two builds
+   per push exhausted the Hobby plan's daily deployment limit in an afternoon.
+   Vercel skips the build when the command exits 0, which is exactly what
+   `git diff --quiet` does when nothing here moved.
+
+   That paragraph lives here, and not in `vercel.json` as a `_comment_` key,
+   because **Vercel validates `vercel.json` against a closed schema before the
+   build starts**. An unknown top-level key does not warn and is not ignored:
+   the deployment fails outright with `should NOT have additional property`,
+   produces no build logs because no build begins, and cannot be redeployed
+   from the dashboard because there is nothing to repeat. A comment key added
+   to explain this very setting took both projects down for a day.
+   `tests/structure.test.js` now fails on any key Vercel does not know.
+
 2. **Environment variables.** All optional — she deploys and runs with none of
    them, and says on screen exactly what she cannot do without each.
 

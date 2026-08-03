@@ -99,6 +99,23 @@ as server environment variables. Server env is required for `/api/sweep` and for
 | `MONTHLY_USD_CAP` | default 8 |
 | `ALLOW_MEMORY_AUTH` | dev only. Lets the password flow run without a database. Never set in production |
 
+### Why `vercel.json` has an `ignoreCommand`
+
+`git diff --quiet HEAD^ HEAD -- .` builds only when something in `assistant/`
+changed. Two projects deploy from this one repo — Jason from here and Selena
+from `selena/` — so every push used to build both, and two builds per push
+exhausted the Hobby plan's daily deployment limit in an afternoon. Vercel skips
+the build when the command exits 0, which is what `git diff --quiet` does when
+nothing here moved.
+
+This explanation is in the README rather than in `vercel.json`, because
+**Vercel validates `vercel.json` against a closed schema before the build
+starts**. An unknown top-level key does not warn and is not ignored: the
+deployment fails with `should NOT have additional property`, writes no build
+logs because no build begins, and cannot be redeployed from the dashboard.
+A `_comment_` key added to explain this very setting took both projects down
+for a day. `selena/tests/structure.test.js` checks both files for it now.
+
 ## The front door
 
 The site is on a public URL and, once configured, holds an n8n API key with

@@ -265,3 +265,42 @@ test('every npm script points at a file that exists', () => {
     }
   }
 });
+
+/**
+ * Vercel validates vercel.json against a CLOSED schema, before the build runs.
+ *
+ * An unknown top-level key does not warn and is not ignored: the whole
+ * deployment fails with `should NOT have additional property "x"`, no build
+ * logs are produced because no build ever starts, and the dashboard refuses to
+ * redeploy it — "this deployment can not be redeployed, try again from a fresh
+ * commit" — because there is no build to repeat.
+ *
+ * This has already happened. A `_comment_ignoreCommand` key was added to
+ * explain WHY ignoreCommand exists, which is a good instinct in a file format
+ * that has no comments, and it silently broke every deployment of both
+ * projects in this repo for a day. JSON has no comments. The explanation
+ * belongs in the README, and this test is what stops the next one.
+ */
+const VERCEL_TOP_LEVEL = new Set([
+  '$schema', 'buildCommand', 'devCommand', 'installCommand', 'ignoreCommand',
+  'outputDirectory', 'framework', 'functions', 'routes', 'rewrites', 'redirects',
+  'headers', 'cleanUrls', 'trailingSlash', 'regions', 'public', 'github', 'git',
+  'images', 'crons', 'env', 'build', 'version',
+]);
+
+test('vercel.json carries no key Vercel will reject', () => {
+  // Both projects in this repo, because one bad key in either one is a day of
+  // nothing deploying, and the person who adds it will not be looking here.
+  for (const file of [path.join(ROOT, 'vercel.json'), path.join(ROOT, '..', 'assistant', 'vercel.json')]) {
+    if (!fs.existsSync(file)) continue;
+    for (const key of Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')))) {
+      assert.ok(
+        VERCEL_TOP_LEVEL.has(key),
+        `${path.relative(path.join(ROOT, '..'), file)} has a top-level "${key}", which is not in Vercel's schema. ` +
+          'That does not warn — it fails the whole deployment before the build starts, with no build logs ' +
+          'and no way to redeploy. If it is a real Vercel option, add it to VERCEL_TOP_LEVEL here. ' +
+          'If it is a comment, move it to the README.',
+      );
+    }
+  }
+});
