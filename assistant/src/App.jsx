@@ -384,7 +384,9 @@ function Jason({ onSignOut }) {
             const hit = [...events].reverse().find((e) => e.key === d.name && e.kind === 'run');
             if (hit) { hit.kind = d.ok ? 'ok' : 'bad'; hit.text = d.say ?? d.name; hit.error = d.ok ? null : d.error; }
             if (d.preview) { lastCanvas.current = d.preview; setCanvas(d.preview); }
-            if (d.needsApproval) setApproval({ action: d.needsApproval, detail: d.error });
+            // The target travels with the request, so the yes is about THIS
+            // workflow rather than about activation in general.
+            if (d.needsApproval) setApproval({ action: d.needsApproval, target: d.detail?.approvalTarget ?? d.approvalTarget ?? null, detail: d.error });
             setCalls((c) => {
               const i = c.map((x) => x.name).lastIndexOf(d.name);
               if (i < 0) return c;
@@ -870,7 +872,7 @@ function Dock({ messages, live, busy, ready, keyNote, approval, onSend, onDismis
                 {/* Disabled while the turn is still streaming. Left enabled,
                     the click was silently dropped — you pressed Approve, nothing
                     happened, and nothing said why. */}
-                <button disabled={busy} onClick={() => onSend('Yes, go ahead.', [approval.action])}>
+                <button disabled={busy} onClick={() => onSend('Yes, go ahead.', [{ action: approval.action, target: approval.target ?? null }])}>
                   {busy ? 'finishing…' : 'Approve'}
                 </button>
                 <button className="ghost" disabled={busy} onClick={onDismiss}>Not now</button>

@@ -205,6 +205,26 @@ await bothMustAgree('two appends racing each other both survive', async (s) => {
   return { count: (await s.getSession('race')).messages.length, hasPhone: text.includes('from the phone'), hasLaptop: text.includes('from the laptop') };
 });
 
+await bothMustAgree('the same workflow saved twice is stored once, and real changes are all kept', async (s) => {
+  // Pruning is not allowed here — the snapshot is the undo for every
+  // overwrite. Storing identical bytes over and over is a different thing, and
+  // it was the whole growth problem.
+  const same = { name: 'Leads', nodes: [{ name: 'A', type: 'x' }], connections: {} };
+  for (let i = 0; i < 5; i++) await s.snapshot({ workflowId: 'wf9', name: 'Leads', workflow: same, reason: `save ${i}` });
+  await s.snapshot({ workflowId: 'wf9', name: 'Leads', workflow: { ...same, nodes: [{ name: 'B', type: 'x' }] }, reason: 'a real change' });
+
+  const kept = await s.listSnapshots('wf9');
+  const oldest = await s.getSnapshot(kept.at(-1).id);
+  return { count: kept.length, oldestStillThere: oldest?.workflow?.nodes?.[0]?.name };
+});
+
+await bothMustAgree('the storage report answers the same questions', async (s) => {
+  await s.snapshot({ workflowId: 'wf1', name: 'X', workflow: { a: 1 }, reason: 'first' });
+  await s.appendSession('s1', [{ role: 'user', parts: [{ text: 'hi' }] }]);
+  const report = await s.storageReport();
+  return { fields: Object.keys(report).sort(), snapshots: report.snapshots, hasBytes: report.approxBytes > 0 };
+});
+
 /* ---------------------------------------------------------------- tokens */
 
 await bothMustAgree('tokens are found by hash, retired not removed, and never listed raw', async (s) => {

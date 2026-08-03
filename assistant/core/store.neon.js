@@ -127,12 +127,45 @@ export async function createNeonStore(databaseUrl, { sqlImpl = null } = {}) {
     },
 
     // ---- snapshots (append only — this is the undo for every update)
+    /**
+     * Append-only, and never pruned — the snapshot is the safety net under
+     * every overwrite, and "never delete anything" does not lapse because a
+     * table got big.
+     *
+     * It does decline to store the same bytes twice. A save that changed
+     * nothing has nothing to recover, and repeated identical saves were the
+     * whole growth problem: 200 updates of a 60-node workflow came to 1.4MB
+     * against a free tier of half a gigabyte.
+     */
     async snapshot({ workflowId, name, workflow, reason }) {
+      const previous = await sql`select id, name, workflow, reason, at from snapshots
+                                 where workflow_id = ${workflowId} order by at desc, seq desc limit 1`;
+      const before = previous[0];
+      if (before && JSON.stringify(before.workflow) === JSON.stringify(workflow)) {
+        return { id: before.id, workflowId, name: before.name, workflow, reason: before.reason, at: before.at, reused: true };
+      }
+
       const id = `snap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       const at = new Date().toISOString();
       await sql`insert into snapshots (id, workflow_id, name, workflow, reason, at)
                 values (${id}, ${workflowId}, ${name}, ${JSON.stringify(workflow)}::jsonb, ${reason}, ${at})`;
       return { id, workflowId, name, workflow, reason, at };
+    },
+
+    /** What the history is costing, so it is seen rather than discovered. */
+    async storageReport() {
+      const rows = await sql`select
+          (select count(*) from snapshots) as snapshots,
+          (select coalesce(sum(pg_column_size(workflow)), 0) from snapshots) as snapshot_bytes,
+          (select count(*) from chat_sessions) as sessions,
+          (select count(*) from findings) as findings`;
+      const r = rows[0] ?? {};
+      return {
+        snapshots: Number(r.snapshots ?? 0),
+        approxBytes: Number(r.snapshot_bytes ?? 0),
+        sessions: Number(r.sessions ?? 0),
+        findings: Number(r.findings ?? 0),
+      };
     },
     async listSnapshots(workflowId) {
       const rows = workflowId

@@ -1109,3 +1109,114 @@ test('a field a newer n8n refuses is dropped and the save goes through', async (
   assert.equal(attempts.length, 2, 'it did not retry without the field n8n named');
   assert.deepEqual(out.fieldsNotAccepted, ['pinData'], 'it dropped a field without saying so');
 });
+
+test('a yes for one workflow does not switch on a different one', async () => {
+  // Approvals were bare strings, so "activate_workflow" meant every activation
+  // in the turn rather than the one shown to the user. A model told "you may
+  // activate" will use that on whatever it is holding — the gate was
+  // decorative in exactly the case it exists for.
+  const { buildToolRegistry, APPROVAL_REQUIRED, approvalCovers } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const live = new Set();
+  const n8n = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname.replace('/api/v1', '');
+      const id = path.split('/')[2];
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (path.endsWith('/activate')) { live.add(id); return reply({ id, active: true }); }
+      return reply({
+        id, name: `Workflow ${id}`, active: live.has(id), connections: {},
+        nodes: [{ id: 'e', name: 'Email it', type: 'n8n-nodes-base.emailSend', typeVersion: 2.1, position: [0, 0], parameters: { operation: 'send' } }],
+      });
+    },
+  });
+
+  const tools = buildToolRegistry({ n8n, store: createMemoryStore(), approvals: [{ action: APPROVAL_REQUIRED.ACTIVATE, target: 'A' }] });
+  const activate = tools.find((t) => t.name === 'set_workflow_active');
+
+  assert.equal((await activate.handler({ id: 'A', active: true })).ok, true, 'the approved workflow was refused');
+  assert.notEqual((await activate.handler({ id: 'B', active: true })).ok, true, 'a yes for A switched on B');
+  assert.equal(live.has('B'), false, 'a workflow nobody approved is live and able to send email');
+
+  // A bare string still works — it is what the browser sent before today.
+  assert.equal(approvalCovers(['activate_workflow'], 'activate_workflow', 'anything'), true);
+  assert.equal(approvalCovers([{ action: 'activate_workflow', target: 'A' }], 'activate_workflow', 'B'), false);
+});
+
+test('saving the same workflow twice does not leave a second copy', async () => {
+  // A turn that times out after the save lands but before the answer arrives
+  // leaves the model believing it failed. Resuming, it saves again — and
+  // nothing in this system can delete the spare, which runs on the same
+  // schedule doing the same work, unwatched.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const { createN8nClient } = await import('../core/n8nClient.js');
+
+  const stored = [];
+  const n8n = createN8nClient({
+    baseUrl: 'https://n8n.invalid', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname.replace('/api/v1', '');
+      const method = init?.method ?? 'GET';
+      const reply = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (path === '/credentials' || path === '/tags') return reply({ data: [] });
+      if (method === 'POST' && path === '/workflows') {
+        const saved = { id: `wf${stored.length + 1}`, active: false, ...JSON.parse(init.body) };
+        stored.push(saved);
+        return reply(saved);
+      }
+      if (method === 'GET' && path === '/workflows') return reply({ data: stored });
+      return reply(stored.find((w) => path.endsWith(w.id)) ?? { data: [] });
+    },
+  });
+
+  const save = buildToolRegistry({ n8n, store: createMemoryStore(), approvals: [] }).find((t) => t.name === 'save_workflow');
+  const workflow = {
+    name: 'Halmstad scraper',
+    nodes: [
+      { id: 't', name: 'Every morning', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [0, 0], parameters: {} },
+      { id: 'x', name: 'Step', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [200, 0], parameters: { mode: 'manual' } },
+    ],
+    connections: { 'Every morning': { main: [[{ node: 'Step', type: 'main', index: 0 }]] } },
+  };
+
+  const first = await save.handler({ mode: 'create', workflow });
+  const again = await save.handler({ mode: 'create', workflow });
+
+  assert.equal(first.ok, true, first.error);
+  assert.equal(stored.length, 1, `${stored.length} copies were created, and nothing here can remove the spare`);
+  assert.equal(again.id, first.id);
+  assert.equal(again.alreadyExisted, true, 'it did not say the workflow already existed');
+});
+
+test('an identical save does not store a second copy of the same bytes', async () => {
+  // Pruning snapshots is not an option — they are the undo under every
+  // overwrite. Storing the same bytes repeatedly is a different thing, and it
+  // was the whole growth problem: 200 identical saves of a 60-node workflow
+  // came to 1.4MB against a free tier of half a gigabyte.
+  const store = createMemoryStore();
+  const same = { name: 'X', nodes: [{ name: 'A' }], connections: {} };
+  for (let i = 0; i < 20; i++) await store.snapshot({ workflowId: 'wf1', name: 'X', workflow: same, reason: `save ${i}` });
+  await store.snapshot({ workflowId: 'wf1', name: 'X', workflow: { ...same, nodes: [{ name: 'B' }] }, reason: 'a real change' });
+
+  const kept = await store.listSnapshots('wf1');
+  assert.equal(kept.length, 2, `${kept.length} snapshots for one real change`);
+  const oldest = await store.getSnapshot(kept.at(-1).id);
+  assert.equal(oldest.workflow.nodes[0].name, 'A', 'the original version is no longer recoverable');
+});
+
+test('a tool called with junk answers instead of throwing', async () => {
+  // Every handler destructures its arguments, so null threw a TypeError before
+  // a line of the tool ran — and a throw is not a refusal, it is a turn ending
+  // in a stack trace.
+  const { buildToolRegistry } = await import('../core/tools.js');
+  const tools = buildToolRegistry({ store: createMemoryStore(), n8n: null, approvals: [] });
+  for (const tool of tools) {
+    for (const args of [null, undefined, 'a string', 7, []]) {
+      const out = await tool.handler(args);
+      assert.equal(typeof out?.ok, 'boolean', `${tool.name} did not answer for ${JSON.stringify(args)}`);
+      assert.doesNotThrow(() => tool.say?.(args));
+    }
+  }
+});

@@ -84,6 +84,10 @@ export default async function handler(req, res) {
             // model gets the whole thing regardless.
             error: r?.ok === false ? String(r.error).slice(0, 400) : null,
             needsApproval: r?.needsApproval ?? null,
+            // Which workflow, peer or host the approval is about. Without it
+            // the browser can only say yes to a category, and a yes to a
+            // category is a yes to everything in it.
+            approvalTarget: r?.approvalTarget ?? null,
             detail: detailFor(r),
           }),
         onText: (chunk) => send('text', { chunk }),

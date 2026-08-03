@@ -64,6 +64,27 @@ function* eachString(value, path = []) {
 const isTriggerType = (type) => /trigger$|webhook$|\.cron$|\.interval$/i.test(String(type ?? ''));
 
 /**
+ * The credential a node has ASKED for in its own parameters.
+ *
+ * HTTP Request declares no credential types in the catalog — it chooses one at
+ * runtime from `authentication`, plus `genericAuthType` or `nodeCredentialType`.
+ * So a node explicitly configured to authenticate, with nothing attached, was
+ * invisible to a catalog-only check. That is the node the Halmstad build left
+ * unset: the check would have missed the one case it was written for.
+ *
+ * "authentication: none" is a deliberate statement that no credential is
+ * wanted, and is left alone.
+ */
+function credentialTypeAskedFor(node) {
+  const p = node?.parameters;
+  if (!p || typeof p !== 'object') return [];
+  const auth = p.authentication;
+  if (!auth || auth === 'none') return [];
+  const named = p.genericAuthType ?? p.nodeCredentialType;
+  return typeof named === 'string' && named ? [named] : [];
+}
+
+/**
  * @param {object} workflow
  * @param {object} [context]
  * @param {Array<{id:string,name?:string,type?:string}>} [context.credentials] what the instance really has
@@ -98,7 +119,14 @@ export function assessReadiness(workflow, { credentials = null } = {}) {
 
     // What the catalog says this node type takes. A fact about the node, not a
     // guess about the workflow.
-    const accepts = getNode(node.type)?.credentials ?? [];
+    //
+    // The HTTP Request node declares none, because it picks its credential type
+    // at runtime from its own parameters — which is exactly the node the
+    // Halmstad build left unset. A check that reads only the catalog would have
+    // missed the case it was written for, so the node's own declared intent
+    // counts too: `authentication` and the type it names are real parameters,
+    // read from the schema, not guessed.
+    const accepts = [...(getNode(node.type)?.credentials ?? []), ...credentialTypeAskedFor(node)];
     const attached = node.credentials && typeof node.credentials === 'object' ? node.credentials : {};
 
     if (accepts.length) {

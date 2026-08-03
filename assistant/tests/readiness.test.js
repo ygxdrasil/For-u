@@ -97,3 +97,41 @@ test('junk does not make the check throw', () => {
     assert.doesNotThrow(() => assessReadiness(wf), `threw on ${JSON.stringify(wf)}`);
   }
 });
+
+test('an HTTP Request node set to authenticate with nothing attached is caught', () => {
+  // The node the Halmstad build left unset. HTTP Request declares no credential
+  // types in the catalog — it picks one at runtime from its own parameters — so
+  // a catalog-only check would have missed the exact case it was written for.
+  const places = {
+    id: 'p', name: 'Google Places Search', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [200, 0],
+    parameters: {
+      url: 'https://places.googleapis.com/v1/places:searchText',
+      authentication: 'genericCredentialType',
+      genericAuthType: 'httpHeaderAuth',
+    },
+  };
+  const r = assessReadiness({ name: 'X', nodes: [trigger, places], connections: {} }, { credentials: [] });
+  const blocker = r.blockers.find((b) => b.kind === BLOCKER.MISSING_CREDENTIAL);
+  assert.ok(blocker, 'a node asking for httpHeaderAuth with nothing attached was called ready');
+  assert.equal(blocker.node, 'Google Places Search');
+  assert.match(blocker.detail, /httpHeaderAuth/);
+
+  // Attached and real: clean.
+  const done = assessReadiness(
+    { name: 'X', nodes: [trigger, { ...places, credentials: { httpHeaderAuth: { id: '3', name: 'Places key' } } }], connections: {} },
+    { credentials: [{ id: '3', type: 'httpHeaderAuth' }] },
+  );
+  assert.equal(done.ready, true, JSON.stringify(done.blockers));
+});
+
+test('a node that deliberately needs no auth is left alone', () => {
+  // The false positive that would matter most: most HTTP Request nodes call
+  // open APIs and want no credential at all.
+  const open = {
+    id: 'h', name: 'Public API', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [200, 0],
+    parameters: { url: 'https://api.usaspending.gov/api/v2/', authentication: 'none' },
+  };
+  const bare = { ...open, id: 'h2', name: 'No auth mentioned', parameters: { url: 'https://example.org/feed.json' } };
+  const r = assessReadiness({ name: 'X', nodes: [trigger, open, bare], connections: {} }, { credentials: [] });
+  assert.deepEqual(r.blockers.filter((b) => b.kind === BLOCKER.MISSING_CREDENTIAL), [], 'a node that wants no credential was told it needs one');
+});

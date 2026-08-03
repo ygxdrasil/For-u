@@ -33,6 +33,33 @@ export const APPROVAL_REQUIRED = {
   SEND_REQUEST: 'send_http_request',
 };
 
+/**
+ * Was THIS action approved, for THIS thing?
+ *
+ * Approvals used to be bare strings: "activate_workflow" meant every
+ * activation in the turn, not the one that was shown to the user. So a yes for
+ * one workflow let a different one go live in the same turn — and a model that
+ * has been told "you may activate" will use that on whatever it is holding.
+ * The gate was decorative in exactly the case it exists for.
+ *
+ * An approval may now name its target. A bare string still works, because that
+ * is what the browser sends today and a refusal that used to succeed reads as
+ * a regression to whoever is looking at it — but anything that names a target
+ * only unlocks that target.
+ */
+export function approvalCovers(approvals, action, target = null) {
+  for (const granted of approvals ?? []) {
+    if (typeof granted === 'string') {
+      if (granted === action) return true;
+      continue;
+    }
+    if (granted?.action !== action) continue;
+    if (granted.target === undefined || granted.target === null) return true;
+    if (target !== null && String(granted.target) === String(target)) return true;
+  }
+  return false;
+}
+
 const ok = (data) => ({ ok: true, ...data });
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 
@@ -187,10 +214,12 @@ export function buildToolRegistry(ctx) {
         // Reading is a read. Anything else is a request that arrives at
         // somebody's server as an action, and that is the same category as
         // sending a message — it needs a yes, whoever the recipient is.
-        if (!['GET', 'HEAD'].includes(verb) && !approvals.includes(APPROVAL_REQUIRED.SEND_REQUEST)) {
+        const host = (() => { try { return new URL(url).host; } catch { return null; } })();
+        if (!['GET', 'HEAD'].includes(verb) && !approvalCovers(approvals, APPROVAL_REQUIRED.SEND_REQUEST, host)) {
           return {
             ok: false,
             needsApproval: APPROVAL_REQUIRED.SEND_REQUEST,
+            approvalTarget: host,
             error: `A ${verb} to ${String(url).slice(0, 120)} is a request that does something at the other end, not a read. I need you to confirm before I send it.`,
           };
         }
@@ -422,6 +451,47 @@ export function buildToolRegistry(ctx) {
 
         try {
           if (mode === 'create') {
+            /**
+             * The same workflow, saved twice, is two workflows — and this system
+             * never deletes, so the spare is there for good.
+             *
+             * A turn that times out after the save lands but before the answer
+             * arrives leaves the model believing it failed; resuming, it saves
+             * again. Nobody is watching the second one, it has the same
+             * schedule, and it does the same work twice a day forever.
+             *
+             * Matched on the shape, not just the name: a genuinely different
+             * workflow that happens to share a title is still a new one.
+             */
+            const fingerprint = (w) => JSON.stringify({
+              nodes: (w?.nodes ?? []).map((n) => ({ name: n.name, type: n.type, parameters: n.parameters ?? {} })),
+              connections: w?.connections ?? {},
+            });
+            try {
+              const existing = (await n8n.listWorkflows({ limit: 50 }))?.data ?? [];
+              const already = existing.find((w) => w?.name === payload.name && w?.nodes && fingerprint(w) === fingerprint(payload));
+              if (already) {
+                // The tags are still outstanding work: the request was "make
+                // this exist, tagged", and only the first half was already
+                // done. Skipping the create must not skip the rest of the job.
+                const tagged = await applyTags(already.id);
+                return ok({
+                  created: false,
+                  id: already.id,
+                  confirmed: true,
+                  active: Boolean(already.active),
+                  validation,
+                  tagged,
+                  readiness: await readinessOf(already),
+                  alreadyExisted: true,
+                  note: `This exact workflow is already in n8n as ${already.id} ("${already.name}"), so I did not make a second copy. If you wanted a separate one, change something about it or give it a different name.`,
+                });
+              }
+            } catch {
+              // Not being able to check is no reason to refuse to save. Worst
+              // case is the behaviour that existed before this check.
+            }
+
             onStatus('Creating workflow (inactive)…');
             const res = await n8n.createWorkflow(payload);
             const tagged = await applyTags(res.workflow?.id);
@@ -566,12 +636,15 @@ export function buildToolRegistry(ctx) {
           if (active) {
             const wf = await n8n.getWorkflow(id);
             const writers = writeNodesIn(wf);
-            if (writers.length && !approvals.includes(APPROVAL_REQUIRED.ACTIVATE)) {
+            if (writers.length && !approvalCovers(approvals, APPROVAL_REQUIRED.ACTIVATE, id)) {
               return {
                 ok: false,
                 needsApproval: APPROVAL_REQUIRED.ACTIVATE,
+                // Which workflow, so the yes can be about something specific
+                // rather than about activation in general.
+                approvalTarget: id,
                 error:
-                  `Activating "${wf.name}" would let it send things for real via: ${writers.join(', ')}. ` +
+                  `Activating "${wf.name}" (${id}) would let it send things for real via: ${writers.join(', ')}. ` +
                   'I need you to confirm before I do that.',
                 writeNodes: writers,
               };
@@ -721,10 +794,11 @@ export function buildToolRegistry(ctx) {
       handler: async ({ question, peer, research }) => {
         // Spending is one of exactly two things that need a yes, and it does not
         // stop being spending because it happens on another AI's bill.
-        if (research && !approvals.includes(APPROVAL_REQUIRED.COMMISSION_RESEARCH)) {
+        if (research && !approvalCovers(approvals, APPROVAL_REQUIRED.COMMISSION_RESEARCH, peer ?? null)) {
           return {
             ok: false,
             needsApproval: APPROVAL_REQUIRED.COMMISSION_RESEARCH,
+            approvalTarget: peer ?? null,
             error:
               `Answering "${String(question).slice(0, 120)}" would mean commissioning new research, which costs money at the peer's end. I need you to confirm before I do that — or tell me the answer yourself, which is free and faster.`,
             question,
@@ -776,7 +850,35 @@ export function buildToolRegistry(ctx) {
     },
   ];
 
-  return tools;
+  /**
+   * One guard for every tool, at the seam rather than repeated in twenty
+   * handlers.
+   *
+   * Each handler destructures its arguments, so being called with null or a
+   * string throws a TypeError before a single line of the tool runs — and a
+   * throw here is not a refusal, it is a turn ending with a stack trace. The
+   * pipeline and the MCP door both pass `?? {}` today, which means this has
+   * never fired; the day something else calls a tool it will, and "the model
+   * sent junk" should read as an answer, not a crash.
+   */
+  return tools.map((tool) => ({
+    ...tool,
+    handler: async (args) => {
+      const safe = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+      try {
+        return await tool.handler(safe);
+      } catch (err) {
+        return fail(`${tool.name} could not run: ${err.message}`);
+      }
+    },
+    say: (args) => {
+      try {
+        return tool.say?.(args && typeof args === 'object' ? args : {}) ?? null;
+      } catch {
+        return null;
+      }
+    },
+  }));
 }
 
 /** "n8n-nodes-base.googleSheets" -> "Google Sheets", for things you read. */

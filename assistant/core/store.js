@@ -58,8 +58,21 @@ export function createMemoryStore() {
       return copy(spend.slice(-limit).reverse());
     },
 
-    /** Append-only. A snapshot is what makes an update reversible. */
+    /**
+     * Append-only. A snapshot is what makes an update reversible.
+     *
+     * Nothing here ever prunes them — "never delete anything" is not suspended
+     * because a table got big, and the snapshot IS the safety net under every
+     * overwrite. What it does refuse to do is store the same bytes twice: a
+     * save that changed nothing has nothing to recover, and repeated identical
+     * saves were the whole growth problem. 200 updates of a 60-node workflow
+     * came to 1.4MB, on a free tier of half a gigabyte.
+     */
     async snapshot({ workflowId, name, workflow, reason }) {
+      const previous = [...snapshots].reverse().find((s) => s.workflowId === workflowId);
+      if (previous && JSON.stringify(previous.workflow) === JSON.stringify(workflow)) {
+        return copy({ ...previous, reused: true });
+      }
       const entry = {
         id: `snap_${snapshots.length + 1}_${Date.now()}`,
         workflowId,
@@ -70,6 +83,16 @@ export function createMemoryStore() {
       };
       snapshots.push(copy(entry));
       return entry;
+    },
+
+    /** What the history is costing, so it is seen rather than discovered. */
+    async storageReport() {
+      return {
+        snapshots: snapshots.length,
+        approxBytes: JSON.stringify(snapshots).length,
+        sessions: sessions.size,
+        findings: findings.length,
+      };
     },
     async listSnapshots(workflowId) {
       return copy(snapshots.filter((s) => !workflowId || s.workflowId === workflowId).reverse());
