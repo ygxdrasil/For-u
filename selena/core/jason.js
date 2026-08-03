@@ -14,6 +14,7 @@
 
 import { nowIso } from './util.js';
 import { assertFetchAllowed } from './sources.js';
+import { conversationSummary } from './reach.js';
 
 /**
  * Where does Jason actually live?
@@ -120,6 +121,14 @@ export function briefFor(finding) {
   if (finding.evidence?.agreement?.subject) lines.push(`The complaints agree on: ${finding.evidence.agreement.subject}`);
   if (finding.whatWouldWin?.length) lines.push(`It has to: ${finding.whatWouldWin.map((w) => w?.requirement).filter(Boolean).join('; ')}`);
   if (finding.buildability?.shapeLabel) lines.push(`Shape: ${finding.buildability.shapeLabel}`);
+  // Said in the sentence as well as the packet, and labelled as what it is.
+  // "Three people said they would pay" is the most persuasive line available
+  // and the least proven, so it is never allowed to sit next to the level as
+  // though it were the same kind of fact.
+  const asked = conversationSummary(finding);
+  if (asked.asked) {
+    lines.push(`Asked directly (NOT counted in the level above — this is what people said, not what they did): ${asked.line}`);
+  }
   // Never trimmed away. The reasons not to build it travel with the reasons to.
   if (finding.risks?.length) lines.push(`What would make this a bad idea: ${finding.risks.map((r) => r?.risk ?? r).filter(Boolean).join('; ')}`);
   lines.push(`Full evidence packet is in this same message. Finding id ${finding.id}.`);
@@ -156,6 +165,19 @@ export function packageForJason(finding, { note = null, now = nowIso } = {}) {
       complaints: finding.evidence?.complaints ?? [],
       howMany: finding.evidence?.volume ?? null,
     },
+
+    // What people said when they were asked directly.
+    //
+    // Its own top-level block, not folded into `why.evidenceStrength`, because
+    // it is a different kind of claim and Jason has to be able to tell them
+    // apart. `evidenceStrength` is what people demonstrably do; this is what
+    // people said they would do, and the second one is worth a great deal and
+    // proves nothing. Refusals travel with the yeses — a packet carrying only
+    // the encouraging replies would be an argument rather than a brief.
+    askedDirectly: (() => {
+      const s = conversationSummary(finding);
+      return s.asked ? { ...s, saidNo: (finding.conversations ?? []).filter((c) => c.verdict === 'not-interested').map((c) => c.said).filter(Boolean) } : null;
+    })(),
 
     // Handed over unfiltered. He needs the reasons not to build this at the
     // same moment he gets the reasons to.

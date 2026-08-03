@@ -3,6 +3,12 @@
  *
  * GET  ?status=&watchId=&minStrength=&buildable=&id=
  * POST { action: 'archive' | 'restore' | 'supersede' | 'reverify', id }
+ * POST { action: 'contact-sheet', id, draft? }   who could you talk to
+ * POST { action: 'record-reply', id, reply }     what they said back
+ *
+ * The last two are here rather than in an api/reach.js because Vercel Hobby
+ * allows twelve functions and eleven are in use. A twelfth would deploy today
+ * and block the one after it permanently.
  *
  * There is no delete action and there never will be. A finding rejected in
  * March is evidence when the same demand turns up in September, so records are
@@ -14,6 +20,7 @@ import { createContext, contextStatus } from '../core/context.js';
 import { gateRequest } from '../core/auth.js';
 import { summarizeFinding, FINDING_STATUS } from '../core/schema.js';
 import { reverifyFinding, staleFindings } from '../core/watches.js';
+import { contactSheet, draftOpeners, recordConversation, conversationSummary } from '../core/reach.js';
 import { nowIso } from '../core/util.js';
 
 export default guard(async function handler(req, res) {
@@ -89,5 +96,40 @@ export default guard(async function handler(req, res) {
     });
   }
 
-  return json(res, 400, { ok: false, error: `Unknown action "${action}". Use archive, restore, supersede or reverify. There is no delete.` });
+  // ---- who could you actually talk to about this ------------------------
+  // Folded into this route rather than given its own, because Vercel Hobby
+  // allows twelve functions and eleven are in use. A twelfth would work today
+  // and block the next one forever.
+  if (action === 'contact-sheet') {
+    const sheet = contactSheet(finding, { limit: Number(body.limit) || 25 });
+    // Drafting costs a model call, so it only happens when asked for.
+    const drafts = body.draft === true ? await draftOpeners(finding, sheet.people.filter((p) => p.reachability === 'reply' || p.reachability === 'profile'), ctx) : null;
+    return json(res, 200, { ok: true, sheet, drafts, conversations: conversationSummary(finding), context: contextStatus(ctx) });
+  }
+
+  // ---- what they said back ----------------------------------------------
+  if (action === 'record-reply') {
+    const updated = recordConversation(finding, body.reply ?? body);
+    await ctx.store.putFinding(updated);
+    await ctx.store.addActivity({
+      kind: 'finding',
+      level: 'report',
+      message: `reply recorded on "${finding.demand.oneLine.slice(0, 60)}": ${String(body.reply?.verdict ?? body.verdict ?? 'no-reply')}`,
+      findingId: id,
+    });
+    // The level is returned so the HUD can show that it did NOT move. A reply
+    // saying "I would pay" is the best sentence in this system and it is still
+    // not somebody paying.
+    return json(res, 200, {
+      ok: true,
+      conversations: conversationSummary(updated),
+      strength: updated.evidence?.strength ?? null,
+      note: 'Recorded beside the evidence, not inside it. What someone says they would pay never moves the ladder — only what someone actually pays does.',
+    });
+  }
+
+  return json(res, 400, {
+    ok: false,
+    error: `Unknown action "${action}". Use archive, restore, supersede, reverify, contact-sheet or record-reply. There is no delete.`,
+  });
 });

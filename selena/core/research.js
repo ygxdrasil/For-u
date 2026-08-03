@@ -385,6 +385,10 @@ export async function runResearch(task, deps) {
           date: x.date ?? x.at ?? null,
           platform: x.platform ?? x.source ?? null,
           via: x.via,
+          // Carried so the contact sheet has somebody to name. Null for every
+          // source that does not publish one, which is most of the review
+          // feeds — reported there as "named, no route" rather than dropped.
+          author: x.author ?? null,
         })),
       ],
     },

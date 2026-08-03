@@ -739,3 +739,51 @@ button.danger:hover { background: var(--ember); }
 .stage .trace .done { color: var(--ink-3); opacity: 0.62; }
 .stage .trace .now { color: var(--ink-2); }
 .stage .trace .now .tick { color: var(--ember); }
+
+/* Talk to them: the contact sheet, the drafts, and recording what came back.
+   Each person is a block rather than a table row — a quote needs room to be
+   read, and the decision here is per person, not per column. */
+.person {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.person:first-of-type { border-top: 0; }
+.person strong { color: var(--fg); }
+
+/* A draft is set apart from the quote above it so there is never a moment of
+   wondering which words are theirs and which are hers. */
+.draft {
+  border-left: 2px solid var(--accent);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px 12px;
+  margin: 8px 0;
+  border-radius: 0 4px 4px 0;
+}
+.draft p {
+  margin: 0 0 8px;
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+
+.replybox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.replybox textarea,
+.replybox select,
+.replybox input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font: inherit;
+}
+.replybox textarea { resize: vertical; }
+.replybox p { margin: 2px 0 0; }

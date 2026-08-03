@@ -101,6 +101,13 @@ function normalizeQuote(raw, path, problems) {
     date: str(raw?.date) || null,
     platform: PLATFORMS.includes(platform) ? platform : 'web',
     via: VIA.includes(str(raw?.via)) ? str(raw.via) : 'grounded-search',
+    // Who said it, where the source gave a handle. Optional everywhere: a
+    // quote without one is still perfectly good evidence, it just cannot be
+    // followed up. Only ever the public handle and the public profile link —
+    // the same two strings printed next to the post on a page anyone can open.
+    author: raw?.author?.handle
+      ? { handle: str(raw.author.handle).slice(0, 80), profile: canonicalUrl(raw.author.profile) ?? null }
+      : null,
   };
 }
 
@@ -287,6 +294,14 @@ export function validateFinding(input, { now = () => new Date().toISOString() } 
       volume,
     },
     incumbents,
+    // What people said when they were asked directly.
+    //
+    // A sibling of `evidence`, never a member of it, and the placement is the
+    // whole point. "I would pay £30 a month" is the most useful sentence you
+    // can get about a market and it is not proof that anyone paid anything.
+    // core/evidence.js is handed `finding.evidence` and cannot see this from
+    // there; tests/evidence.test.js fails if that ever stops being true.
+    conversations: arr(input.conversations).filter((c) => c && typeof c === 'object'),
     whatWouldWin,
     risks,
     buildability: isObj(input.buildability) ? input.buildability : null,

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { computeEvidence, applyEvidence, clusterComplaints, AGREEMENT_THRESHOLD } from '../core/evidence.js';
+import { validateFinding } from '../core/schema.js';
 
 const paying = (n, via = 'etsy-api') =>
   Array.from({ length: n }, (_, i) => ({ what: `thing ${i}`, price: 10 + i, currency: 'GBP', url: `https://shop${i}.com/p`, via }));
@@ -209,4 +210,56 @@ test('a source you plugged in counts as read, not as a snippet', () => {
   applyEvidence(viaSnippet);
   assert.equal(viaSnippet.evidence.readQuality.read, 0);
   assert.equal(viaSnippet.evidence.readQuality.thinRead, true);
+});
+
+test('a conversation can never move the evidence level, however good it sounds', async () => {
+  const { recordConversation, conversationSummary } = await import('../core/reach.js');
+
+  // One quoted ask and nothing else: level 1, hypothesis.
+  const base = validateFinding({
+    demand: {
+      oneLine: 'invoice chasing for small trade firms',
+      whoHasIt: 'one-to-three person plumbing and electrical firms',
+      inTheirWords: [{ quote: 'I spend every Friday chasing unpaid invoices', url: 'https://news.ycombinator.com/item?id=1', via: 'direct-fetch' }],
+    },
+    evidence: { paying: [], complaints: [] },
+  }).value;
+
+  const before = applyEvidence(base);
+  assert.equal(before.evidence.strength, 1);
+
+  // Now ask five people and have every one of them say yes, enthusiastically,
+  // with a number. This is exactly the input that would tempt a system into
+  // calling something proven.
+  let after = before;
+  for (let i = 0; i < 5; i += 1) {
+    after = recordConversation(after, {
+      personId: `who_${i}`,
+      handle: `person${i}`,
+      url: `https://news.ycombinator.com/item?id=${i}`,
+      verdict: 'would-pay',
+      said: 'Yes, absolutely, I would pay for this tomorrow.',
+      theySaidTheyWouldPayUsd: 40,
+    });
+  }
+
+  const scored = applyEvidence(after);
+  assert.equal(scored.evidence.strength, 1, 'five people saying they would pay is still nobody paying');
+  assert.equal(scored.evidence.hypothesis, true);
+  assert.equal(scored.conversations.length, 5, 'and the conversations are kept, not discarded');
+
+  // The summary reports them, so the information is not lost — it is just not
+  // laundered into the ladder.
+  const summary = conversationSummary(scored);
+  assert.equal(summary.replied, 5);
+  assert.equal(summary.wouldPay, 5);
+
+  // Structural, not just behavioural: computeEvidence is handed `evidence`,
+  // and if conversations ever migrate inside it this fails loudly.
+  assert.equal(scored.evidence.conversations, undefined, 'conversations must never live inside evidence');
+
+  // And the refusals count too — a tool that only tallied enthusiasm would be
+  // a machine for talking you into things.
+  const rejected = recordConversation(base, { verdict: 'not-interested', said: 'No, I just use a spreadsheet and it is fine.' });
+  assert.match(conversationSummary(rejected).line, /1 said no/);
 });

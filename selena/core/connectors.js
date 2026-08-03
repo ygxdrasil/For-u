@@ -186,6 +186,16 @@ export function mapItems(payload, map, { source = 'connector', at = nowIso() } =
       at: firstOf(item, map.datePath) ?? at,
       via: 'connector',
       weight: clampNumber(Number(firstOf(item, map.weightPath)), -1e6, 1e6, 0),
+      // Optional. Most sources give a display name at best, and a review feed
+      // gives one with no route to the person behind it — which core/reach.js
+      // reports honestly as "named, but not contactable" rather than pretending
+      // a name is a way to reach someone.
+      author: (() => {
+        const handle = map.authorPath ? firstOf(item, map.authorPath) : null;
+        if (!handle) return null;
+        const profile = map.authorUrlTemplate ? fillTemplate(map.authorUrlTemplate, item) : null;
+        return { handle: String(handle).slice(0, 80), profile: profile ? String(profile).slice(0, 300) : null };
+      })(),
     });
   }
 
@@ -477,6 +487,11 @@ export async function addConnector(store, input, secret) {
       titlePath: String(input.titlePath ?? '').slice(0, 200) || 'title|name|subject',
       datePath: String(input.datePath ?? '').slice(0, 200) || null,
       weightPath: String(input.weightPath ?? '').slice(0, 200) || null,
+      // Who posted it, where the source says. Not defaulted to a guess list
+      // the way textPath is: a wrong author is worse than no author, because
+      // it puts a real person's name against words they did not write.
+      authorPath: String(input.authorPath ?? '').slice(0, 200) || null,
+      authorUrlTemplate: String(input.authorUrlTemplate ?? '').slice(0, 300) || null,
     },
     // What it gives, in the ladder's terms. She has to know whether this is
     // people asking or people paying, or the ladder means nothing.

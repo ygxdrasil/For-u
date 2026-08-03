@@ -11,6 +11,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, money, ago } from '../api.js';
 import { Pill, StrengthBar, Ladder, BuildPill, Empty, Banner, SourceLink } from '../components.jsx';
+import Reach from '../Reach.jsx';
 
 function Detail({ id, onBack, refresh }) {
   const [finding, setFinding] = useState(null);
@@ -119,6 +120,11 @@ function Detail({ id, onBack, refresh }) {
               <p className="muted small">Nobody was quoted directly. That is a gap, not a style choice.</p>
             )}
           </div>
+
+          {/* Directly under the quotes, because the people in it ARE the
+              quotes — and above the paying table, because "what would they pay
+              you" is the question the paying table cannot answer. */}
+          <Reach finding={finding} refresh={refresh} />
 
           <div className="card">
             <h3>What they are already paying</h3>

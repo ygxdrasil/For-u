@@ -116,6 +116,13 @@ export async function searchHackerNews({ keywords, limit = 8, fetchImpl = global
         via: 'direct-fetch',
         weight: clampNumber(h.points ?? h.num_comments ?? 0, 0, 1e6, 0),
         title: plainText(h.story_title ?? h.title).slice(0, 200),
+        // Who said it. Kept because a quote with no author can be cited but
+        // never followed up: the whole of core/reach.js is impossible without
+        // this one field, and every ask in the system was missing it.
+        //
+        // Public information only, and only the handle — the same string that
+        // is printed next to the post on the page anyone can open.
+        author: h.author ? { handle: String(h.author).slice(0, 80), profile: `https://news.ycombinator.com/user?id=${encodeURIComponent(h.author)}` } : null,
       };
     })
     .filter(Boolean);
@@ -147,6 +154,14 @@ export async function searchStackExchange({ keywords, site = 'softwarerecs', lim
           via: 'direct-fetch',
           weight: clampNumber(i.score ?? 0, -1000, 1e6, 0) + clampNumber(i.answer_count ?? 0, 0, 1e6, 0),
           title: plainText(i.title).slice(0, 200),
+          // Optional-chained throughout rather than assumed: `owner` is absent
+          // on posts by deleted users, and the shape could not be verified
+          // live from here because Stack Exchange is blocked by this sandbox's
+          // egress policy. A missing author must degrade to "no route", never
+          // throw.
+          author: i.owner?.display_name
+            ? { handle: String(i.owner.display_name).slice(0, 80), profile: i.owner.link ? String(i.owner.link).slice(0, 300) : null }
+            : null,
         };
       })
       .filter(Boolean),

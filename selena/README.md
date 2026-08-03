@@ -25,6 +25,57 @@ Anything below 3 is stored as a `hypothesis`, not a finding. Level 5 also
 requires that something was actually *read* — if every source is a search
 snippet we never opened, it is held at 4 and says so.
 
+## Talking to them
+
+The ladder proves people pay **somebody**. It cannot tell you what they would
+pay **you**, or whether they would switch — and that is the question that
+decides whether to build. No API answers it. Only a reply from a person does.
+
+So every finding has a **Talk to them** panel. It works out who behind the
+quotes is actually reachable, what each platform's rules allow, and drafts an
+opener per person built from that person's own words — opening with what they
+said, asking what they do about it today and what that costs, naming no price
+and pitching nothing.
+
+Two rules are load-bearing:
+
+**She does not send.** Every draft gets a copy button and a link to the thread;
+you send it, from your account, having read it. That was set as a limit at the
+start and `core/reach.js` contains no network call at all. A test asserts the
+drafts carry no `sent`, `endpoint` or `deliver` field, so a later change cannot
+grow one by accident.
+
+**A reply never moves the level.** "I'd pay £30 a month" is the most valuable
+sentence in this system and it is *not* evidence of payment — stated intent and
+revealed behaviour differ reliably, and in one direction. Replies live in
+`finding.conversations`, a sibling of `evidence` and never a member of it;
+`computeEvidence` is handed `finding.evidence` and cannot see them.
+`tests/evidence.test.js` asks five people, has all five say yes with a number,
+and asserts the finding is still level 1. What someone *already pays* and what
+someone *says they would pay* are stored as two separate fields and never
+merged.
+
+Contactability is very uneven, and the panel says so rather than implying
+everyone can be reached:
+
+| Source | Route |
+|---|---|
+| Hacker News, Lemmy, Shopify/n8n/Make forums, GitHub | reply in the thread — normal and allowed |
+| Stack Exchange | **careful** — comments are for improving the question; use the profile |
+| USAspending | a named company, contactable through its own public details |
+| Booksy / Fresha / Tradify / ServiceM8 / Square reviews | **none** — a display name is not a route |
+| CFPB | **none** — published with the complainant removed |
+
+That table is the uncomfortable part, stated rather than hidden: the review
+feeds are the *strongest* evidence in the system and the least contactable. An
+unrecognised host is reported as "nobody has checked what this site allows",
+never as probably fine — an unsolicited message on the wrong forum costs you
+the account, not her.
+
+Replies reach Jason as their own `askedDirectly` block, labelled as what people
+*said* rather than what they *did*, with the refusals travelling alongside the
+yeses.
+
 ## The control that matters
 
 Every URL a run actually touched goes into a **source ledger** with its status
@@ -520,6 +571,8 @@ core/       the headless engine — no HTTP, no React, no cron
   explore.js     going looking with no topic; proposes, never files
   connectors.js  the APIs and MCP servers you plug in yourself
   starters.js    the verified set, probed live and ready to connect
+  reach.js       who can be talked to, what to say, and what they said back;
+                 contains no network call, deliberately
   autonomy.js    the brakes: reserve, floor, ceiling, backoff, stop
   pass.js        one unattended pass: watch → roam → stand → hand over
   peers.js       where Jason and Grace are, and proof the line works
