@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { clampNumber, canonicalUrl, phraseSimilarity, subjectAgreement, createDeadline, spacedSettled, sumFinite, stemWord } from '../core/util.js';
+import { clampNumber, canonicalUrl, phraseSimilarity, subjectAgreement, createDeadline, spacedSettled, sumFinite, stemWord, balancedSample } from '../core/util.js';
 import { withLock } from '../core/queue.js';
 
 test('clampNumber survives NaN rather than propagating it', () => {
@@ -130,4 +130,52 @@ test('withLock does not poison the chain when one caller throws', async () => {
 
 test('withLock refuses a non-string key, because object identity protects nothing', () => {
   assert.throws(() => withLock({}, async () => 1), /stable string key/);
+});
+
+test('a sample takes from every source, not just the one that answered first', () => {
+  // The bug this exists to stop: material arrives grouped by source, so
+  // `.slice(0, 12)` took twelve posts from one forum and discarded eight other
+  // sources — including every source that could prove someone was paying.
+  const items = [
+    ...Array.from({ length: 50 }, (_, i) => ({ source: 'forum', id: `f${i}` })),
+    ...Array.from({ length: 50 }, (_, i) => ({ source: 'reviews', id: `r${i}` })),
+    ...Array.from({ length: 20 }, (_, i) => ({ source: 'records', id: `d${i}` })),
+  ];
+
+  const sample = balancedSample(items, 12, (x) => x.source);
+  assert.equal(sample.length, 12);
+  const bySource = sample.reduce((m, x) => ({ ...m, [x.source]: (m[x.source] ?? 0) + 1 }), {});
+  assert.deepEqual(bySource, { forum: 4, reviews: 4, records: 4 }, `one source took the lot: ${JSON.stringify(bySource)}`);
+
+  // Order within a source is preserved, so a source that ranks its own
+  // results by relevance keeps that ranking.
+  assert.deepEqual(sample.filter((x) => x.source === 'forum').map((x) => x.id), ['f0', 'f1', 'f2', 'f3']);
+});
+
+test('a sample never loses items it did not have to, and never spins', () => {
+  const items = [
+    ...Array.from({ length: 2 }, (_, i) => ({ s: 'a', i })),
+    ...Array.from({ length: 30 }, (_, i) => ({ s: 'b', i })),
+  ];
+
+  // A small source running dry must not stop the big one filling the rest.
+  const sample = balancedSample(items, 20, (x) => x.s);
+  assert.equal(sample.length, 20);
+  assert.equal(sample.filter((x) => x.s === 'a').length, 2, 'take all of the small source');
+  assert.equal(sample.filter((x) => x.s === 'b').length, 18);
+
+  // Asking for more than exists returns everything, once.
+  const all = balancedSample(items, 500, (x) => x.s);
+  assert.equal(all.length, items.length);
+  assert.equal(new Set(all).size, items.length, 'no item appears twice');
+
+  // And the edges do not throw or hang.
+  assert.deepEqual(balancedSample([], 10, (x) => x.s), []);
+  assert.deepEqual(balancedSample(null, 10, (x) => x.s), []);
+  assert.deepEqual(balancedSample(items, 0, (x) => x.s), []);
+  for (const bad of [NaN, -1, Infinity, '5', undefined]) {
+    assert.ok(Array.isArray(balancedSample(items, bad, (x) => x.s)), `total ${String(bad)} should still return an array`);
+  }
+  // A key function that throws must not empty the sample.
+  assert.equal(balancedSample(items, 5, () => { throw new Error('nope'); }).length, 5);
 });

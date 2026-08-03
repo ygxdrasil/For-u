@@ -304,19 +304,29 @@ export const STARTERS = [
 /**
  * Which ones to switch on when you press the button.
  *
- * Not all of them. Every connected source is a request on every run, and a
- * dozen of them makes a run slow and its findings noisy without making them
- * better. This is a spread: two places people ask, two records of people
- * paying, one of what already exists, and the review feeds that carry paying
- * and complaining together. The rest are one tick away.
+ * Twelve, which is exactly the per-run ceiling in gatherFromConnectors — so
+ * every default source is read on every run and none is silently dropped.
+ *
+ * It was nine, on the argument that more sources make a run slow and noisy
+ * without making it better. Measuring killed that argument: the extra sources
+ * cost about a second each and the noise was never the problem, because what
+ * reached the model was a fixed slice taken in arrival order. Now that the
+ * sample is balanced across sources, a source that is switched on is a source
+ * that is genuinely heard from, so breadth finally buys something.
+ *
+ * The two left off are the two that carry no demand: npm-search is a list of
+ * packages and federal-register is rulemaking. Both are one tick away.
  */
 export const DEFAULT_SET = [
   'shopify-community',
   'n8n-community',
+  'make-community',
+  'lemmy-world',
   'cfpb',
   'usaspending',
   'github-issues',
   'booksy-biz',
+  'fresha-business',
   'tradify',
   'servicem8',
   'square-pos',

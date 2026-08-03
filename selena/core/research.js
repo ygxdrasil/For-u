@@ -18,7 +18,7 @@
  * it is working teaches them to stop believing the status.
  */
 
-import { createDeadline, nowIso, randomId, spacedSettled, clampNumber } from './util.js';
+import { createDeadline, nowIso, randomId, spacedSettled, clampNumber, balancedSample } from './util.js';
 import { createLedger, enforceLedger } from './ledger.js';
 import { validateFinding, dedupKeyFor } from './schema.js';
 import { applyEvidence, computeEvidence } from './evidence.js';
@@ -43,6 +43,25 @@ export const ANGLES = [
   { id: 'size', text: 'how many of these businesses there are, and whether any published figure actually supports a number' },
   { id: 'switch', text: 'what would have to be true for one of them to switch away from what they use now' },
 ];
+
+/**
+ * How much of what she read reaches the model, and how much reaches the record.
+ *
+ * These were 12, 12 and 8, taken in arrival order. Measured against the real
+ * sources, that meant a run read 360 posts from nine sources and showed the
+ * model twelve — all twelve from the one forum that answered first. Every
+ * review feed and every public-records source was fetched and discarded, and
+ * those are the only sources that carry a price or a paying customer, so the
+ * ladder could not reach level 3 however much evidence was out there.
+ *
+ * The numbers are bounded by cost, not by caution. At ~320 characters a line
+ * this is roughly 15k input tokens on the extract tier — a fraction of a cent
+ * per run. Reading was already free; this was throwing the reading away.
+ */
+export const COMMUNITY_SHOWN = 60;
+export const CONNECTED_SHOWN = 90;
+/** What the ladder counts as distinct voices. Eight was a ceiling on "how many". */
+export const IN_THEIR_WORDS_KEPT = 40;
 
 function log(deps, level, message, extra = {}) {
   // `now` is optional on deps — every other read of it falls back to nowIso,
@@ -217,8 +236,7 @@ export async function runResearch(task, deps) {
         if (found.asks.length) {
           readings.push(
             `### community (read directly through free APIs)\n` +
-              found.asks
-                .slice(0, 12)
+              balancedSample(found.asks, COMMUNITY_SHOWN, (x) => x.platform ?? x.source ?? 'unknown')
                 .map((x) => `- "${x.quote.slice(0, 320)}" — ${x.url}`)
                 .join('\n'),
           );
@@ -240,14 +258,12 @@ export async function runResearch(task, deps) {
         const found = await deps.connectors.gather(topic, { ledger });
         if (found.asks.length) {
           connectorAsks = found;
+          const shown = balancedSample(found.asks, CONNECTED_SHOWN, (x) => x.source ?? 'unknown');
           readings.push(
             `### your connected sources\n` +
-              found.asks
-                .slice(0, 12)
-                .map((x) => `- "${x.quote.slice(0, 320)}" — ${x.url} (via ${x.source})`)
-                .join('\n'),
+              shown.map((x) => `- "${x.quote.slice(0, 320)}" — ${x.url} (via ${x.source})`).join('\n'),
           );
-          log(deps, 'read', `${found.asks.length} post(s) from ${found.read} connected source(s)`, { runId });
+          log(deps, 'read', `${found.asks.length} post(s) from ${found.read} connected source(s), ${shown.length} shown`, { runId });
         }
         if (found.failures.length) {
           notes.push(`connected sources: ${found.failures.map((f) => `${f.name} did not answer (${f.detail})`).join('; ')}. A caveat, not a failure.`);
@@ -354,7 +370,16 @@ export async function runResearch(task, deps) {
         ...(extracted.demand?.inTheirWords ?? []),
         // Structural, not just in the prose: an extraction that under-reports
         // these would silently throw away quotes we genuinely read.
-        ...[...(communityAsks?.asks ?? []), ...(connectorAsks?.asks ?? [])].slice(0, 8).map((x) => ({
+        // Balanced, and forty rather than eight. This list is what the ladder
+        // counts as distinct voices, so taking the first eight in arrival
+        // order capped how many people she could ever show wanted a thing —
+        // and, because arrival order is grouped by source, took all eight from
+        // whichever source happened to answer first.
+        ...balancedSample(
+          [...(communityAsks?.asks ?? []), ...(connectorAsks?.asks ?? [])],
+          IN_THEIR_WORDS_KEPT,
+          (x) => x.platform ?? x.source ?? 'unknown',
+        ).map((x) => ({
           quote: x.quote,
           url: x.url,
           date: x.date ?? x.at ?? null,

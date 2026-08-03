@@ -171,9 +171,15 @@ One press connects the lot.
 | **ServiceM8** (field service) | **paying**, complaints | 50 citable, 15 at ≤3 stars |
 | **Square POS** | **paying**, complaints | 50 citable, 30 at ≤3 stars |
 
-Nine of the fourteen are ticked by default — a spread across asking, paying and
-what already exists. Every connected source is a request on every run, and a
-dozen makes runs slow and noisy without making them better. The rest are one
+Twelve of the fourteen are ticked by default, which is exactly the per-run
+ceiling — so every default source is read on every run and none is quietly
+dropped. It was nine, on the theory that more sources make a run slow and noisy
+without making it better. Measuring killed that theory: the extra sources cost
+about a second each, and the noise was never breadth. It was that only the
+first twelve posts reached the model, in arrival order, which meant one forum
+and nothing else. Now the sample is taken evenly across sources, so switching
+one on genuinely means hearing from it. The two left off are the two carrying
+no demand at all — a package index and a rulemaking feed — and both are one
 tick away.
 
 **On MCP, plainly:** five public servers with no authentication were probed and

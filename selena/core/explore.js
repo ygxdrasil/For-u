@@ -17,12 +17,22 @@
  * without it showing up on the bill.
  */
 
-import { nowIso, randomId, normalizePhrase, phraseSimilarity, clampNumber } from './util.js';
+import { nowIso, randomId, normalizePhrase, phraseSimilarity, clampNumber, balancedSample } from './util.js';
 import { systemPrompt } from './prompts.js';
 import { createWatch } from './watches.js';
 import { SE_SITES as SE_ALL } from './community.js';
 
 export const PROPOSALS_KEY = 'proposals';
+
+/**
+ * How many posts reach the model on a roam.
+ *
+ * Not a guess: at ~380 characters each this is about 30k input tokens, roughly
+ * a cent on the judge tier, and it is the only step in a roam that costs
+ * anything at all. The old value was 40, which threw away 97% of a free read
+ * to save under a cent.
+ */
+export const MATERIAL_LIMIT = 300;
 
 /**
  * Broad seeds: the phrasings people use when something is missing. Not
@@ -67,7 +77,9 @@ function explorePrompt({ asks, existingTopics }) {
 
 Find the RECURRING needs — where more than one person is describing the same missing thing. Ignore one-off questions, product announcements, and anything that is already well served.
 
-Propose at most four topics worth standing a watch on. A good topic is specific enough that searching it returns the same kind of person twice, and broad enough that it will still be there next month. "Invoice chasing for one-to-three person trade firms" is a topic. "Software" is not, and neither is one company's product.
+Propose up to eight topics worth standing a watch on. A good topic is specific enough that searching it returns the same kind of person twice, and broad enough that it will still be there next month. "Invoice chasing for one-to-three person trade firms" is a topic. "Software" is not, and neither is one company's product.
+
+The material below comes from several different kinds of source — forums where people ask, review feeds where people who already PAY complain, and public records. Look across them, not down one. A need that shows up in two different kinds of source is worth far more than one that shows up ten times in the same forum, and the review material is the only thing here that tells you anyone is actually paying for a bad answer today.
 
 ${existingTopics.length ? `Already being watched, so do NOT propose these again:\n${existingTopics.map((t) => `- ${t}`).join('\n')}\n` : ''}
 Cite only URLs from this material. If nothing here shows a recurring need, say so — proposing something weak wastes a watch and the money it spends.
@@ -81,7 +93,7 @@ ${asks.map((a, i) => `[${i + 1}] ${a.url}\n${a.quote.slice(0, 380)}`).join('\n\n
  *
  * @returns {{ok:boolean, proposals:Array, read:number, notes:string[], costUsd:number}}
  */
-export async function explore({ seeds = null, limit = 4 } = {}, deps) {
+export async function explore({ seeds = null, limit = 8 } = {}, deps) {
   const now = deps.now ?? nowIso;
   const notes = [];
   let spendBefore = 0;
@@ -112,6 +124,12 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
   const chosen = pool.map((_, i) => pool[(offset + i) % pool.length]);
 
   const asks = [];
+  // Which sources never answered, counted once rather than once per seed. The
+  // first version pushed a note per seed, so one dead source produced eight
+  // identical lines and the one line that mattered was buried in its own echo.
+  const blind = new Map();
+  const blindly = (name, detail) => blind.set(name, detail ?? blind.get(name) ?? null);
+
   for (const seed of chosen) {
     if (deps.deadline?.tooLateFor(8_000)) {
       notes.push('ran out of time before every seed was read');
@@ -121,9 +139,9 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
       // Free, so generous: every Stack Exchange site rather than the first two.
       const found = await deps.community.gatherAsks({ keywords: seed, hnLimit: 30, seLimit: 15, sites: SE_ALL });
       asks.push(...found.asks);
-      if (found.partial) notes.push(`while reading "${seed}": ${found.failures.map((f) => f.source).join(', ')} did not answer`);
+      for (const f of found.failures ?? []) blindly(f.source, f.error);
     } catch (err) {
-      notes.push(`"${seed}" could not be read (${err.message})`);
+      blindly('the free community sources', err.message);
     }
 
     // Anything you plugged in yourself, read for the same seed. These are the
@@ -134,11 +152,15 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
       try {
         const extra = await deps.connectors.gather(seed);
         asks.push(...extra.asks);
-        if (extra.failures.length) notes.push(...extra.failures.map((f) => `${f.name} did not answer: ${f.detail}`));
+        for (const f of extra.failures ?? []) blindly(f.name, f.detail);
       } catch (err) {
-        notes.push(`your connected sources could not be read (${err.message})`);
+        blindly('your connected sources', err.message);
       }
     }
+  }
+
+  if (blind.size) {
+    notes.push(`${blind.size} source(s) never answered: ${[...blind.entries()].map(([n, d]) => `${n}${d ? ` (${String(d).slice(0, 90)})` : ''}`).join('; ')}`);
   }
 
   if (!asks.length) {
@@ -166,12 +188,24 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
   const watches = await deps.store.listWatches().catch(() => []);
   const existingTopics = watches.map((w) => w.topic).filter(Boolean);
 
+  // What she reads and what she THINKS ABOUT used to be different by a factor
+  // of thirty: 1,198 posts read, the first 40 shown, and because the material
+  // arrives grouped by source those 40 were all one forum. Reading is free;
+  // this is the step that is not, so it is worth pricing honestly. 300 posts
+  // is about 30k input tokens, which on the judge tier is roughly a cent a
+  // roam — call it fifty cents a month at twice a day. That is the entire
+  // price of her being able to see across her sources instead of down one.
+  const shown = balancedSample(unique, MATERIAL_LIMIT, (a) => a.platform ?? a.source ?? 'unknown');
+  if (shown.length < unique.length) {
+    notes.push(`read ${unique.length} posts and thought about ${shown.length} of them, taken evenly across every source rather than the first that answered`);
+  }
+
   let json = null;
   try {
     const res = await deps.llm.generateJson({
       tier: 'judge',
       systemInstruction: systemPrompt('You are looking for recurring unmet needs in raw forum posts. You propose things to watch; you never conclude that a need is real on this evidence alone, because nothing here proves anyone is paying.'),
-      prompt: explorePrompt({ asks: unique.slice(0, 40), existingTopics }),
+      prompt: explorePrompt({ asks: shown, existingTopics }),
       responseSchema: PROPOSAL_SCHEMA,
       label: 'explore',
       timeoutMs: 30_000,
@@ -194,7 +228,16 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
       ok: true,
       proposals: [],
       read: unique.length,
-      notes: [...notes, `read ${unique.length} posts and found no recurring need worth a watch. That is a real answer.`],
+      notes: [
+        ...notes,
+        // "That is a real answer" is only true if she could see. Saying it
+        // after four of five sources refused turns a half-blind run into a
+        // confident all-clear, which is the most expensive kind of wrong
+        // thing this system can say.
+        blind.size
+          ? `read ${unique.length} posts and found no recurring need worth a watch — but ${blind.size} source(s) never answered, so this is "nothing where she could see", not "nothing".`
+          : `read ${unique.length} posts across every source and found no recurring need worth a watch. That is a real answer.`,
+      ],
       costUsd,
     };
   }
@@ -202,7 +245,7 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
   const byUrl = new Map(unique.map((a) => [a.url, a]));
 
   const proposals = json.proposals
-    .slice(0, clampNumber(limit, 1, 10, 4))
+    .slice(0, clampNumber(limit, 1, 12, 8))
     .map((p) => {
       const topic = String(p.topic ?? '').trim();
       if (!topic) return null;
