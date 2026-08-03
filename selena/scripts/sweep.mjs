@@ -25,9 +25,38 @@ const PASSES = Math.min(20, Math.max(1, Number(process.env.PASSES) || 4));
 const LIMIT = Math.min(10, Math.max(1, Number(process.env.LIMIT) || 2));
 
 if (!URL_BASE) {
-  // Not a failure. A red cross every morning for a thing you have not set up
-  // yet just teaches you to ignore red crosses.
-  console.log('SELENA_URL is not set, so there is nothing to sweep. Add it as a repository secret when Selena is deployed.');
+  // Still not a failure — a red cross every morning for a thing you have not
+  // set up yet just teaches you to ignore red crosses.
+  //
+  // But the first version stopped here with one line on stdout, and that was
+  // worse than a red cross in a way that took weeks to notice: the run went
+  // green in twelve seconds, every twelve hours, having done nothing at all.
+  // A green tick that means "I did nothing" is the single most misleading
+  // state this system can be in, and it looks exactly like the state where
+  // everything works and there was simply no news.
+  //
+  // So: exit 0, and make the doing-nothing unmissable. ::warning:: turns the
+  // run yellow in the Actions list and annotates it, and the step summary
+  // says it in words on the run's own page.
+  const msg = 'SELENA_URL is not set, so NOTHING WAS SWEPT. She has not run. Add SELENA_URL (and SELENA_TOKEN) as repository secrets.';
+  console.log(`::warning title=Selena did not run::${msg}`);
+  console.log(msg);
+  const note = [
+    '## Selena did not run',
+    '',
+    '**No watches ran, nothing was read, and nothing was looked for.** This job',
+    'went green because there is nothing set up for it to call, not because',
+    'there was no news.',
+    '',
+    'Set two repository secrets under Settings → Secrets and variables → Actions:',
+    '',
+    '| secret | value |',
+    '| --- | --- |',
+    '| `SELENA_URL` | the deployment, e.g. `https://selena.vercel.app` |',
+    '| `SELENA_TOKEN` | the same value as `SELENA_TOKEN` in the Vercel environment |',
+  ].join('\n');
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${note}\n`);
+  else console.log(`\n--- step summary ---\n${note}`);
   process.exit(0);
 }
 
