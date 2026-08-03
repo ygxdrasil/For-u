@@ -155,6 +155,14 @@ export async function runWatch(watch, deps, { haltOnUnsourced = false } = {}) {
 
   // What we already know about this watch, so the run looks for change rather
   // than starting cold every time.
+  //
+  // Scoped to THIS watch, and left that way on purpose. Widening it would mean
+  // one watch's run silently rewriting another watch's finding, which makes
+  // "what changed since last time" meaningless and gives no record a clear
+  // owner. The real cost of the narrow scope — the same demand filed under two
+  // watches, each scoring its ladder over half the evidence — is handled after
+  // the fact in core/synthesis.js, where it can be shown to you and merged
+  // deliberately rather than happening inside a run you were not watching.
   const existing = await store.listFindings({ watchId: watch.id, status: 'active', limit: 50 });
 
   const result = await runResearch(

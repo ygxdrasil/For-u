@@ -826,3 +826,30 @@ button.danger:hover { background: var(--ember); }
   padding: 6px 8px;
   font: inherit;
 }
+
+/* The same demand, filed more than once. Each cluster is a block with the
+   verdict at the top, because "level 2 → level 4" is the entire message and
+   everything else is the evidence for it. */
+.cluster {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.cluster:first-of-type { border-top: 0; }
+.clusterline {
+  color: var(--fg);
+  margin: 8px 0;
+}
+.cluster .members {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+.cluster .members li { margin: 3px 0; }
+.cluster .why {
+  border-left: 2px solid var(--line);
+  padding: 8px 0 2px 12px;
+  margin-top: 10px;
+}
+.cluster .why ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}

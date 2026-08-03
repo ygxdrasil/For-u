@@ -15,6 +15,7 @@ import { sourceStatus } from '../core/sources.js';
 import { clampNumber, nowIso, sumFinite } from '../core/util.js';
 import { normalizeAutonomy, describeAutonomy, handoffsInWindow, unattendedHeadroom, AUTONOMY_KEY } from '../core/autonomy.js';
 import BUILD from '../core/build.js';
+import { clusterFindings } from '../core/synthesis.js';
 
 /** Daily spend for the last 14 days, for the sparkline. Never NaN. */
 function spendSeries(rows, days = 14, at = nowIso()) {
@@ -51,6 +52,12 @@ export default guard(async function handler(req, res) {
   ]);
 
   const stale = staleFindings(findings, { at });
+
+  // Free — no model call, just a comparison of evidence already on the record —
+  // so it rides along on the poll rather than waiting behind a button. Capped
+  // at the six worth acting on: the list is sorted by how many levels the split
+  // is costing, and a longer one is a backlog rather than a prompt.
+  const clusters = clusterFindings(findings).slice(0, 6);
 
   // The sidebar renders this on every page, so it rides the one poll the HUD
   // already makes rather than adding a second endpoint to ask "is she on?".
@@ -115,6 +122,8 @@ export default guard(async function handler(req, res) {
       // The number that matters: paying and complaining, or better.
       realOpenings: findings.filter((f) => (f.evidence?.strength ?? 0) >= 4).length,
       hypotheses: findings.filter((f) => f.evidence?.hypothesis).length,
+      // How many levels are currently sitting unclaimed in split records.
+      lostToSplits: clusters.reduce((n, c) => n + Math.max(0, c.lift), 0),
       buildable: findings.filter((f) => f.buildability?.verdict === 'jason-can-build').length,
       notBuildable: findings.filter((f) => f.buildability?.verdict === 'jason-cannot-build').length,
       handedToJason: counts.handedToJason ?? 0,
@@ -165,6 +174,7 @@ export default guard(async function handler(req, res) {
 
     topFindings: findings.slice(0, 12).map(summarizeFinding),
     stale: stale.slice(0, 10).map(summarizeFinding),
+    clusters,
     reverifyAfterDays: REVERIFY_AFTER_DAYS,
 
     activity,

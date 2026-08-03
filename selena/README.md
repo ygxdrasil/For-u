@@ -25,6 +25,47 @@ Anything below 3 is stored as a `hypothesis`, not a finding. Level 5 also
 requires that something was actually *read* — if every source is a search
 snippet we never opened, it is held at 4 and says so.
 
+## The same demand, filed more than once
+
+The ladder is computed per finding. Demand does not respect that boundary.
+
+A watch on bookkeeping for trades finds "invoice chasing is still manual" and
+scores it level 2. A watch on salon software finds "chasing payments eats my
+Fridays" and scores that level 2. A roam turns up a CFPB complaint about the
+same thing. Three records, three ladders, each computed over a third of the
+evidence — and the union is level 4 or 5.
+
+Nothing could see that, because deduplication is scoped to one watch
+(`listFindings({ watchId })`). So she **systematically underrated every demand
+that shows up in more than one place**, which is exactly the demand worth
+building for: a need in one forum is a niche, a need in three unrelated ones is
+a market.
+
+`core/synthesis.js` finds those groups and says the sentence the system could
+not say before — *"three findings, each at level 2; together the same evidence
+reaches level 4"*. It runs on every dashboard poll because it costs nothing: no
+model call, just a comparison of evidence already on the record.
+
+**Shared evidence is necessary.** Two findings are never offered as one unless
+they cite a source in common. Merging on wording alone is the dangerous case —
+"invoice software for plumbers" and "invoice software for salons" read almost
+identically and are two different markets, and folding them together
+manufactures a level 5 out of two unrelated level 2s that looks exactly like a
+real one all the way to Jason. Nobody lands on the same URL twice by
+coincidence; the corpus is millions of posts wide. Wording and complaint
+agreement only break ties among pairs that already share sources.
+
+**It proposes and waits.** The reasoning and the shared URLs are on screen next
+to the button. Merging supersedes the others pointing at the survivor —
+nothing is deleted, and restoring them undoes it. Risks from every member
+travel to the survivor, because the reasons *not* to build something are the
+first thing an optimistic merge would drop. The survivor is re-scored inside
+`mergeCluster`, not by whichever caller remembers.
+
+Watch-scoped dedup stays as it is: widening it would mean one watch's run
+silently rewriting another's finding, which makes "what changed" meaningless.
+The cross-watch case is handled here instead, where you can see it.
+
 ## Talking to them
 
 The ladder proves people pay **somebody**. It cannot tell you what they would
@@ -596,6 +637,8 @@ core/       the headless engine — no HTTP, no React, no cron
                  contains no network call, deliberately
   outbox.js      the only place that speaks to a stranger: credentials you
                  issued, five per finding, nothing on a schedule
+  synthesis.js   two findings that are one demand, and what the ladder says
+                 over their combined evidence
   autonomy.js    the brakes: reserve, floor, ceiling, backoff, stop
   pass.js        one unattended pass: watch → roam → stand → hand over
   peers.js       where Jason and Grace are, and proof the line works

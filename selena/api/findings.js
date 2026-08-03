@@ -22,6 +22,7 @@ import { summarizeFinding, FINDING_STATUS } from '../core/schema.js';
 import { reverifyFinding, staleFindings } from '../core/watches.js';
 import { contactSheet, draftOpeners, recordConversation, conversationSummary } from '../core/reach.js';
 import { sendOne, outboxSummary, listSenders } from '../core/outbox.js';
+import { clusterFindings, mergeCluster } from '../core/synthesis.js';
 import { nowIso } from '../core/util.js';
 
 export default guard(async function handler(req, res) {
@@ -55,6 +56,10 @@ export default guard(async function handler(req, res) {
       findings: url.searchParams.get('full') === '1' ? findings : findings.map(summarizeFinding),
       counts: await ctx.store.countFindings(),
       stale: staleFindings(findings).map((f) => f.id),
+      // Costs nothing — no model call, pure comparison of evidence already on
+      // the record — so it is computed on every listing rather than hidden
+      // behind a button nobody presses.
+      clusters: url.searchParams.get('full') === '1' ? clusterFindings(findings) : undefined,
       context: contextStatus(ctx),
       openApi: gate.open ? gate.warning : undefined,
     });
@@ -62,6 +67,52 @@ export default guard(async function handler(req, res) {
 
   const body = await readBody(req);
   const action = String(body.action ?? '').toLowerCase();
+
+  // ---- fold several records into one -------------------------------------
+  // Handled before the single-id guard below, because a merge names a set
+  // rather than a finding. Nothing is deleted: the best-evidenced member
+  // absorbs the union and the rest are superseded pointing at it, so a merge
+  // you regret is undone by restoring them.
+  if (action === 'merge') {
+    const ids = (Array.isArray(body.ids) ? body.ids : []).map((x) => String(x)).filter(Boolean);
+    if (ids.length < 2) return json(res, 400, { ok: false, error: 'A merge needs at least two findings. Send { "ids": ["...", "..."] }.' });
+
+    const members = (await Promise.all(ids.map((x) => ctx.store.getFinding(x)))).filter(Boolean);
+    if (members.length !== ids.length) return json(res, 404, { ok: false, error: 'One of those findings no longer exists. Reload and try again.' });
+
+    // Re-checked here rather than trusted from the browser. The page that
+    // offered the merge may be minutes old, and merging two demands that are
+    // not the same is the one thing this feature can get badly wrong.
+    const stillOne = clusterFindings(members).some((c) => c.members.length === members.length);
+    if (!stillOne && body.force !== true) {
+      return json(res, 409, {
+        ok: false,
+        error: 'These no longer look like one demand — the evidence has moved since that list was drawn. Reload the page, or send force: true if you are sure.',
+      });
+    }
+
+    const { survivor, superseded } = mergeCluster(members);
+    // The survivor first: if the function dies midway, the record that holds
+    // the union exists and the others are merely un-superseded duplicates,
+    // which is recoverable. The other order loses evidence.
+    await ctx.store.putFinding(survivor);
+    for (const gone of superseded) await ctx.store.putFinding(gone);
+
+    await ctx.store.addActivity({
+      kind: 'finding',
+      level: 'report',
+      message: `merged ${members.length} findings into "${survivor.demand.oneLine.slice(0, 60)}"`,
+      findingId: survivor.id,
+    });
+
+    return json(res, 200, {
+      ok: true,
+      survivor,
+      superseded: superseded.map((f) => f.id),
+      note: 'Nothing was deleted. The others are superseded and point at the survivor; restore them to undo this.',
+    });
+  }
+
   const id = String(body.id ?? '').trim();
   if (!id) return json(res, 400, { ok: false, error: 'Which finding? Send { "id": "..." }.' });
 
@@ -148,6 +199,6 @@ export default guard(async function handler(req, res) {
 
   return json(res, 400, {
     ok: false,
-    error: `Unknown action "${action}". Use archive, restore, supersede, reverify, contact-sheet, record-reply, send-preview or send. There is no delete.`,
+    error: `Unknown action "${action}". Use archive, restore, supersede, reverify, contact-sheet, record-reply, send-preview, send or merge. There is no delete.`,
   });
 });

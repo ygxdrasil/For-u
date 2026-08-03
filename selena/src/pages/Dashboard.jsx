@@ -8,6 +8,7 @@
 import React, { useState } from 'react';
 import { api, money, ago } from '../api.js';
 import { Stat, Pill, StrengthBar, Meter, Bars, Distribution, Feed, BuildPill, Empty, Banner } from '../components.jsx';
+import Clusters from '../Clusters.jsx';
 
 export default function Dashboard({ data, refresh, busy }) {
   const [running, setRunning] = useState(false);
@@ -65,6 +66,10 @@ export default function Dashboard({ data, refresh, busy }) {
       </div>
 
       <div className="spacer" />
+
+      {/* Above the fold, because it is the one thing on this page that says a
+          number on the board is wrong rather than merely low. */}
+      <Clusters clusters={data.clusters} refresh={refresh} />
 
       <div className="grid g21">
         <div className="card">
