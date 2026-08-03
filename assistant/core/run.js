@@ -244,8 +244,22 @@ export async function run(input, hooks = {}) {
    * the bug itself, however carefully the merge is written: the two turns can
    * both read before either writes.
    */
+  let historyRepaired = false;
+
   const saveConversation = async () => {
     if (!input.sessionId) return;
+
+    // A conversation the model refused was rewritten to get this turn through.
+    // Appending would leave the rejected prefix exactly where it was, and the
+    // next turn would pay the same rejection — so this one case writes the
+    // whole thing. It gives up the append's protection against a simultaneous
+    // turn, which is the right trade: that costs a message once, and this
+    // costs a wasted round trip on every turn from here on.
+    if (historyRepaired) {
+      await store.saveSession({ id: input.sessionId, messages: contents.slice(-40) });
+      return;
+    }
+
     const mine = contents.slice(carried.length);
     if (!mine.length) return;
     await store.appendSession(input.sessionId, mine, { limit: 40 });
@@ -308,6 +322,14 @@ export async function run(input, hooks = {}) {
       return result({ status: 'model_error', reply: `The model call failed: ${err.message}`, spend: await meter.summary() });
     }
 
+    // A history the model refused has been rewritten to get this far. Keep it,
+    // or the same rejected round trip is paid on every future turn of this
+    // conversation. Same number of turns, so nothing downstream shifts.
+    if (response.repairedHistory?.length === contents.length) {
+      contents.splice(0, contents.length, ...response.repairedHistory);
+      historyRepaired = true;
+    }
+
     if (response.empty) {
       // The silent-failure signature. Say what happened rather than returning
       // an empty bubble.
@@ -325,7 +347,8 @@ export async function run(input, hooks = {}) {
 
     const calls = response.functionCalls ?? [];
     if (!calls.length) {
-      contents.push({ role: 'model', parts: [{ text: response.text }] });
+      // The model's own turn, copied rather than rebuilt — see modelContent.
+      contents.push(response.modelContent ?? { role: 'model', parts: [{ text: response.text }] });
       // Hitting the output ceiling is running out of road, exactly like running
       // out of time or steps — and worse than either, because it looks like an
       // ordinary finished answer. The sentence just stops. Reported as 'ok' it
@@ -334,7 +357,19 @@ export async function run(input, hooks = {}) {
       break;
     }
 
-    contents.push({ role: 'model', parts: calls.map((c) => ({ functionCall: { name: c.name, args: c.args ?? {} } })) });
+    /**
+     * Copied, never reconstructed.
+     *
+     * Gemini 3 attaches a thoughtSignature to each functionCall part and
+     * validates it when the turn comes back. Rebuilding the turn from the
+     * parsed name and args dropped it, and the NEXT request was rejected:
+     * "Function call is missing a thought_signature in functionCall parts".
+     * So he searched for nodes, and then stopped — every single time, on every
+     * build, at the first tool call.
+     */
+    contents.push(
+      response.modelContent ?? { role: 'model', parts: calls.map((c) => ({ functionCall: { name: c.name, args: c.args ?? {} } })) },
+    );
 
     const responseParts = [];
     for (const call of calls) {

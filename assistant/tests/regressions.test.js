@@ -703,3 +703,112 @@ test('a busy model does not eat the deadline waiting to retry', async () => {
   assert.equal(calls, 3, 'with no time to spare it should try each model once and stop');
   assert.ok(Date.now() - started < 1500, `it waited ${Date.now() - started}ms with under a second of budget`);
 });
+
+test('the model s own turn is sent back exactly as it came, signature and all', async () => {
+  // Gemini 3 attaches a thoughtSignature to functionCall parts and validates it
+  // when the turn is sent back. The turn was being REBUILT from the parsed name
+  // and args, which dropped it, so the second request of every build was
+  // rejected:
+  //
+  //   400 INVALID_ARGUMENT: Function call is missing a thought_signature in
+  //   functionCall parts ... function call `default_api:search_nodes`
+  //
+  // He searched for nodes and then stopped. Every build, at the first tool
+  // call. Nothing may reconstruct a model turn — it is copied.
+  const seen = [];
+  const withSignature = () => {
+    let step = 0;
+    return { models: { generateContent: async ({ contents }) => {
+      seen.push(structuredClone(contents));
+      if (step++ === 0) {
+        return {
+          text: '',
+          functionCalls: [{ name: 'search_nodes', args: { query: 'slack' } }],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+          candidates: [{
+            content: {
+              role: 'model',
+              parts: [{ functionCall: { name: 'search_nodes', args: { query: 'slack' } }, thoughtSignature: 'SIG-FROM-THE-MODEL' }],
+            },
+          }],
+        };
+      }
+      return { text: 'done', functionCalls: [], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } };
+    } } };
+  };
+
+  const out = await run({ text: 'find me a slack node', config: cfg, store: createMemoryStore(), llmClientFactory: withSignature }, {});
+  assert.equal(out.status, 'ok', out.reply);
+  assert.equal(seen.length, 2, 'the turn did not continue past the first tool call');
+  assert.match(
+    JSON.stringify(seen[1]),
+    /SIG-FROM-THE-MODEL/,
+    'the thought signature was dropped, so Gemini 3 rejects the next request and no workflow ever gets built',
+  );
+});
+
+test('a conversation whose signatures are rejected is repaired, not abandoned', async () => {
+  // Sessions saved before signatures were carried through still hold function
+  // calls with none on them, and a signature cannot be invented after the
+  // fact — so every future turn on that conversation would fail the same way
+  // for good. Flattening the tool turns to text keeps the meaning and leaves
+  // the validation nothing to reject.
+  const bodies = [];
+  const fussy = () => ({ models: { generateContent: async ({ contents }) => {
+    bodies.push(structuredClone(contents));
+    const hasStructuredCall = JSON.stringify(contents).includes('"functionCall"');
+    if (hasStructuredCall) {
+      throw new Error('400 INVALID_ARGUMENT: Function call is missing a thought_signature in functionCall parts, position 6');
+    }
+    return { text: 'carried on regardless', functionCalls: [], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } };
+  } } });
+
+  const store = createMemoryStore();
+  await store.saveSession({
+    id: 'poisoned',
+    messages: [
+      { role: 'user', parts: [{ text: 'build the lead pipeline' }] },
+      { role: 'model', parts: [{ functionCall: { name: 'search_nodes', args: { query: 'slack' } } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'search_nodes', response: { ok: true, nodes: [] } } }] },
+    ],
+  });
+
+  const out = await run({ text: 'carry on', sessionId: 'poisoned', config: cfg, store, llmClientFactory: fussy }, {});
+  assert.equal(out.status, 'ok', `a conversation that can be repaired was reported as ${out.status}: ${out.reply}`);
+  assert.equal(out.reply, 'carried on regardless');
+  assert.ok(bodies.length >= 2, 'it gave up without trying the repair');
+  assert.equal(bodies.length, 2, `${bodies.length} requests were sent for one turn — the repair should be the second, not the third`);
+  assert.match(JSON.stringify(bodies.at(-1)), /called search_nodes/, 'the repaired history lost what had already been done');
+  assert.doesNotMatch(JSON.stringify(bodies.at(-1)), /"functionCall"/, 'the repair left a structured call in, which is the thing being rejected');
+});
+
+test('a repaired conversation stays repaired', async () => {
+  // Fixing the request gets the turn through; keeping the fix is what stops
+  // the next turn paying the same rejected round trip, out of the same
+  // 50-second budget, forever.
+  const attempts = [];
+  const fussy = () => ({ models: { generateContent: async ({ contents }) => {
+    attempts.push(structuredClone(contents));
+    if (JSON.stringify(contents).includes('"functionCall"')) {
+      throw new Error('400 INVALID_ARGUMENT: Function call is missing a thought_signature in functionCall parts');
+    }
+    return { text: 'fine', functionCalls: [], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } };
+  } } });
+
+  const store = createMemoryStore();
+  await store.saveSession({
+    id: 'poisoned',
+    messages: [
+      { role: 'user', parts: [{ text: 'build it' }] },
+      { role: 'model', parts: [{ functionCall: { name: 'search_nodes', args: {} } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'search_nodes', response: {} } }] },
+    ],
+  });
+
+  await run({ text: 'first', sessionId: 'poisoned', config: cfg, store, llmClientFactory: fussy }, {});
+  const after = await run({ text: 'second', sessionId: 'poisoned', config: cfg, store, llmClientFactory: fussy }, {});
+
+  assert.equal(after.status, 'ok', after.reply);
+  assert.equal(attempts.length, 3, `${attempts.length} requests for two turns — the second turn paid the rejection again`);
+  assert.doesNotMatch(JSON.stringify(await store.getSession('poisoned')), /"functionCall"/, 'the stored conversation is still poisoned');
+});

@@ -114,6 +114,42 @@ function looksOverloaded(err) {
   );
 }
 
+/**
+ * A conversation whose history the model will no longer accept.
+ *
+ * Sessions saved before signatures were carried through still hold function
+ * calls with no signature on them, and they cannot be given one after the
+ * fact — so every future turn on that conversation fails the same way, for
+ * good. The same happens when a turn escalates from the chat model to the
+ * design model: the signature belongs to the model that produced it.
+ *
+ * Rather than tell someone their conversation is permanently broken, the
+ * history is flattened once — the structured calls become plain text saying
+ * what was called and what came back — and the request is sent again. The
+ * meaning survives, the validation has nothing left to reject, and the turn
+ * completes.
+ */
+function looksLikeSignatureProblem(err) {
+  const m = String(err?.message ?? err).toLowerCase();
+  return m.includes('thought_signature') || m.includes('thoughtsignature');
+}
+
+function flattenToolTurns(contents) {
+  const described = (part) => {
+    if (part?.functionCall) {
+      return { text: `[called ${part.functionCall.name} with ${JSON.stringify(part.functionCall.args ?? {}).slice(0, 2000)}]` };
+    }
+    if (part?.functionResponse) {
+      return { text: `[result of ${part.functionResponse.name}: ${JSON.stringify(part.functionResponse.response ?? {}).slice(0, 4000)}]` };
+    }
+    return part;
+  };
+  return (contents ?? []).map((turn) => ({
+    ...turn,
+    parts: (turn.parts ?? []).map(described),
+  }));
+}
+
 export class ModelsBusyError extends Error {
   constructor(tried) {
     super(
@@ -151,6 +187,11 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
     const tried = [];
     let busy = false;
 
+    // The history actually sent. Replaced once, for the rest of this call, if
+    // the model rejects the signatures in it.
+    let history = contents;
+    let repairedHistory = false;
+
     for (const model of spec.models) {
       let retriedThisModel = false;
 
@@ -161,7 +202,7 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
         // Hard stop BEFORE the request. Checking after means paying to find out.
         // Re-checked on a retry too: a retry is a second billable request.
         const approxInputTokens = Math.ceil(
-          (systemInstruction.length + JSON.stringify(contents).length) / 4,
+          (systemInstruction.length + JSON.stringify(history).length) / 4,
         );
         await meter.assertCanSpend({ model, inputTokens: approxInputTokens, maxOutputTokens: spec.maxOutputTokens });
 
@@ -185,7 +226,7 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
         // costs a truthful "I ran out of time" instead of silence.
         const deadline = timeoutMs && timeoutMs > 0 ? timeoutMs : null;
         const callModel = async (cfg) => {
-          if (!deadline) return client.models.generateContent({ model, contents, config: cfg });
+          if (!deadline) return client.models.generateContent({ model, contents: history, config: cfg });
 
           const controller = new AbortController();
           let timer;
@@ -201,7 +242,7 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
             // The signal is passed as well as raced: aborting stops us waiting,
             // but the request itself is still billed, so the race is what
             // guarantees we return in time.
-            return await Promise.race([client.models.generateContent({ model, contents, config: { ...cfg, abortSignal: controller.signal } }), expired]);
+            return await Promise.race([client.models.generateContent({ model, contents: history, config: { ...cfg, abortSignal: controller.signal } }), expired]);
           } catch (err) {
             // Aborting makes the SDK reject too, and that rejection can win the
             // race. It says "aborted", which is true and useless: the caller
@@ -223,9 +264,16 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
           } catch (err) {
             // Not every model accepts a thinking budget, and the cheapest tiers
             // are the most likely to reject one. Retry once without it rather
-            // than failing the whole request over a config field — and say which
-            // happened rather than silently degrading.
-            if (!/thinking|thought/i.test(String(err?.message ?? '')) || config.thinkingConfig === undefined) throw err;
+            // than failing the whole request over a config field.
+            //
+            // Matched on the whole phrase, not on "thought": a missing
+            // thought_signature also contains that word, and this branch was
+            // catching it — spending a second request re-sending the same
+            // rejected history with the thinking config stripped, which was
+            // never the problem. Substring matching, again.
+            const complaint = String(err?.message ?? '');
+            const aboutTheBudget = /thinking budget|thinkingbudget|thinking_budget|thinkingconfig|thinking config/i.test(complaint);
+            if (!aboutTheBudget || looksLikeSignatureProblem(err) || config.thinkingConfig === undefined) throw err;
             const { thinkingConfig, ...withoutThinking } = config;
             res = await callModel(withoutThinking);
           }
@@ -258,6 +306,31 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
             model,
             text,
             functionCalls: calls,
+            /**
+             * The model's turn EXACTLY as it came back, to be pushed into the
+             * next request's history unchanged.
+             *
+             * Gemini 3 attaches a thoughtSignature to functionCall parts and
+             * validates it when that turn is sent back. Rebuilding the turn
+             * from the parsed name and args — which is the obvious thing to do,
+             * and what this did — drops the signature, and the NEXT request is
+             * rejected outright:
+             *
+             *   400 INVALID_ARGUMENT: Function call is missing a
+             *   thought_signature in functionCall parts
+             *
+             * So the whole build stops after the first tool call. Nothing here
+             * may reconstruct a model turn; it is copied.
+             */
+            modelContent: res.candidates?.[0]?.content ?? null,
+            /**
+             * The flattened history, when one had to be used, so the caller can
+             * keep it. Repairing inside this function fixes the request; giving
+             * it back fixes the CONVERSATION. Without it, a session saved before
+             * signatures were carried through pays a rejected round trip on
+             * every future turn, forever — quietly, out of a 50-second budget.
+             */
+            repairedHistory: repairedHistory ? history : null,
             finishReason,
             truncated,
             empty,
@@ -283,6 +356,16 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
               continue;
             }
             break; // next model in the chain
+          }
+
+          // A history the model will not accept is repaired once and retried
+          // on the same model. Nothing else can fix it: a signature cannot be
+          // invented after the fact, so without this the conversation is dead
+          // for good rather than for one turn.
+          if (looksLikeSignatureProblem(err) && !repairedHistory) {
+            repairedHistory = true;
+            history = flattenToolTurns(history);
+            continue;
           }
 
           if (looksRetired(err)) break; // next model in the chain
