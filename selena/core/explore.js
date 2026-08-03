@@ -20,6 +20,7 @@
 import { nowIso, randomId, normalizePhrase, phraseSimilarity, clampNumber } from './util.js';
 import { systemPrompt } from './prompts.js';
 import { createWatch } from './watches.js';
+import { SE_SITES as SE_ALL } from './community.js';
 
 export const PROPOSALS_KEY = 'proposals';
 
@@ -94,12 +95,21 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
     return { ok: false, proposals: [], read: 0, notes: ['no community sources are configured, so there is nowhere to look'], costUsd: 0 };
   }
 
-  // Rotate the seed each time so consecutive explorations do not read the same
-  // page and propose the same thing. Deterministic from the clock rather than
-  // random, so a run is reproducible from its timestamp.
+  // Read every seed, not a sample of them.
+  //
+  // Reading is free — Hacker News, Stack Exchange, Discourse and the review
+  // feeds all cost nothing — and the only thing a roam pays for is ONE model
+  // call over whatever came back. Reading two seeds out of eight was therefore
+  // saving nothing and finding a quarter as much. The deadline is what bounds
+  // this now, not a number picked in advance.
+  //
+  // The rotation is kept as an ORDER rather than a filter: on a short run the
+  // seeds that get cut are different each hour, so nothing is permanently
+  // invisible. Deterministic from the clock, so a run is reproducible from its
+  // timestamp.
   const pool = Array.isArray(seeds) && seeds.length ? seeds : SEEDS;
   const offset = Math.floor(Date.parse(now()) / 3_600_000) % pool.length;
-  const chosen = [pool[offset], pool[(offset + 3) % pool.length]];
+  const chosen = pool.map((_, i) => pool[(offset + i) % pool.length]);
 
   const asks = [];
   for (const seed of chosen) {
@@ -108,7 +118,8 @@ export async function explore({ seeds = null, limit = 4 } = {}, deps) {
       break;
     }
     try {
-      const found = await deps.community.gatherAsks({ keywords: seed, hnLimit: 12, seLimit: 6 });
+      // Free, so generous: every Stack Exchange site rather than the first two.
+      const found = await deps.community.gatherAsks({ keywords: seed, hnLimit: 30, seLimit: 15, sites: SE_ALL });
       asks.push(...found.asks);
       if (found.partial) notes.push(`while reading "${seed}": ${found.failures.map((f) => f.source).join(', ')} did not answer`);
     } catch (err) {

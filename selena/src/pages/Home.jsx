@@ -30,6 +30,14 @@ const PARTICLES = Array.from({ length: 40 }, (_, i) => {
   };
 });
 
+/**
+ * How many lines of the live trace to keep on screen.
+ *
+ * Enough to see the shape of a run — which sources answered, which did not,
+ * what she decided — without the ? being pushed off the top of the screen.
+ */
+const MAX_STAGES = 12;
+
 /** How long an activity event stays "recent" enough to mean she is working. */
 const BUSY_WINDOW_MS = 45_000;
 
@@ -38,7 +46,11 @@ export default function Home({ data, refresh }) {
   const [working, setWorking] = useState(false);
   const [pending, setPending] = useState(null); // a parse awaiting your confirmation
   const [result, setResult] = useState(null);
-  const [stage, setStage] = useState(null);
+  // The whole trace of the current run, newest last — not just the latest
+  // line. One line at a time made a long run look like a stall: you could not
+  // tell "still reading the fourth source" from "stuck". Reading is free and
+  // she does a lot of it, so there is plenty worth showing.
+  const [stages, setStages] = useState([]);
   const inputRef = useRef(null);
   const stagePoll = useRef(null);
 
@@ -57,13 +69,21 @@ export default function Home({ data, refresh }) {
    */
   const startStagePolling = useCallback(() => {
     stopStagePolling();
-    setStage('starting…');
+    setStages(['starting…']);
+    const startedAt = Date.now();
     stagePoll.current = setInterval(async () => {
       const res = await api.dashboard();
       if (!res.ok) return;
-      const newest = (res.data.activity ?? []).find((e) => e.kind === 'trace');
-      if (newest?.message) setStage(newest.message);
-    }, 2500);
+      // Everything traced since this run began, oldest first. The feed is
+      // newest-first, so it is reversed; anything from before the run belongs
+      // to a previous one and is not ours to show.
+      const mine = (res.data.activity ?? [])
+        .filter((e) => e.kind === 'trace' && e.at && Date.parse(e.at) >= startedAt - 2000)
+        .reverse()
+        .map((e) => e.message)
+        .filter(Boolean);
+      if (mine.length) setStages(mine.slice(-MAX_STAGES));
+    }, 2000);
   }, []);
 
   const stopStagePolling = () => {
@@ -84,7 +104,7 @@ export default function Home({ data, refresh }) {
     const res = await api.command({ text: command, confirm });
 
     stopStagePolling();
-    setStage(null);
+    setStages([]);
     setWorking(false);
 
     if (!res.ok && res.error) {
@@ -167,10 +187,14 @@ export default function Home({ data, refresh }) {
 
         <div className="stage">
           {working ? (
-            <>
-              <span className="tick">▸ </span>
-              {stage ?? 'working…'}
-            </>
+            <div className="trace">
+              {(stages.length ? stages : ['working…']).map((line, i, all) => (
+                <div key={`${i}-${line}`} className={i === all.length - 1 ? 'now' : 'done'}>
+                  <span className="tick">{i === all.length - 1 ? '▸ ' : '· '}</span>
+                  {line}
+                </div>
+              ))}
+            </div>
           ) : backgroundBusy ? (
             <span className="muted">a scheduled watch is running</span>
           ) : (

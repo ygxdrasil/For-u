@@ -508,6 +508,28 @@ export function fromModel(json) {
   };
 }
 
+/**
+ * Re-price "run" once the number of due watches is actually known.
+ *
+ * The parse-time estimate assumes two watches, because at parse time the store
+ * is not open and nobody knows. Since `run` stopped stopping at a fixed three,
+ * that guess is the difference between quoting for two and spending for nine —
+ * so the estimate is corrected here, BEFORE the confirmation line is priced.
+ *
+ * Kept out of the route so it can be tested without an HTTP server: the bug it
+ * exists to prevent is invisible from the outside, because both the wrong
+ * number and the right one look like a perfectly ordinary quote.
+ */
+export function priceDueRun(parsed, dueCount) {
+  const n = clampNumber(dueCount, 0, 500, 0);
+  return {
+    ...parsed,
+    estimateUsd: (clampNumber(parsed?.estimateUsd, 0, 1000, 0) / 2) * Math.max(1, n),
+    dueCount: n,
+    understood: n ? `run all ${n} watch(es) that are due` : 'run every watch that is due — none are, so this will do nothing',
+  };
+}
+
 /** Clamp any number that reaches the confirmation line. */
 export function affordability(estimateUsd, headroomUsd) {
   const cost = clampNumber(estimateUsd, 0, 1000, 0);

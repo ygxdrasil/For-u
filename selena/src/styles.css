@@ -727,3 +727,15 @@ button.danger:hover { background: var(--ember); }
 .starter .n { font-size: 13px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .starter .w { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
 .starter .v { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+
+/*
+ * The live trace: every line of the current run, not just the newest.
+ *
+ * One line at a time made a long run look like a stall — you could not tell
+ * "still reading the fourth source" from "stuck". Finished lines fade back so
+ * the eye lands on what she is doing now.
+ */
+.stage .trace { display: flex; flex-direction: column; gap: 3px; align-items: center; max-width: 62ch; margin: 0 auto; }
+.stage .trace .done { color: var(--ink-3); opacity: 0.62; }
+.stage .trace .now { color: var(--ink-2); }
+.stage .trace .now .tick { color: var(--ember); }

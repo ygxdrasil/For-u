@@ -207,7 +207,9 @@ export async function runResearch(task, deps) {
     // cannot inflate a finding past level 2 on their own.
     if (deps.community && !deadline.tooLateFor(6_000)) {
       try {
-        const found = await deps.community.gatherAsks({ keywords: topic, hnLimit: depth.rank >= 2 ? 10 : 5, seLimit: depth.rank >= 2 ? 6 : 3 });
+        // Reading is free. Depth decides how much MODEL work a run is worth,
+        // not how much text she is allowed to look at first.
+        const found = await deps.community.gatherAsks({ keywords: topic, hnLimit: 25, seLimit: 12 });
         communityAsks = found;
         for (const ask of found.asks) {
           ledger.record({ url: ask.url, status: 200, via: 'direct-fetch', title: ask.title, domain: null });

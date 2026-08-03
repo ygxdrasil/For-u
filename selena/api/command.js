@@ -17,15 +17,15 @@
 import { json, methodGuard, readBody, guard } from '../core/http.js';
 import { createContext, contextStatus } from '../core/context.js';
 import { gateRequest } from '../core/auth.js';
-import { parseCommand, fromModel, fallbackPrompt, FALLBACK_SCHEMA, affordability, VERBS } from '../core/commands.js';
+import { parseCommand, fromModel, fallbackPrompt, FALLBACK_SCHEMA, affordability, priceDueRun, VERBS } from '../core/commands.js';
 import { runResearch } from '../core/research.js';
-import { createWatch, runWatch } from '../core/watches.js';
+import { createWatch, runWatch, isDue } from '../core/watches.js';
 import { handToJason, resolveJasonTarget } from '../core/jason.js';
 import { explore, saveProposals } from '../core/explore.js';
 import { arm as armHer, disarm, readAutonomy, describeAutonomy } from '../core/autonomy.js';
 import { stopEverything } from '../core/pass.js';
 import { summarizeFinding } from '../core/schema.js';
-import { phraseSimilarity } from '../core/util.js';
+import { phraseSimilarity, nowIso } from '../core/util.js';
 
 /**
  * Find the one watch or finding a target names.
@@ -89,7 +89,6 @@ export default guard(async function handler(req, res) {
   }
 
   const summary = await ctx.meter.summary().catch(() => ({ headroomUsd: 0, capUsd: ctx.capUsd }));
-  const money = affordability(parsed.estimateUsd, summary.headroomUsd);
 
   if (!parsed.ok) {
     return json(res, 200, {
@@ -102,6 +101,20 @@ export default guard(async function handler(req, res) {
     });
   }
 
+  // `run` no longer stops at a fixed three, so its parse-time estimate — which
+  // assumed two — would quote for two and spend for eight. The count is only
+  // knowable here, with the store open, so the estimate is corrected before it
+  // is shown rather than after it is spent.
+  if (parsed.verb === 'run' && parsed.args?.which === 'due') {
+    const dueNow = (await ctx.store.listWatches().catch(() => [])).filter((w) => w.state === 'active' && isDue(w, nowIso()));
+    parsed = priceDueRun(parsed, dueNow.length);
+  }
+
+  // Priced AFTER that correction, never before: quoting the two-watch estimate
+  // and then running nine is the exact dishonesty the correction exists to
+  // prevent.
+  const money = affordability(parsed.estimateUsd, summary.headroomUsd);
+
   // ---- confirm -----------------------------------------------------------
   if (parsed.needsConfirm && body.confirm !== true) {
     return json(res, 200, {
@@ -111,6 +124,7 @@ export default guard(async function handler(req, res) {
       understood: parsed.understood,
       interpreted: parsed.source === 'model',
       spends: parsed.spends,
+      dueCount: parsed.dueCount,
       estimateUsd: money.cost,
       headroomUsd: money.left,
       affordable: money.affordable,
@@ -197,7 +211,10 @@ export default guard(async function handler(req, res) {
       if (!due.length) return done({ executed: false, message: 'No active watches to run.' });
 
       const ran = [];
-      for (const watch of due.slice(0, 3)) {
+      // As many as the clock allows rather than three. The loop already stops
+      // when there is not enough time left for another, and says how many were
+      // left — a fixed three was capping a sweep that had plenty of budget.
+      for (const watch of due) {
         if (ctx.deadline.tooLateFor(12_000)) break;
         try {
           const outcome = await runWatch(watch, ctx);
@@ -207,11 +224,14 @@ export default guard(async function handler(req, res) {
         }
       }
       const reported = ran.filter((r) => r.reported);
+      const left = due.length - ran.length;
+      const leftNote = left > 0 ? ` ${left} more were due but there was not time in one request — say run again.` : '';
       return done({
         ran,
+        remainingDue: Math.max(0, left),
         message: reported.length
-          ? `${reported.length} watch(es) had something new.`
-          : `Ran ${ran.length} watch(es); nothing had moved. That is her working, not failing.`,
+          ? `${reported.length} of ${ran.length} watch(es) had something new.${leftNote}`
+          : `Ran ${ran.length} watch(es); nothing had moved. That is her working, not failing.${leftNote}`,
       });
     }
 

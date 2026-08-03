@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseCommand, describe as describeCommand, interpretFilter, estimateFor, fromModel, VERBS } from '../core/commands.js';
+import { parseCommand, describe as describeCommand, interpretFilter, estimateFor, fromModel, affordability, priceDueRun, VERBS } from '../core/commands.js';
 
 const parse = (text) => parseCommand(text);
 
@@ -236,4 +236,46 @@ test('arming and standing down are recognised, and never confused with stopping'
 
   // Arming spends nothing by itself; it is the switch, not the work.
   assert.equal(parseCommand('arm').estimateUsd, 0);
+});
+
+test('the quote for "run" scales with how many watches are actually due', () => {
+  // `run` used to stop at three watches, so a fixed two-watch estimate was
+  // close enough. It no longer stops, which makes the parse-time guess a
+  // promise she cannot keep: quoting for two and spending for nine.
+  const base = parseCommand('run');
+  assert.equal(base.verb, 'run');
+  assert.equal(base.args.which, 'due');
+  assert.ok(base.estimateUsd > 0, 'running watches costs something');
+
+  const perWatch = base.estimateUsd / 2;
+
+  for (const n of [1, 3, 9, 40]) {
+    const priced = priceDueRun(base, n);
+    assert.equal(priced.dueCount, n);
+    assert.ok(
+      Math.abs(priced.estimateUsd - perWatch * n) < 1e-9,
+      `${n} due watches should be quoted as ${n} watches, not ${priced.estimateUsd / perWatch}`,
+    );
+    assert.match(priced.understood, new RegExp(`\\b${n}\\b`), 'the number is the part worth confirming');
+  }
+
+  // Nothing due is not an error and is not free-looking either — it says so.
+  const none = priceDueRun(base, 0);
+  assert.equal(none.dueCount, 0);
+  assert.match(none.understood, /none are/);
+
+  // And the correction has to reach the affordability check, not just the
+  // payload: pricing before correcting is the bug this exists to stop, and it
+  // is invisible from the outside because both numbers look like a quote.
+  const nine = priceDueRun(base, 9);
+  const headroom = perWatch * 4;
+  assert.equal(affordability(base.estimateUsd, headroom).affordable, true, 'two watches fit in this headroom');
+  assert.equal(affordability(nine.estimateUsd, headroom).affordable, false, 'nine do not, and she must say so before spending');
+
+  // Hostile counts do not produce a hostile quote.
+  for (const bad of [NaN, -5, Infinity, '12', null, undefined]) {
+    const p = priceDueRun(base, bad);
+    assert.ok(Number.isFinite(p.estimateUsd) && p.estimateUsd >= 0, `estimate stays a real number for ${String(bad)}`);
+    assert.ok(Number.isFinite(p.dueCount) && p.dueCount >= 0, `count stays a real number for ${String(bad)}`);
+  }
 });
