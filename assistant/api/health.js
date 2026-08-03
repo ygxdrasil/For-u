@@ -12,6 +12,7 @@ import { createStore } from '../core/store.js';
 import { json, methodGuard } from '../core/http.js';
 import { PRICES_CHECKED_ON } from '../core/meter.js';
 import { TIERS } from '../core/llm.js';
+import { loadPrefs } from '../core/settings.js';
 
 import BUILD from '../core/build.js';
 
@@ -28,13 +29,32 @@ export default async function handler(req, res) {
 
   const store = await createStore();
 
+  // A settings read must never take the health check down — it is the one
+  // route you reach for when something else is already wrong.
+  let prefs = null;
+  try {
+    prefs = await loadPrefs(store);
+  } catch {
+    prefs = null;
+  }
+
   json(res, 200, {
     ok: true,
     build: BUILD,
     nodeIndex: index,
     nodeIndexError: indexError,
     store: { kind: store.kind, durable: store.durable, note: store.note ?? null },
-    models: { chat: TIERS.chat.models, design: TIERS.design.models, pricesCheckedOn: PRICES_CHECKED_ON },
+    // What is actually in use, not just what the fallback chains contain. This
+    // reported the chains alone, so it went on naming a model that had not been
+    // the one running for some time — a status endpoint that is confidently out
+    // of date is worse than one that says nothing.
+    models: {
+      chat: prefs?.chatModel ?? TIERS.chat.models[0],
+      design: prefs?.designModel ?? TIERS.design.models[0],
+      thinkingBudget: prefs?.thinkingBudget ?? TIERS.design.thinkingBudget,
+      fallbacks: { chat: TIERS.chat.models, design: TIERS.design.models },
+      pricesCheckedOn: PRICES_CHECKED_ON,
+    },
     // What the server itself has configured. Never echo the values back.
     serverEnv: {
       hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),

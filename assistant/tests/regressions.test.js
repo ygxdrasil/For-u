@@ -868,3 +868,35 @@ test('nothing blames the thinking budget when the numbers say otherwise', async 
   assert.doesNotMatch(out.emptyReason, /thinking budget ate|Lower the thinking budget/i, '625 of 16384 is not the budget running out');
   assert.match(out.emptyReason, /budget is not what did it|usually temporary/i);
 });
+
+test('the fallback is never the model you would least want', async () => {
+  // The chains were ordered cheapest-first, so whatever you chose, the FIRST
+  // fallback was gemini-2.5-flash-lite — the weakest model on the list and the
+  // one that returns an empty reply most often. Falling back to the thing you
+  // fell back from is not a fallback.
+  const { TIERS } = await import('../core/llm.js');
+  const { PRICES } = await import('../core/meter.js');
+  const cheapest = Object.entries(PRICES).sort((a, b) => a[1].output - b[1].output)[0][0];
+
+  assert.notEqual(TIERS.design.models[0], cheapest, 'the design tier still leads with the cheapest model there is');
+  assert.ok(!TIERS.design.models.includes(cheapest), 'the weakest model is still in the design fallback chain');
+  assert.notEqual(TIERS.chat.models[0], cheapest);
+});
+
+test('health reports the model that is running, not the chain it came from', async () => {
+  // It reported the fallback chains alone, so it went on naming a model that
+  // had not been the one running for some time. A status endpoint that is
+  // confidently out of date is worse than one that says nothing.
+  const { resetStoreCache, createStore } = await import('../core/store.js');
+  const { savePrefs } = await import('../core/settings.js');
+  resetStoreCache();
+  await savePrefs(await createStore(), { designModel: 'gemini-2.5-pro' });
+
+  const handler = (await import('../api/health.js')).default;
+  const res = { statusCode: 0, setHeader() {}, end(t) { this.body = JSON.parse(t); } };
+  await handler({ method: 'GET', headers: {} }, res);
+
+  assert.equal(res.body.models.design, 'gemini-2.5-pro', 'health named a model that is not the one in use');
+  assert.ok(Array.isArray(res.body.models.fallbacks.design), 'the chain is still worth knowing, alongside');
+  resetStoreCache();
+});

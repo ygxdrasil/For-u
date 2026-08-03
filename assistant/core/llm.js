@@ -17,21 +17,27 @@ import { GoogleGenAI } from '@google/genai';
 import { PRICES } from './meter.js';
 
 /**
- * Fallback chains, cheapest first. These are only the defaults and the
- * fallback order — the model actually used comes from preferences.
+ * Fallback chains, ordered by what you would actually want NEXT.
+ *
+ * The model in use comes from preferences and goes at the front of the chain;
+ * everything here is what happens when that one is retired, busy, or returns
+ * nothing. They were ordered cheapest-first, which meant the first fallback
+ * from any choice was gemini-2.5-flash-lite — the weakest model on the list,
+ * and the one that returns an empty reply most often. Falling back TO the
+ * thing you fell back FROM is not a fallback.
  */
 export const TIERS = {
   /** Short conversational turns, status questions, formatting. */
   chat: {
-    models: ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'],
+    models: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'],
     maxOutputTokens: 4096,
     thinkingBudget: 0,
   },
   /** Designing, validating and repairing workflows. */
   design: {
-    models: ['gemini-2.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'],
+    models: ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'],
     maxOutputTokens: 16384,
-    thinkingBudget: 2048,
+    thinkingBudget: 6144,
   },
 };
 
