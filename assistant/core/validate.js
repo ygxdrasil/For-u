@@ -173,15 +173,11 @@ export async function validateWorkflow(workflow) {
       errors.push(err('CONNECTION_FROM_MISSING_NODE', `connections has an entry for "${from}", which is not a node in this workflow.`));
       continue;
     }
-    for (const branchList of Object.values(outputs ?? {})) {
-      for (const branch of branchList ?? []) {
-        for (const link of branch ?? []) {
-          if (!nodeNames.has(link?.node)) {
-            errors.push(err('CONNECTION_TO_MISSING_NODE', `"${from}" connects to "${link?.node}", which is not a node in this workflow.`));
-          } else {
-            targeted.add(link.node);
-          }
-        }
+    for (const { to } of eachLink({ [from]: outputs })) {
+      if (!nodeNames.has(to)) {
+        errors.push(err('CONNECTION_TO_MISSING_NODE', `"${from}" connects to "${to}", which is not a node in this workflow.`));
+      } else {
+        targeted.add(to);
       }
     }
   }
@@ -306,16 +302,37 @@ function distance(a, b) {
   return dp[a.length][b.length];
 }
 
-function findCycle(nodeNames, connections) {
-  const adj = new Map();
+/**
+ * Every link in a connections block, whatever shape the block is in.
+ *
+ * `?? []` catches null and undefined and nothing else, so a connections entry
+ * holding a number or a bare object threw "is not iterable" — on a workflow
+ * that already exists in someone's n8n and opens fine in the editor. This is
+ * the validator: being handed something malformed is its ENTIRE JOB, and it
+ * was the one thing it could not survive.
+ *
+ * Written once and used everywhere it is needed, because three copies of the
+ * same four-deep loop is three chances to fix only two of them.
+ */
+export function* eachLink(connections) {
+  const list = (value) => (Array.isArray(value) ? value : []);
   for (const [from, outputs] of Object.entries(connections ?? {})) {
-    const targets = [];
-    for (const branchList of Object.values(outputs ?? {})) {
-      for (const branch of branchList ?? []) {
-        for (const link of branch ?? []) if (link?.node) targets.push(link.node);
+    if (!outputs || typeof outputs !== 'object') continue;
+    for (const branchList of Object.values(outputs)) {
+      for (const branch of list(branchList)) {
+        for (const link of list(branch)) {
+          if (link?.node) yield { from, to: link.node, link };
+        }
       }
     }
-    adj.set(from, targets);
+  }
+}
+
+function findCycle(nodeNames, connections) {
+  const adj = new Map();
+  for (const { from, to } of eachLink(connections)) {
+    if (!adj.has(from)) adj.set(from, []);
+    adj.get(from).push(to);
   }
 
   const state = new Map();

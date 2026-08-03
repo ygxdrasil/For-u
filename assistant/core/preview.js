@@ -34,10 +34,24 @@ export function buildPreview(workflow, { disabledNodes = [] } = {}) {
   const edges = [];
   const targets = new Map();
 
+  /**
+   * Four levels deep, and every one of them checked for being an array rather
+   * than merely non-null.
+   *
+   * `?? []` catches null and undefined and nothing else, so a connections block
+   * carrying a number, a string or a bare object where a list belongs threw
+   * "(branchList ?? []) is not iterable" — from a workflow that already exists
+   * in someone's n8n and opens perfectly well in the editor. Real instances
+   * accumulate shapes this code never saw, and drawing is not the place to
+   * discover that.
+   */
+  const list = (value) => (Array.isArray(value) ? value : []);
+
   for (const [from, outputs] of Object.entries(connections)) {
-    for (const branchList of Object.values(outputs ?? {})) {
-      for (const branch of branchList ?? []) {
-        for (const link of branch ?? []) {
+    if (!outputs || typeof outputs !== 'object') continue;
+    for (const branchList of Object.values(outputs)) {
+      for (const branch of list(branchList)) {
+        for (const link of list(branch)) {
           if (!link?.node) continue;
           edges.push([from, link.node]);
           targets.set(link.node, (targets.get(link.node) ?? 0) + 1);

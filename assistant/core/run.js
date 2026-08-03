@@ -489,7 +489,11 @@ export async function run(input, hooks = {}) {
         say: safeSay(tool, call.args),
         result: out,
         // Drawn from the workflow already in flight — no extra call, no cost.
-        preview: previewFrom(call.args, out),
+        // Drawing is cosmetic; the work is not. A canvas that throws used to
+        // take the whole turn out through the one path here that is NOT inside
+        // the tool's own try — so a workflow that would not draw looked like a
+        // workflow that would not build.
+        preview: safePreview(call.args, out),
       });
       responseParts.push(fnResponse(call, out));
 
@@ -536,6 +540,16 @@ export async function run(input, hooks = {}) {
   await saveConversation();
 
   return result({ status: 'ok', reply: reply || '(no answer produced)', spend: await meter.summary(), n8n: n8nStatus });
+}
+
+/** A preview that fails is no preview, never a failed turn. */
+function safePreview(args, out) {
+  try {
+    return previewFrom(args, out);
+  } catch (err) {
+    console.error('[preview] could not draw this workflow:', err.message);
+    return null;
+  }
 }
 
 function safeSay(tool, args) {

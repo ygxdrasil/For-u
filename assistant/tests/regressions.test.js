@@ -985,3 +985,59 @@ test('a conversation that already violates the pairing rule is repaired before i
   assert.equal(untouched.repaired, false, 'a valid conversation was needlessly rewritten');
   assert.equal(untouched.contents, healthy);
 });
+
+test('a connections block of any shape does not throw', async () => {
+  // "(branchList ?? []) is not iterable", from a workflow that already exists
+  // in the user's n8n and opens perfectly well in the n8n editor. `?? []`
+  // catches null and undefined and nothing else, so a number, a string or a
+  // bare object where a list belongs took the whole turn down.
+  const { buildPreview } = await import('../core/preview.js');
+  const { validateWorkflow, eachLink } = await import('../core/validate.js');
+
+  const nodes = [
+    { id: 'a', name: 'A', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
+    { id: 'b', name: 'B', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [200, 0], parameters: { mode: 'manual' } },
+  ];
+
+  const shapes = [
+    { A: { main: 0 } },
+    { A: { main: 'nonsense' } },
+    { A: { main: {} } },
+    { A: { main: [0, 'x', null, undefined] } },
+    { A: { main: [[null, 5, 'x']] } },
+    { A: { main: [[{ node: 'B' }]], index: 0 },  },
+    { A: 7 },
+    { A: null },
+    { A: [] },
+    { A: { ai_tool: [[{ node: 'B', type: 'ai_tool', index: 0 }]] } },
+  ];
+
+  for (const connections of shapes) {
+    const where = JSON.stringify(connections);
+    assert.doesNotThrow(() => buildPreview({ name: 'X', nodes, connections }), `the canvas threw on ${where}`);
+    assert.doesNotThrow(() => [...eachLink(connections)], `the walker threw on ${where}`);
+    await assert.doesNotReject(() => validateWorkflow({ name: 'X', nodes, connections }), `the validator threw on ${where}`);
+  }
+
+  // And the shapes that ARE valid still produce their links.
+  assert.deepEqual(
+    [...eachLink({ A: { main: [[{ node: 'B', type: 'main', index: 0 }]] } })].map((l) => `${l.from}->${l.to}`),
+    ['A->B'],
+  );
+});
+
+test('a workflow that will not draw does not stop the work', async () => {
+  // The preview was built in the one place that sits OUTSIDE the tool's own
+  // try, so a canvas that threw took the entire turn with it — and a workflow
+  // that merely would not DRAW looked like one that would not build.
+  const store = createMemoryStore();
+  const exploding = () => ({ models: { generateContent: async () => ({
+    text: '', functionCalls: [{ name: 'validate_workflow', args: { workflow: { nodes: [{ nope: true }] } } }],
+    usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+  }) } });
+
+  // previewFrom is handed deliberately hostile args; the turn must survive it.
+  const out = await run({ text: 'check this', config: cfg, store, llmClientFactory: exploding, deadlineMs: 20_000 }, {});
+  assert.notEqual(out.status, 'model_error', out.reply);
+  assert.ok(['ok', 'continuing'].includes(out.status), `a preview problem produced status ${out.status}: ${out.reply}`);
+});
