@@ -18,6 +18,7 @@ import { assessExecution } from './assess.js';
 import { remember, activeFacts } from './memory.js';
 import { askPeer, listPeers } from './peers.js';
 import { fetchPublicUrl, BlockedUrlError } from './web.js';
+import { assessReadiness, summariseReadiness } from './readiness.js';
 
 /** Actions that need explicit confirmation: sending and spending. Nothing else. */
 export const APPROVAL_REQUIRED = {
@@ -117,6 +118,48 @@ export function buildToolRegistry(ctx) {
         } catch (e) {
           return fail(`Could not list credentials: ${e.message}`);
         }
+      },
+    },
+
+    {
+      name: 'check_workflow_ready',
+      say: () => 'checking whether it can actually run',
+      description:
+        'Whether a workflow can actually RUN, which is a different question from whether it saved. Finds nodes with no credential attached, credentials pointing at ids that do not exist here, values still left as placeholders, disabled nodes, and a missing trigger. Call it before telling anyone a build is finished — "it saved" and "it will work at 7am" are not the same sentence.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'A workflow id to read from n8n and check.' },
+          workflow: { type: 'object', description: 'Or the workflow object itself, to check before saving.' },
+        },
+      },
+      handler: async ({ id, workflow }) => {
+        let target = workflow;
+        if (!target && id) {
+          if (!n8n) return needsN8n();
+          try {
+            target = await n8n.getWorkflow(id);
+          } catch (e) {
+            return fail(`Could not read workflow ${id}: ${e.message}`);
+          }
+        }
+        if (!target) return fail('Which workflow? Give me an id, or the workflow itself.');
+
+        // The instance's real credential list turns "has something attached"
+        // into "points at something that exists". Without it the check is
+        // weaker, and it says so rather than implying otherwise.
+        let credentials = null;
+        if (n8n) {
+          try {
+            const res = await n8n.listCredentials();
+            credentials = (res?.data ?? res ?? []).map((c) => ({ id: c.id, name: c.name, type: c.type }));
+          } catch {
+            credentials = null;
+          }
+        }
+
+        const readiness = assessReadiness(target, { credentials });
+        return ok({ ...readiness, summary: summariseReadiness(readiness) });
       },
     },
 
@@ -340,6 +383,32 @@ export function buildToolRegistry(ctx) {
           settings: workflow.settings ?? {},
         };
 
+        /**
+         * Whether the thing that was just saved can actually run.
+         *
+         * A workflow was once designed correctly, validated, saved and reported
+         * as done — with a placeholder document id and an unset credential,
+         * both named honestly in the summary. It still sat in n8n looking
+         * exactly like a finished one, and switching it on would have failed at
+         * 07:00 with nobody watching. Saved and runnable are two facts.
+         */
+        const readinessOf = async (saved) => {
+          try {
+            let credentials = null;
+            try {
+              const res = await n8n.listCredentials();
+              credentials = (res?.data ?? res ?? []).map((c) => ({ id: c.id, name: c.name, type: c.type }));
+            } catch {
+              credentials = null;
+            }
+            const readiness = assessReadiness(saved ?? workflow, { credentials });
+            return { ...readiness, summary: summariseReadiness(readiness) };
+          } catch {
+            // A readiness check that throws must never lose a successful save.
+            return null;
+          }
+        };
+
         /** Tagging is reported separately: the save can succeed and this not. */
         const applyTags = async (workflowId) => {
           const wanted = tags ?? workflow.tags;
@@ -356,6 +425,7 @@ export function buildToolRegistry(ctx) {
             onStatus('Creating workflow (inactive)…');
             const res = await n8n.createWorkflow(payload);
             const tagged = await applyTags(res.workflow?.id);
+            const readiness = await readinessOf(res.readBack ?? res.workflow);
             return ok({
               created: true,
               id: res.workflow?.id,
@@ -363,8 +433,10 @@ export function buildToolRegistry(ctx) {
               active: false,
               validation,
               tagged,
+              readiness,
+              fieldsNotAccepted: res.fieldsNotAccepted,
               note: res.confirmed
-                ? 'Created and read back from n8n. It is inactive until you approve activating it.'
+                ? `Created and read back from n8n. It is inactive until you approve activating it.${readiness && !readiness.ready ? ` ${readiness.summary}` : ''}`
                 : "Created, but reading it back did not confirm it — I can't yet promise it is there.",
             });
           }
@@ -392,6 +464,7 @@ export function buildToolRegistry(ctx) {
 
             const res = await n8n.updateWorkflow(id, carried, { snapshotId: snap.id });
             const tagged = await applyTags(id);
+            const readiness = await readinessOf(res.readBack ?? workflow);
             return ok({
               updated: true,
               id,
@@ -399,8 +472,10 @@ export function buildToolRegistry(ctx) {
               confirmed: res.confirmed,
               validation,
               tagged,
+              readiness,
+              fieldsNotAccepted: res.fieldsNotAccepted,
               keptFromPreviousVersion: ['pinData', 'staticData'].filter((k) => carried[k] !== undefined && workflow[k] === undefined),
-              note: `Previous version saved as snapshot ${snap.id}; it can be restored at any time.`,
+              note: `Previous version saved as snapshot ${snap.id}; it can be restored at any time.${readiness && !readiness.ready ? ` ${readiness.summary}` : ''}`,
             });
           }
 

@@ -1077,6 +1077,12 @@ const Workflows = ({ data, onOpen, onEdit, canOpen }) => {
               ))}
               {w.nodeCount > w.chain.length && <span className="a">+{w.nodeCount - w.chain.length}</span>}
             </div>
+            {/* Saved and runnable are two facts. A workflow with a placeholder
+                in it sits here looking exactly like a finished one, and finds
+                out at 7am with nobody watching. */}
+            {w.readiness && !w.readiness.ready && (
+              <div className="meta" style={{ color: 'var(--invisible)' }}>{w.readiness.summary}</div>
+            )}
             <div className="row" style={{ marginTop: 6 }}>
               <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => onEdit(w.id)}>Edit here</button>
               <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} disabled={!canOpen} onClick={() => onOpen(w.id)}>Open in n8n</button>

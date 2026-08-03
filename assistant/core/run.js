@@ -65,7 +65,8 @@ HOW YOU WORK
 4. Call validate_workflow before save_workflow. If it reports errors, fix them and validate again.
 5. Save. New workflows are always created inactive.
 6. Test with dry_run_workflow, which disables every write-capable node and pins test data. Read the execution back.
-7. Only then tell the user what happened.
+7. check_workflow_ready before you call anything finished. "It saved" and "it will run at 7am" are different facts, and only the second one is worth telling someone. If it is not ready, lead with what is blocking it and what to do about each one — a workflow sitting in n8n with a placeholder in it looks exactly like a working one.
+8. Only then tell the user what happened.
 
 WHEN NO NODE DOES THE JOB
 

@@ -18,6 +18,7 @@ import { createN8nClient } from '../core/n8nClient.js';
 import { json, methodGuard, resolveConfig } from '../core/http.js';
 import { describeServerConfig, loadPrefs } from '../core/settings.js';
 import { catalogMeta } from '../core/nodeIndex.js';
+import { assessReadiness, summariseReadiness } from '../core/readiness.js';
 import { TIERS } from '../core/llm.js';
 import { PRICES_CHECKED_ON } from '../core/meter.js';
 import { requireSession } from './auth.js';
@@ -59,10 +60,23 @@ export default async function handler(req, res) {
     section('workflows', async () => {
       if (!n8n) return null;
       const res = await n8n.listWorkflows({ limit: 30 });
+
+      // The list endpoint returns whole workflows, so readiness costs nothing
+      // extra: a saved workflow with a placeholder in it looks identical to a
+      // finished one until someone actually checks.
+      let credentials = null;
+      try {
+        const creds = await n8n.listCredentials();
+        credentials = (creds?.data ?? creds ?? []).map((c) => ({ id: c.id, name: c.name, type: c.type }));
+      } catch {
+        credentials = null;
+      }
+
       return (res?.data ?? []).map((w) => ({
         id: w.id,
         name: w.name,
         active: w.active,
+        readiness: w.nodes ? (() => { const r = assessReadiness(w, { credentials }); return { ready: r.ready, blockers: r.blockers.length, summary: summariseReadiness(r) }; })() : null,
         isArchived: w.isArchived ?? false,
         updatedAt: w.updatedAt,
         tags: (w.tags ?? []).map((t) => t.name ?? t),
