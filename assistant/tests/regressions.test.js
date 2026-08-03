@@ -812,3 +812,59 @@ test('a repaired conversation stays repaired', async () => {
   assert.equal(attempts.length, 3, `${attempts.length} requests for two turns — the second turn paid the rejection again`);
   assert.doesNotMatch(JSON.stringify(await store.getSession('poisoned')), /"functionCall"/, 'the stored conversation is still poisoned');
 });
+
+test('a model default you never chose follows the default when it improves', async () => {
+  // Saving the theme wrote the whole preference block, models included, which
+  // turned "the default" into "your choice" — so anyone who had ever touched a
+  // setting was frozen on whatever model was cheapest the week they installed
+  // it, with no way of knowing.
+  const { loadPrefs, savePrefs, DEFAULT_PREFS } = await import('../core/settings.js');
+  const store = createMemoryStore();
+
+  await savePrefs(store, { theme: 'dark' });
+  const after = await loadPrefs(store);
+  assert.equal(after.theme, 'dark');
+  assert.equal(after.designModel, DEFAULT_PREFS.designModel, 'a model nobody chose was pinned by saving an unrelated setting');
+
+  // But an actual choice is honoured for good.
+  await savePrefs(store, { designModel: 'gemini-2.5-flash-lite' });
+  assert.equal((await loadPrefs(store)).designModel, 'gemini-2.5-flash-lite', 'a deliberately chosen model was overridden');
+  await savePrefs(store, { theme: 'light' });
+  assert.equal((await loadPrefs(store)).designModel, 'gemini-2.5-flash-lite');
+});
+
+test('an empty reply is retried and handed on, not reported as an answer', async () => {
+  // "The model returned nothing at all" arrived with "this usually means the
+  // thinking budget ate the output allowance" printed beside 625 thinking
+  // tokens out of 16,384. Confidently wrong, in the one system that must not
+  // be. Lite models return nothing intermittently; the fix is to ask again and
+  // then ask a better model, not to blame a setting.
+  const asked = [];
+  const emptyThenFine = () => ({ models: { generateContent: async ({ model }) => {
+    asked.push(model);
+    if (asked.length < 3) {
+      return { text: '', functionCalls: [], usageMetadata: { promptTokenCount: 100, thoughtsTokenCount: 625 }, candidates: [{ finishReason: 'STOP' }] };
+    }
+    return { text: 'built it', functionCalls: [], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50 } };
+  } } });
+
+  const out = await run({ text: 'build the thing', config: cfg, store: createMemoryStore(), llmClientFactory: emptyThenFine }, {});
+  assert.equal(out.status, 'ok', out.reply);
+  assert.equal(out.reply, 'built it');
+  assert.equal(asked[0], asked[1], 'the same model was not asked a second time');
+  assert.notEqual(asked[2], asked[0], 'it never moved on to another model');
+});
+
+test('nothing blames the thinking budget when the numbers say otherwise', async () => {
+  const { createLlm } = await import('../core/llm.js');
+  const { createMeter } = await import('../core/meter.js');
+  const alwaysEmpty = () => ({ models: { generateContent: async () => ({
+    text: '', functionCalls: [], usageMetadata: { promptTokenCount: 100, thoughtsTokenCount: 625 }, candidates: [{ finishReason: 'STOP' }],
+  }) } });
+
+  const llm = createLlm({ apiKey: 'k', meter: createMeter({ store: createMemoryStore(), capUsd: 100 }), clientFactory: alwaysEmpty });
+  const out = await llm.generate({ tier: 'design', contents: [], systemInstruction: 'x', timeoutMs: 3000 });
+  assert.equal(out.empty, true);
+  assert.doesNotMatch(out.emptyReason, /thinking budget ate|Lower the thinking budget/i, '625 of 16384 is not the budget running out');
+  assert.match(out.emptyReason, /budget is not what did it|usually temporary/i);
+});

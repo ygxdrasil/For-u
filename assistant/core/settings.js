@@ -39,12 +39,28 @@ const PLAIN_FIELDS = ['n8nBaseUrl', 'monthlyCapUsd'];
  * request.
  */
 export const DEFAULT_PREFS = {
-  // Model. Both tiers default to the cheapest priced model — $0.10 in /
-  // $0.40 out per million. Design work will be noticeably weaker than on a
-  // flash-class model; both are one dropdown away in Settings.
-  chatModel: 'gemini-2.5-flash-lite',
-  designModel: 'gemini-2.5-flash-lite',
-  thinkingBudget: 2048,
+  // Model. The cheapest model in the table is gemini-2.5-flash-lite, and it was
+  // the default for both tiers — where it produced exactly what you would
+  // expect: a builder that stops at the first thing it has not seen before,
+  // and intermittently returns nothing at all. Capability IS the product here.
+  //
+  // Design runs on gemini-3.5-flash-lite: 0.30 in / 2.50 out per million,
+  // about three times the old cost per turn and a different class of thinking.
+  // On the measured ~$0.018 turn that is ~$0.05, so roughly 150 design turns
+  // inside an $8 cap. gemini-3.6-flash is stronger again and about five times
+  // that — one dropdown away when a build is worth it.
+  //
+  // The thinking budget goes up with it. Thinking is billed at the output
+  // rate, so 6144 tokens costs about a penny and a half per turn on this
+  // model, and it is the cheapest capability there is.
+  chatModel: 'gemini-3.1-flash-lite',
+  designModel: 'gemini-3.5-flash-lite',
+  // False until you actually pick one in Settings. A default you never chose
+  // should follow the default when it improves — otherwise the first person to
+  // save any setting at all is frozen on whatever was cheapest that week, and
+  // has no way of knowing it.
+  modelsPickedByYou: false,
+  thinkingBudget: 6144,
   maxOutputTokens: 16384,
 
   // pipeline
@@ -119,12 +135,26 @@ function clampPrefs(input) {
 }
 
 export async function loadPrefs(store) {
-  return clampPrefs((await store.getKv(KEY_PREFS)) ?? {});
+  const prefs = clampPrefs((await store.getKv(KEY_PREFS)) ?? {});
+
+  // Saving the theme used to write the whole preference block, models
+  // included, which quietly turned "the default" into "your choice" — so a
+  // better default could never reach anyone who had ever touched a setting.
+  if (!prefs.modelsPickedByYou) {
+    prefs.chatModel = DEFAULT_PREFS.chatModel;
+    prefs.designModel = DEFAULT_PREFS.designModel;
+  }
+  return prefs;
 }
 
 export async function savePrefs(store, patch) {
   const current = await loadPrefs(store);
   const next = clampPrefs({ ...current, ...patch });
+
+  // Choosing a model — actually choosing it, in the dropdown — is what makes
+  // it yours. From then on nothing here overrides it.
+  if (patch?.chatModel !== undefined || patch?.designModel !== undefined) next.modelsPickedByYou = true;
+
   await store.setKv(KEY_PREFS, next);
   return next;
 }

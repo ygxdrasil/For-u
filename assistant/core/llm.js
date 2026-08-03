@@ -160,6 +160,28 @@ export class ModelsBusyError extends Error {
   }
 }
 
+/**
+ * Why nothing came back — without naming a cause the numbers contradict.
+ *
+ * The thinking budget IS a real way to get an empty reply, but only when the
+ * thinking actually consumed the allowance. Saying so next to 625 tokens of a
+ * 16,384 ceiling sent someone to change a setting that was working fine.
+ */
+function explainEmpty({ model, finishReason, usage, spec, tried }) {
+  const thoughts = usage?.thoughtsTokenCount ?? 0;
+  const attempts = tried.filter((t) => t.error === 'returned nothing').length;
+
+  if (finishReason && finishReason !== 'STOP') {
+    return `${model} returned nothing and stopped because of ${finishReason}. That is the model refusing or being cut off — not a setting.`;
+  }
+  if (thoughts > spec.maxOutputTokens * 0.6) {
+    return `${model} spent ${thoughts} of its ${spec.maxOutputTokens} output allowance on thinking and had nothing left to answer with. Lower the thinking budget in Settings.`;
+  }
+  return `${model} returned nothing at all — no text, no tool call, no reason given, after ${attempts || 1} attempt${attempts === 1 ? '' : 's'}${
+    tried.length > 1 ? ` across ${new Set(tried.map((t) => t.model)).size} models` : ''
+  }. Only ${thoughts} of a ${spec.maxOutputTokens} allowance went on thinking, so the budget is not what did it. This is the model itself, and it is usually temporary.`;
+}
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** One pause before giving up on a busy model. Spikes are usually seconds. */
@@ -194,6 +216,7 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
 
     for (const model of spec.models) {
       let retriedThisModel = false;
+      let retriedEmpty = false;
 
       // Retried in place when the model is merely busy; `break` moves to the
       // next model in the tier, `continue` tries this one again.
@@ -299,8 +322,31 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
           const truncated = finishReason === 'MAX_TOKENS';
 
           // An empty answer with no tool call is the silent-failure signature.
-          // Surface it as an explicit condition rather than an empty reply.
           const empty = !text.trim() && !calls.length;
+
+          /**
+           * Nothing came back. That is usually the model, not the request.
+           *
+           * The lite models do it intermittently on the same input that worked
+           * a second earlier, and the old message asserted a cause the numbers
+           * flatly contradicted — "the thinking budget ate the output
+           * allowance" printed next to 625 thinking tokens out of 16,384.
+           * Wrong, confidently, in a system whose whole point is not doing
+           * that.
+           *
+           * So: ask again, and if it is still empty, hand the turn to the next
+           * model in the tier rather than reporting silence as an answer. An
+           * empty reply bills for the input and almost no output, so a second
+           * attempt is close to free — much cheaper than a wasted turn.
+           */
+          if (empty) {
+            tried.push({ model, error: 'returned nothing' });
+            if (!retriedEmpty && (!deadline || deadline > 4000)) {
+              retriedEmpty = true;
+              continue;
+            }
+            if (model !== spec.models[spec.models.length - 1]) break; // next model
+          }
 
           return {
             model,
@@ -334,11 +380,7 @@ export function createLlm({ apiKey, meter, tiers = TIERS, clientFactory = null }
             finishReason,
             truncated,
             empty,
-            emptyReason: empty
-              ? finishReason && finishReason !== 'STOP'
-                ? `${model} returned no text and no tool call, and stopped because of ${finishReason}. That is the model refusing or being cut off — not the thinking budget.`
-                : `${model} returned no text and no tool call. Thinking tokens used: ${usage.thoughtsTokenCount ?? 0} of a ${spec.maxOutputTokens} output allowance.`
-              : null,
+            emptyReason: empty ? explainEmpty({ model, finishReason, usage, spec, tried }) : null,
             usage: priced,
             raw: res,
           };
