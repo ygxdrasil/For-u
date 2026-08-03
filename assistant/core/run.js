@@ -99,6 +99,58 @@ Never claim an action succeeded without evidence you actually read back. A 200 r
 
 Be brief. The user reads fast and types fast. Lead with the answer.`;
 
+/**
+ * Gemini's one hard rule about history: a turn carrying function RESPONSES must
+ * come immediately after the turn carrying the matching function CALLS, and
+ * there must be exactly one response per call.
+ *
+ * Three things break it, and all three happened. A turn that runs out of time
+ * mid-way answers some calls and not others. Trimming the conversation to its
+ * last 40 messages cuts wherever it lands, which can be between a call and its
+ * answer. And any history stored before those were fixed is already wrong.
+ *
+ * Discovering that from a 400 costs a round trip and, worse, leaves the
+ * conversation dead — every later message fails identically. So the invariant
+ * is checked before sending, and anything violating it is flattened to plain
+ * text: what was called, what came back. The meaning survives; there is
+ * nothing structural left to reject.
+ */
+export function repairHistory(contents) {
+  const has = (turn, kind) => (turn?.parts ?? []).some((p) => p?.[kind]);
+  const count = (turn, kind) => (turn?.parts ?? []).filter((p) => p?.[kind]).length;
+
+  const flatten = (turn) => ({
+    ...turn,
+    parts: (turn.parts ?? []).map((part) => {
+      if (part?.functionCall) return { text: `[called ${part.functionCall.name} with ${JSON.stringify(part.functionCall.args ?? {}).slice(0, 2000)}]` };
+      if (part?.functionResponse) return { text: `[result of ${part.functionResponse.name}: ${JSON.stringify(part.functionResponse.response ?? {}).slice(0, 4000)}]` };
+      return part;
+    }),
+  });
+
+  const broken = new Set();
+  for (let i = 0; i < contents.length; i++) {
+    const turn = contents[i];
+    if (has(turn, 'functionResponse')) {
+      const before = contents[i - 1];
+      if (!before || !has(before, 'functionCall') || count(before, 'functionCall') !== count(turn, 'functionResponse')) {
+        broken.add(i);
+        if (before && has(before, 'functionCall')) broken.add(i - 1);
+      }
+    }
+    if (has(turn, 'functionCall')) {
+      const after = contents[i + 1];
+      // A call with nothing after it is the last turn of an unfinished job and
+      // is answered on the next request; a call followed by anything that is
+      // not its answer is broken.
+      if (after && !has(after, 'functionResponse')) broken.add(i);
+    }
+  }
+
+  if (!broken.size) return { contents, repaired: false };
+  return { contents: contents.map((turn, i) => (broken.has(i) ? flatten(turn) : turn)), repaired: true };
+}
+
 export async function run(input, hooks = {}) {
   const h = { ...NOOP_HOOKS, ...hooks };
   const startedAt = Date.now();
@@ -232,7 +284,10 @@ export async function run(input, hooks = {}) {
   }
 
   const session = input.sessionId ? await store.getSession(input.sessionId) : { id: null, messages: [] };
-  const carried = resumed ? resumed.contents : (session.messages ?? []);
+  const carriedRaw = resumed ? resumed.contents : (session.messages ?? []);
+  // Checked once, here, before a single token is spent on a history the model
+  // is going to refuse.
+  const { contents: carried, repaired: carriedWasBroken } = repairHistory(carriedRaw);
   const contents = [
     ...carried,
     { role: 'user', parts: [{ text: input.text }] },
@@ -252,7 +307,9 @@ export async function run(input, hooks = {}) {
    * the bug itself, however carefully the merge is written: the two turns can
    * both read before either writes.
    */
-  let historyRepaired = false;
+  // A conversation that arrived broken is written back in its repaired form,
+  // not just used in repaired form for this one turn.
+  let historyRepaired = carriedWasBroken;
 
   const saveConversation = async () => {
     if (!input.sessionId) return;
@@ -394,10 +451,20 @@ export async function run(input, hooks = {}) {
         continue;
       }
 
-      if (timeLeft() < 4000) {
-        responseParts.push(fnResponse(call, { ok: false, error: 'Out of time on this request; not starting new work.' }));
+      // Out of time: answer this call and every one after it, rather than
+      // breaking out. The model's turn holds N function calls and Gemini
+      // requires N responses immediately after it — leaving the rest
+      // unanswered poisons the conversation for good:
+      //
+      //   400 INVALID_ARGUMENT: Please ensure that function response turn
+      //   comes immediately after a function call turn.
+      //
+      // Every later message then fails the same way, which is what "the model
+      // call failed" twice in a row actually was.
+      if (stoppedBecause === 'deadline' || timeLeft() < 4000) {
         stoppedBecause = 'deadline';
-        break;
+        responseParts.push(fnResponse(call, { ok: false, error: 'Out of time on this request; this step was not started.' }));
+        continue;
       }
 
       h.onToolStart({

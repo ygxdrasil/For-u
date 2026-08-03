@@ -904,3 +904,84 @@ test('health reports the model that is running, not the chain it came from', asy
   assert.ok(Array.isArray(res.body.models.fallbacks.design), 'the chain is still worth knowing, alongside');
   resetStoreCache();
 });
+
+test('running out of time answers every call, not just the ones it reached', async () => {
+  // The model's turn holds N function calls and Gemini requires N responses
+  // immediately after it. Running out of time answered the current call and
+  // broke out of the loop, leaving the rest unanswered — which poisons the
+  // conversation for good:
+  //
+  //   400: Please ensure that function response turn comes immediately after
+  //   a function call turn.
+  //
+  // Every later message then failed identically. "The model call failed",
+  // twice in a row, on a conversation that could never recover.
+  const { repairHistory } = await import('../core/run.js');
+  const store = createMemoryStore();
+
+  const threeCallsThenSlow = () => {
+    let step = 0;
+    return { models: { generateContent: async () => {
+      if (step++ === 0) {
+        return {
+          text: '',
+          functionCalls: [
+            { name: 'search_nodes', args: { query: 'slack' } },
+            { name: 'search_nodes', args: { query: 'sheets' } },
+            { name: 'search_nodes', args: { query: 'gmail' } },
+          ],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+        };
+      }
+      return { text: 'done', functionCalls: [], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } };
+    } } };
+  };
+
+  // A deadline that expires while the calls are being worked through.
+  await run({ text: 'find three things', sessionId: 's', config: cfg, store, llmClientFactory: threeCallsThenSlow, deadlineMs: 11_000 }, {});
+
+  const saved = (await store.getSession('s')).messages;
+  const callTurns = saved.filter((t) => (t.parts ?? []).some((p) => p.functionCall));
+  for (const turn of callTurns) {
+    const i = saved.indexOf(turn);
+    const answers = saved[i + 1];
+    if (!answers) continue; // an unanswered call at the very end is answered next turn
+    const calls = turn.parts.filter((p) => p.functionCall).length;
+    const responses = (answers.parts ?? []).filter((p) => p.functionResponse).length;
+    assert.equal(responses, calls, `${calls} calls were answered with ${responses} responses — Gemini rejects that for good`);
+  }
+  assert.equal(repairHistory(saved).repaired, false, 'the saved conversation violates the pairing rule');
+});
+
+test('a conversation that already violates the pairing rule is repaired before it is sent', async () => {
+  const { repairHistory } = await import('../core/run.js');
+
+  // An orphan response, from a window that was trimmed between a call and its
+  // answer — which slicing the last 40 messages does whenever it lands there.
+  const orphaned = [
+    { role: 'user', parts: [{ functionResponse: { name: 'search_nodes', response: { ok: true } } }] },
+    { role: 'user', parts: [{ text: 'carry on' }] },
+  ];
+  const fixed = repairHistory(orphaned);
+  assert.equal(fixed.repaired, true, 'an orphan function response was left in place');
+  assert.doesNotMatch(JSON.stringify(fixed.contents), /"functionResponse"/);
+  assert.match(JSON.stringify(fixed.contents), /result of search_nodes/, 'the repair threw away what had happened');
+
+  // A mismatched count: two calls, one answer.
+  const mismatched = [
+    { role: 'model', parts: [{ functionCall: { name: 'a', args: {} } }, { functionCall: { name: 'b', args: {} } }] },
+    { role: 'user', parts: [{ functionResponse: { name: 'a', response: {} } }] },
+  ];
+  assert.equal(repairHistory(mismatched).repaired, true, 'two calls answered once was accepted');
+
+  // A healthy conversation is left completely alone.
+  const healthy = [
+    { role: 'user', parts: [{ text: 'build it' }] },
+    { role: 'model', parts: [{ functionCall: { name: 'a', args: {} } }] },
+    { role: 'user', parts: [{ functionResponse: { name: 'a', response: {} } }] },
+    { role: 'model', parts: [{ text: 'done' }] },
+  ];
+  const untouched = repairHistory(healthy);
+  assert.equal(untouched.repaired, false, 'a valid conversation was needlessly rewritten');
+  assert.equal(untouched.contents, healthy);
+});

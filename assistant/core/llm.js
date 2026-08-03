@@ -137,7 +137,17 @@ function looksOverloaded(err) {
  */
 function looksLikeSignatureProblem(err) {
   const m = String(err?.message ?? err).toLowerCase();
-  return m.includes('thought_signature') || m.includes('thoughtsignature');
+  return (
+    m.includes('thought_signature') ||
+    m.includes('thoughtsignature') ||
+    // The other way a history is refused: a turn of function RESPONSES that
+    // does not sit immediately after its turn of function CALLS, or a count
+    // that does not match. Same cause — a conversation whose structure is no
+    // longer valid — and the same repair.
+    m.includes('function response turn') ||
+    m.includes('function call turn') ||
+    (m.includes('functionresponse') && m.includes('functioncall'))
+  );
 }
 
 function flattenToolTurns(contents) {
