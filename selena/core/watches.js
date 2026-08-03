@@ -18,6 +18,7 @@ import { clampNumber, nowIso, randomId, phraseSimilarity } from './util.js';
 import { findingSignature } from './store.js';
 import { runResearch } from './research.js';
 import { dedupKeyFor } from './schema.js';
+import { saveResearchedFinding } from './synthesis.js';
 
 export const CADENCES = {
   hourly: { ms: 3_600_000, label: 'every hour' },
@@ -227,7 +228,7 @@ export async function runWatch(watch, deps, { haltOnUnsourced = false } = {}) {
     // and the current row is updated in place with a fresh verification time.
   }
 
-  await store.putFinding(finding);
+  await saveResearchedFinding(store, finding);
   await store.markSeen(watch.id, dedupKey, signature);
 
   if (reported) {
@@ -302,7 +303,7 @@ export async function reverifyFinding(finding, deps) {
 
   const change = describeChange(finding, result.finding);
   const merged = { ...result.finding, id: finding.id, foundAt: finding.foundAt, lastVerifiedAt: now() };
-  await deps.store.putFinding(merged);
+  await saveResearchedFinding(deps.store, merged);
 
   if (change) {
     await deps.store.addActivity({

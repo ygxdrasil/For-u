@@ -226,3 +226,52 @@ test('the survivor is re-scored by the merge, not by whoever remembers to', () =
   );
   assert.ok(Array.isArray(survivor.evidence.ladder) && survivor.evidence.ladder.length === 5, 'and the ladder is rebuilt, not carried over');
 });
+
+test('a merge survives the next run of the watch that produced the survivor', async () => {
+  // Found by running the real thing, not by reading it. The re-run has the
+  // same stable id, putFinding overwrites, and the absorbed evidence and
+  // mergedFrom vanish — while the partners stay superseded, so that evidence
+  // is lost from the active record for good. Nothing is reported either,
+  // because runWatch only announces what it believes is new.
+  const { createStore } = await import('../core/store.js');
+  const { saveResearchedFinding, carryMergeForward } = await import('../core/synthesis.js');
+
+  const store = await createStore({});
+  const a = finding({ oneLine: 'invoice chasing for trades', words: [says('https://x.example/1')], paying: [pays('https://x.example/p1')] });
+  const b = finding({ oneLine: 'chasing invoices for builders', words: [says('https://x.example/1'), says('https://x.example/2')], paying: [pays('https://x.example/p2', 49)] });
+  await store.putFinding(a);
+  await store.putFinding(b);
+
+  const { survivor, superseded } = mergeCluster([a, b]);
+  await store.putFinding(survivor);
+  for (const s of superseded) await store.putFinding(s);
+
+  const before = { quotes: survivor.demand.inTheirWords.length, paying: survivor.evidence.paying.length, level: survivor.evidence.strength };
+  assert.ok(before.quotes >= 2 && before.paying >= 2, 'the survivor should be holding both findings’ evidence');
+
+  // The watch runs again and re-finds only what it can see: half the evidence.
+  const rerun = finding({
+    id: survivor.id,
+    oneLine: survivor.demand.oneLine,
+    words: [says('https://x.example/1')],
+    paying: [pays('https://x.example/p1')],
+  });
+  await saveResearchedFinding(store, rerun);
+
+  const after = await store.getFinding(survivor.id);
+  assert.equal(after.demand.inTheirWords.length, before.quotes, 'quotes absorbed by the merge must not be dropped by a re-run');
+  assert.equal(after.evidence.paying.length, before.paying, 'nor the priced listings');
+  assert.equal(after.evidence.strength, before.level, 'nor the level they add up to');
+  assert.equal(after.mergedFrom.length, 1, 'and the record still says it was merged');
+
+  // An ordinary finding is still replaced wholesale by a re-run: that is what
+  // a re-verification IS, and this must not quietly turn into never forgetting.
+  const plain = finding({ oneLine: 'something else entirely', words: [says('https://y.example/1'), says('https://y.example/2')] });
+  await store.putFinding(plain);
+  const thinner = finding({ id: plain.id, oneLine: plain.demand.oneLine, words: [says('https://y.example/1')] });
+  await saveResearchedFinding(store, thinner);
+  assert.equal((await store.getFinding(plain.id)).demand.inTheirWords.length, 1, 'an unmerged finding is still replaced by a fresh read');
+
+  // And the helper is a no-op on a record that was never merged.
+  assert.equal(carryMergeForward(thinner, plain), thinner);
+});

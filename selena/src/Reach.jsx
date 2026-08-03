@@ -257,10 +257,23 @@ export default function Reach({ finding, refresh }) {
   };
 
   const draftFor = (personId) => (drafts ?? []).find((d) => d.personId === personId);
-  const canSendTo = (p) =>
-    senders.some((s) =>
-      p.email ? s.channel === 'email' : s.host && (p.url ?? '').includes(s.host),
-    );
+  // Matched on the HOST, not as a substring of the whole URL. The first
+  // version accepted anything containing the sender's host anywhere — so
+  // "https://elsewhere.example/?ref=community.n8n.io" grew a send button that
+  // the server then refused, which is exactly the button-that-explains-
+  // itself-away this panel is supposed not to have.
+  const hostOf = (u) => {
+    try {
+      return new URL(String(u)).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+  };
+  const canSendTo = (p) => {
+    if (p.email) return senders.some((s) => s.channel === 'email');
+    const host = hostOf(p.url);
+    return Boolean(host) && senders.some((s) => s.host && (host === s.host || host.endsWith(`.${s.host}`)));
+  };
 
   return (
     <div className="card">

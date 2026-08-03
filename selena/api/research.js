@@ -15,6 +15,7 @@ import { createContext, contextStatus } from '../core/context.js';
 import { gateRequest } from '../core/auth.js';
 import { runResearch } from '../core/research.js';
 import { summarizeFinding } from '../core/schema.js';
+import { saveResearchedFinding } from '../core/synthesis.js';
 
 export default guard(async function handler(req, res) {
   if (!methodGuard(req, res, ['POST'])) return;
@@ -46,7 +47,7 @@ export default guard(async function handler(req, res) {
   // the archive with half-formed records.
   let saved = false;
   if (result.finding && body.save !== false) {
-    await ctx.store.putFinding(result.finding);
+    await saveResearchedFinding(ctx.store, result.finding);
     saved = true;
   }
 

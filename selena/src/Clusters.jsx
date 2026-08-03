@@ -52,6 +52,10 @@ export default function Clusters({ clusters, refresh }) {
               <Pill tone="red">
                 level {c.bestAlone} → {c.strength}
               </Pill>
+            ) : c.lift < 0 ? (
+              <Pill tone="warn">
+                would DROP to {c.strength}
+              </Pill>
             ) : (
               <Pill>no change to the level</Pill>
             )}

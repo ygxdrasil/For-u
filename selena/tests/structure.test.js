@@ -304,3 +304,33 @@ test('vercel.json carries no key Vercel will reject', () => {
     }
   }
 });
+
+/**
+ * A merge must survive the next run of the watch that produced the survivor.
+ *
+ * A finding's id is derived from its one-liner and who has it, so a re-run
+ * produces the SAME id and putFinding overwrites — taking the absorbed
+ * evidence and `mergedFrom` with it, while the partners stay superseded. The
+ * evidence is gone from the active record permanently, and nothing is reported
+ * because runWatch only announces what it thinks is new.
+ *
+ * Four paths write a freshly researched finding. "Remember to call the helper"
+ * has already failed three times in this codebase — the ledger method name, the
+ * session secret, the re-score after a merge — so it is asserted instead.
+ */
+test('nothing writes a freshly researched finding without carrying a merge forward', () => {
+  const paths = ['core/watches.js', 'api/research.js', 'api/command.js'];
+  for (const rel of paths) {
+    const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const direct = src.match(/(?:ctx\.)?(?:deps\.)?store\.putFinding\(\s*(?:result\.)?(?:finding|merged|clean)\b/g) ?? [];
+    assert.equal(
+      direct.length,
+      0,
+      `${rel} calls store.putFinding directly with a researched finding. Use saveResearchedFinding() from core/synthesis.js — a plain putFinding silently destroys any merge that record was part of.`,
+    );
+    assert.ok(
+      /saveResearchedFinding/.test(src),
+      `${rel} writes findings but never imports saveResearchedFinding`,
+    );
+  }
+});

@@ -289,10 +289,76 @@ function describeLift(members, combined) {
   if (combined.lift > 0) {
     return `${n} findings, ${alone}. Together the same evidence reaches level ${combined.strength} — the split was costing you ${combined.lift} level${combined.lift === 1 ? '' : 's'}.`;
   }
+  if (combined.lift < 0) {
+    // Not reachable on any input found by a 4,000-case search, and said out
+    // loud anyway: "no change" in front of a drop is the kind of quiet wrong
+    // sentence this whole system is arranged against.
+    return `${n} findings, ${alone}. Merging them would LOWER the level to ${combined.strength} — the combined complaints no longer agree. Probably leave these apart.`;
+  }
   if (combined.lift === 0 && combined.strength > 0) {
-    return `${n} findings, ${alone}. Merging them would not change the level, but it would stop you reading the same demand three times.`;
+    return `${n} findings, ${alone}. Merging them would not change the level, but it would stop you reading the same demand ${n === 2 ? 'twice' : `${n} times`}.`;
   }
   return `${n} findings that look like one demand, ${alone}.`;
+}
+
+/**
+ * Carry a merge forward across a re-run.
+ *
+ * The bug this exists to stop, found by running it rather than reading it:
+ *
+ *   merge three findings, and the next run of the watch that produced the
+ *   survivor silently destroys the merge
+ *
+ * A finding's id is derived from its one-liner and who has it, so a watch that
+ * finds the same demand again produces the SAME id. putFinding then overwrites
+ * the survivor with a record built from one run's evidence — the absorbed
+ * quotes, prices and complaints are gone, `mergedFrom` is gone, and the
+ * partners stay superseded, so that evidence is lost from the active record
+ * permanently. Nothing is reported, because runWatch only announces things it
+ * considers new.
+ *
+ * A re-verification legitimately REPLACES a finding's own evidence: it is a
+ * fresh read of the same question. What it must not do is discard evidence
+ * that came from somewhere this run was never going to look.
+ *
+ * @param {object} incoming the freshly researched record
+ * @param {object|null} existing whatever is already stored under that id
+ */
+export function carryMergeForward(incoming, existing) {
+  if (!incoming) return incoming;
+  const previouslyMerged = Array.isArray(existing?.mergedFrom) ? existing.mergedFrom : [];
+  if (!previouslyMerged.length) return incoming;
+
+  // Union with what is already there, incoming first so a fresh read of the
+  // same URL wins over the stored copy.
+  const union = unionEvidence([incoming, existing]);
+  return applyEvidence({
+    ...incoming,
+    demand: { ...incoming.demand, inTheirWords: union.inTheirWords },
+    evidence: { ...incoming.evidence, paying: union.paying, complaints: union.complaints },
+    incumbents: union.incumbents,
+    mergedFrom: previouslyMerged,
+    // These belong to the people, not to the run that happened to write last.
+    conversations: existing.conversations ?? incoming.conversations ?? [],
+    outbox: existing.outbox ?? incoming.outbox ?? [],
+  });
+}
+
+/**
+ * The only way a freshly researched finding may be written.
+ *
+ * Four different paths produce one — a watch run, a re-verification, a direct
+ * research call and the `research` command — and every one of them would
+ * otherwise have to remember the rule above. tests/structure.test.js fails if a
+ * new one calls store.putFinding directly, because "remember to call the
+ * helper" has already failed three times in this codebase: the ledger method,
+ * the session secret, and the re-score after a merge.
+ */
+export async function saveResearchedFinding(store, finding) {
+  const existing = await store.getFinding(finding.id).catch(() => null);
+  const carried = carryMergeForward(finding, existing);
+  await store.putFinding(carried);
+  return carried;
 }
 
 /**

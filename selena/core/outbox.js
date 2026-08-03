@@ -96,12 +96,52 @@ export function targetFromUrl(url, channel) {
   return null;
 }
 
-/** Which channel a URL belongs to, or null if we cannot post there at all. */
-export function channelForUrl(url) {
+/**
+ * Which channel a URL belongs to, or null if we cannot post there at all.
+ *
+ * Matched on the HOST and the path shape together. The first version tested
+ * `/\/t\//` against the whole URL and `/lemmy/` against the host, which made
+ * `twitter.com/t/foo` a Discourse forum and `notlemmy.example` a Lemmy
+ * instance. Neither could actually send — no credential would match the host —
+ * but a channel guessed from a substring is the kind of thing that becomes a
+ * misrouted post the moment somebody adds a wildcard.
+ */
+export function hostMatches(host, senderHost) {
+  // Coerced, not trusted: hostOf can return null and a stored record can hold
+  // anything. A comparison that throws here becomes a send that never happens
+  // with no reason given.
+  const a = typeof host === 'string' ? host.toLowerCase() : '';
+  const b = typeof senderHost === 'string' ? senderHost.toLowerCase() : '';
+  if (!a || !b) return false;
+  // Exact, or a subdomain of it. Never a substring: "lemmy.world.evil.example"
+  // must not match a credential for "lemmy.world".
+  return a === b || a.endsWith(`.${b}`);
+}
+
+export function channelForUrl(url, senders = []) {
   const host = hostOf(url);
   if (!host) return null;
-  if (/^community\.(shopify|n8n|make)\./i.test(host) || /\/t\//.test(String(url))) return 'discourse';
-  if (/lemmy/i.test(host)) return 'lemmy';
+
+  // The credential is the authority, not the URL. You said what this host was
+  // when you added the token, and no amount of pattern-matching on a hostname
+  // beats being told. This also removes a whole class of guess: the first
+  // version read `/t/` anywhere in the URL as Discourse and any host with
+  // "lemmy" in it as Lemmy, which made twitter.com/t/foo a forum.
+  const known = (Array.isArray(senders) ? senders : []).find((s) => s.host && hostMatches(host, s.host));
+  if (known) return known.channel;
+
+  // No credential. The shape is only used so the refusal can name the channel
+  // you would need, and it is required to look like the real thing rather than
+  // merely contain the right characters.
+  const path = (() => {
+    try {
+      return new URL(String(url)).pathname;
+    } catch {
+      return '';
+    }
+  })();
+  if (/^(community|forum|discuss|meta)\./i.test(host) && /^\/t\/[^/]+\/\d+/.test(path)) return 'discourse';
+  if (/^\/post\/\d+/.test(path) && /^lemmy\.[^.]+$/i.test(host)) return 'lemmy';
   return null;
 }
 
@@ -196,7 +236,7 @@ export async function senderFor(store, url, secret, { channel = null } = {}) {
   const want = channel ?? channelForUrl(url) ?? 'email';
   const host = hostOf(url);
   const all = ((await store.getKv(SENDERS_KEY)) ?? []).filter((s) => !s.removedAt && s.channel === want);
-  const match = want === 'email' ? all[0] : all.find((s) => s.host && (s.host === host || host?.endsWith(`.${s.host}`)));
+  const match = want === 'email' ? all[0] : all.find((s) => hostMatches(host, s.host));
   if (!match) return null;
   const token = match.token ? decryptToken(match.token, secret) : null;
   if (!token) return { ...publicView(match), token: null, unreadable: true };
@@ -238,11 +278,11 @@ export function maySend(finding, person, { senders = [], alreadySent = [] } = {}
     return { ok: false, reason: 'nobody has checked what this site allows, and she will not be the one to find out with your account' };
   }
 
-  const channel = channelForUrl(person.url);
+  const channel = channelForUrl(person.url, senders);
   if (!channel) {
     return { ok: false, reason: `there is no write API for ${person.platform}. Posting there would mean driving the website as you, which is the thing that is still refused.` };
   }
-  const sender = senders.find((s) => s.channel === channel && (!s.host || hostOf(person.url) === s.host || hostOf(person.url)?.endsWith(`.${s.host}`)));
+  const sender = senders.find((s) => s.channel === channel && (!s.host || hostMatches(hostOf(person.url), s.host)));
   if (!sender) {
     return { ok: false, reason: `no ${CHANNELS[channel].label} credential has been added for ${hostOf(person.url)}` };
   }
@@ -447,6 +487,24 @@ export async function sendOne(finding, person, draftText, ctx, { preview = false
     outbox: withAttempt.outbox.map((o) => (o.id === attempt.id ? settled : o)),
   };
   await ctx.store.putFinding(finalFinding);
+
+  // Counted on the credential itself. These two fields existed from the start,
+  // were shown in Settings, and were never once written — a number that can
+  // only ever read zero is worse than no number, because it looks like an
+  // answer. For a credential that posts under your name, "12 messages, last
+  // used three days ago" is worth knowing.
+  if (!error) {
+    try {
+      const all = (await ctx.store.getKv(SENDERS_KEY)) ?? [];
+      await ctx.store.setKv(
+        SENDERS_KEY,
+        all.map((s) => (s.id === sender.id ? { ...s, sends: clampNumber(s.sends, 0, 1e9, 0) + 1, lastUsedAt: nowIso() } : s)),
+      );
+    } catch {
+      // A counter that cannot be written must never be the reason a message
+      // that already went out is reported as failed.
+    }
+  }
 
   await ctx.store.addActivity({
     kind: 'finding',

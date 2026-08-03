@@ -26,6 +26,7 @@ import { arm as armHer, disarm, readAutonomy, describeAutonomy } from '../core/a
 import { stopEverything } from '../core/pass.js';
 import { summarizeFinding } from '../core/schema.js';
 import { phraseSimilarity, nowIso } from '../core/util.js';
+import { saveResearchedFinding } from '../core/synthesis.js';
 
 /**
  * Find the one watch or finding a target names.
@@ -177,7 +178,7 @@ export default guard(async function handler(req, res) {
 
     case 'research': {
       const result = await runResearch({ topic: a.topic, kind: 'question', requestedDepth: a.depth }, ctx);
-      if (result.finding) await ctx.store.putFinding(result.finding);
+      if (result.finding) await saveResearchedFinding(ctx.store, result.finding);
       return done({
         status: result.status,
         finding: result.finding,

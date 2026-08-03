@@ -230,3 +230,49 @@ test('credentials never leave, and removing one really removes it', async () => 
   assert.equal(raw.token, null);
   assert.ok(raw.removedAt);
 });
+
+test('a host is never matched as a substring, and the credential decides the channel', async () => {
+  const { channelForUrl, hostMatches } = await import('../core/outbox.js');
+  const senders = [{ channel: 'lemmy', host: 'lemmy.world' }, { channel: 'discourse', host: 'community.n8n.io' }];
+
+  // The attack shape: a host that CONTAINS a host you trust.
+  assert.equal(hostMatches('lemmy.world.evil.example', 'lemmy.world'), false);
+  assert.equal(channelForUrl('https://lemmy.world.evil.example/post/1', senders), null);
+  assert.equal(hostMatches('notlemmy.world', 'lemmy.world'), false);
+
+  // Real subdomains still work.
+  assert.equal(hostMatches('lemmy.world', 'lemmy.world'), true);
+  assert.equal(hostMatches('sub.lemmy.world', 'lemmy.world'), true);
+  assert.equal(channelForUrl('https://community.n8n.io/t/x/9', senders), 'discourse');
+
+  // Guessing from the URL shape alone used to make twitter a Discourse forum:
+  // any URL containing /t/ matched, and any host containing "lemmy".
+  assert.equal(channelForUrl('https://twitter.com/t/foo'), null);
+  assert.equal(channelForUrl('https://evil.example/t/123'), null);
+  assert.equal(channelForUrl('https://notlemmy.example/post/1'), null);
+
+  for (const bad of [null, undefined, '', 'nonsense', 42]) {
+    assert.doesNotThrow(() => channelForUrl(bad, senders));
+    assert.doesNotThrow(() => hostMatches(bad, 'lemmy.world'));
+  }
+});
+
+test('a credential counts its own sends, because a number stuck at zero is worse than none', async () => {
+  const ctx = await fixture();
+  const people = [person({ id: 'who_a', url: 'https://community.n8n.io/t/a/1' }), person({ id: 'who_b', url: 'https://community.n8n.io/t/b/2' })];
+  const drafts = people.map((p) => ({ personId: p.id, text: `hello ${p.id}` }));
+
+  const before = (await listSenders(ctx.store)).find((s) => s.channel === 'discourse');
+  await sendBatch({ id: 'f_counter', outbox: [] }, people, drafts, ctx, { gapMs: 0 });
+  const after = (await listSenders(ctx.store)).find((s) => s.id === before.id);
+
+  assert.equal(after.sends, before.sends + 2, 'both sends are counted');
+  assert.ok(after.lastUsedAt, 'and it records when it was last used');
+
+  // A failed send must not count, and a counter that will not write must never
+  // turn a message that already went out into a reported failure.
+  ctx.fetchImpl = async () => new Response('nope', { status: 500 });
+  const out = await sendOne({ id: 'f_counter2', outbox: [] }, person({ id: 'who_c', url: 'https://community.n8n.io/t/c/3' }), 'hi', ctx);
+  assert.equal(out.sent, false);
+  assert.equal((await listSenders(ctx.store)).find((s) => s.id === before.id).sends, after.sends, 'a failure is not a send');
+});
