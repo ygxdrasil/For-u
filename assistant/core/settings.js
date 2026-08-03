@@ -55,10 +55,15 @@ export const DEFAULT_PREFS = {
   // model, and it is the cheapest capability there is.
   chatModel: 'gemini-3.1-flash-lite',
   designModel: 'gemini-3.5-flash-lite',
-  // False until you actually pick one in Settings. A default you never chose
-  // should follow the default when it improves — otherwise the first person to
-  // save any setting at all is frozen on whatever was cheapest that week, and
-  // has no way of knowing it.
+  // False until you actually move one of the model controls in Settings. A
+  // default you never chose should follow the default when it improves —
+  // otherwise the first person to save any setting at all is frozen on
+  // whatever was cheapest that week, and has no way of knowing it.
+  //
+  // It covers the thinking budget as well as the two models, because they are
+  // one decision: the budget is what the chosen model is allowed to think
+  // with, and raising the model while leaving the old budget behind is half an
+  // upgrade. Caught by reading /api/health after shipping exactly that.
   modelsPickedByYou: false,
   thinkingBudget: 6144,
   maxOutputTokens: 16384,
@@ -143,6 +148,7 @@ export async function loadPrefs(store) {
   if (!prefs.modelsPickedByYou) {
     prefs.chatModel = DEFAULT_PREFS.chatModel;
     prefs.designModel = DEFAULT_PREFS.designModel;
+    prefs.thinkingBudget = DEFAULT_PREFS.thinkingBudget;
   }
   return prefs;
 }
@@ -153,7 +159,9 @@ export async function savePrefs(store, patch) {
 
   // Choosing a model — actually choosing it, in the dropdown — is what makes
   // it yours. From then on nothing here overrides it.
-  if (patch?.chatModel !== undefined || patch?.designModel !== undefined) next.modelsPickedByYou = true;
+  if (patch?.chatModel !== undefined || patch?.designModel !== undefined || patch?.thinkingBudget !== undefined) {
+    next.modelsPickedByYou = true;
+  }
 
   await store.setKv(KEY_PREFS, next);
   return next;

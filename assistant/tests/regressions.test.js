@@ -825,6 +825,10 @@ test('a model default you never chose follows the default when it improves', asy
   const after = await loadPrefs(store);
   assert.equal(after.theme, 'dark');
   assert.equal(after.designModel, DEFAULT_PREFS.designModel, 'a model nobody chose was pinned by saving an unrelated setting');
+  // The budget is part of the same decision: raising the model and leaving the
+  // old thinking budget behind is half an upgrade, and it is the half nobody
+  // notices. This is what /api/health showed after shipping exactly that.
+  assert.equal(after.thinkingBudget, DEFAULT_PREFS.thinkingBudget, 'the model moved up and the thinking budget stayed behind');
 
   // But an actual choice is honoured for good.
   await savePrefs(store, { designModel: 'gemini-2.5-flash-lite' });
