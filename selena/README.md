@@ -460,7 +460,7 @@ is, so a memory-only deployment signs you out when it sleeps.
    `selena`. It is deliberately separate from `assistant/` so a bad build here
    can never take Jason down.
 
-   `vercel.json` sets `ignoreCommand` to `git diff --quiet HEAD^ HEAD -- .`,
+   `vercel.json` sets `ignoreCommand` to `git diff --quiet HEAD^ HEAD -- . && ! git diff --quiet HEAD^ HEAD`,
    which builds only when something in this directory changed. Two projects
    deploy from this one repo, so every push used to build both, and two builds
    per push exhausted the Hobby plan's daily deployment limit in an afternoon.

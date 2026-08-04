@@ -622,10 +622,22 @@ test('neither project builds the other one s commits', async () => {
   for (const config of [path.join(here, '..', 'vercel.json'), path.join(here, '..', '..', 'selena', 'vercel.json')]) {
     if (!fs.existsSync(config)) continue; // the other project may not be checked out
     const parsed = JSON.parse(fs.readFileSync(config, 'utf8'));
+    const command = String(parsed.ignoreCommand ?? '');
     assert.match(
-      String(parsed.ignoreCommand ?? ''),
+      command,
       /git diff --quiet/,
       `${path.basename(path.dirname(config))}/vercel.json has no ignoreCommand, so it rebuilds on commits that do not touch it`,
+    );
+
+    // An empty commit changes nothing anywhere, so a check that only asks
+    // "did anything here change" skips it — which quietly removed the one way
+    // to trigger a build after a rate limit, at the moment it was needed. The
+    // second clause is what makes a deliberate nudge still build: skip only
+    // when this directory is untouched AND something else was.
+    assert.match(
+      command,
+      /!\s*git diff --quiet HEAD\^ HEAD\s*$/,
+      `${path.basename(path.dirname(config))}/vercel.json skips empty commits, so nothing can nudge a deploy`,
     );
   }
 });

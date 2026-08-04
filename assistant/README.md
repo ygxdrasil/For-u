@@ -101,7 +101,7 @@ as server environment variables. Server env is required for `/api/sweep` and for
 
 ### Why `vercel.json` has an `ignoreCommand`
 
-`git diff --quiet HEAD^ HEAD -- .` builds only when something in `assistant/`
+`git diff --quiet HEAD^ HEAD -- . && ! git diff --quiet HEAD^ HEAD` builds only when something in `assistant/`
 changed. Two projects deploy from this one repo — Jason from here and Selena
 from `selena/` — so every push used to build both, and two builds per push
 exhausted the Hobby plan's daily deployment limit in an afternoon. Vercel skips
