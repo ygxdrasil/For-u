@@ -28,7 +28,8 @@ def show(series: dict, script: dict, index: int, total: int) -> None:
         words += len(beat["text"].split())
         print(f"  [{beat['speaker']}] {beat['text']}")
     print()
-    print(f"  {len(script['beats'])} beats · ~{words} words · ~{words / 2.6:.0f}s spoken")
+    wps = series.get("words_per_second", 2.6)
+    print(f"  {len(script['beats'])} beats · ~{words} words · ~{words / wps:.0f}s spoken")
     meta = script.get("metadata", {})
     if meta:
         print(f"  YT: {meta.get('youtube_title', '')}")

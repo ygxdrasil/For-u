@@ -21,7 +21,7 @@ is always being A/B tested.
 cd brainrot
 pip install -r requirements.txt
 cp .env.example .env        # optional, see Keys below
-python run.py               # 5 videos, round-robin across all three series
+python run.py               # 5 videos, round-robin across every series
 ```
 
 No system ffmpeg needed: `imageio-ffmpeg` ships a static build with libass,
@@ -57,20 +57,42 @@ on purpose: unlike its text models they are not reliably free tier, and this
 pipeline promises a zero-cost run. Opt in with `--images gemini` if you want
 them.
 
-## The three series
+## The series
 
-Each is a self-contained JSON file in `series/` — premise, voices, art
-direction, caption identity and the writing rules the model must follow.
+Each is a self-contained JSON file in `series/` — premise, voices, pacing,
+length, art direction, caption identity and the writing rules the model must
+follow. Editing a series is editing its JSON. No code changes.
 
-| Series | Format | Voice | Look |
-|---|---|---|---|
-| `unreal_registry` | Numbered CASE FILES on impossible things | deadpan US male | VHS analog horror |
-| `wrong_history` | History that starts true and derails | fast US female | hyperreal AI photo |
-| `doomer_hypeman` | Two characters argue, nobody wins | male + female | stylized 3D |
+| Series | Format | Voice | Look | Length |
+|---|---|---|---|---|
+| `nightshift` | Scary stories: one worker, one night, one rule broken | deep US male, slow | night photography | 70–95s |
+| `unreal_registry` | Numbered CASE FILES on impossible things | deadpan US male | VHS analog horror | 30–45s |
+| `wrong_history` | History that starts true and derails | fast US female | hyperreal AI photo | 30–45s |
+| `doomer_hypeman` | Two characters argue, nobody wins | male + female | stylized 3D | 30–45s |
 
-Running all three for a couple of weeks and killing the two that flop is the
-intended way to use this. Editing a series is just editing its JSON — no code
-changes.
+Running several for a couple of weeks and killing the ones that flop is the
+intended way to use this.
+
+### Nightshift
+
+The horror series is built differently from the other three, and the series
+JSON carries all of it:
+
+- **Voice.** `en-US-AndrewNeural` at `-18Hz` / `-6%`. Measured across every
+  English edge-tts voice, Andrew has the lowest fundamental (≈112 Hz raw,
+  ≈98 Hz after the shift) and is the most conversational, which is what a
+  first-person account needs. Going below about `-25Hz` starts to artifact.
+- **Pacing.** `pacing.line_gap` is 0.34s against 0.12s elsewhere. Dread lives
+  in the gaps; a comedy series would lose the viewer in them.
+- **Length.** `target_seconds` and `beat_range` are per-series, so a real
+  four-movement story gets 12–16 beats instead of 6–9.
+- **Captions.** `caption.mode: "steady"` holds four-word phrases and fades
+  them in. The default `"pop"` mode bounces one to three words and fights a
+  horror read.
+- **Structure.** The writing rules force the job → the rules → the night it
+  went wrong → what is still true now, and forbid explaining the entity,
+  describing a monster, or ending on a twist reveal. The escalation is what
+  is *missing*, not what is chasing him.
 
 ## Lore bible
 
@@ -125,8 +147,8 @@ template with the words swapped out.
 
 Practical guardrails baked in or worth keeping:
 
-- Each series has its own voice, palette and look. They should not read as one
-  channel with three skins.
+- Each series has its own voice, palette, pacing and look. They should not
+  read as one channel with four skins.
 - `wrong_history` carries a satire disclaimer in `post.md`. Keep it in the
   description. Fiction presented as history is the fastest route to a strike.
 - Never let a series drift into health, finance or legal advice. That is

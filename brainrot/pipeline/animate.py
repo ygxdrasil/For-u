@@ -25,10 +25,18 @@ MOTIONS = [
 ]
 
 
+# zoompan works on the pre-scaled frame, and oversampling is what keeps its
+# integer stepping from looking like jitter. 1.5x the output covers the 1.20
+# maximum zoom with room to spare; 2x doubled render time for no visible gain.
+OVERSAMPLE = 1.5
+
+
 def kenburns_filter(index: int, frames: int, seed: int) -> str:
     zoom, x, y = MOTIONS[(index + seed) % len(MOTIONS)]
+    width = int(config.WIDTH * OVERSAMPLE)
+    height = int(config.HEIGHT * OVERSAMPLE)
     return (
-        f"scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,"
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
         f"zoompan=z='{zoom}':x='{x.format(frames=frames)}':y='{y.format(frames=frames)}'"
         f":d={frames}:s={config.WIDTH}x{config.HEIGHT}:fps={config.FPS},"
         f"setsar=1,format=yuv420p"

@@ -16,9 +16,13 @@ import edge_tts
 
 from . import ffmpeg
 
-LINE_GAP = 0.12       # pause between beats
-HOOK_GAP = 0.30       # slightly longer beat after the hook lands
-TAIL = 0.35           # trailing silence so the last word is not clipped
+# Default pacing. Series override it — horror needs air between lines where
+# a fast comedy series would lose the viewer in the gap.
+PACING = {
+    "line_gap": 0.12,   # pause between beats
+    "hook_gap": 0.30,   # slightly longer beat after the hook lands
+    "tail": 0.35,       # trailing silence so the last word is not clipped
+}
 RETRIES = 3
 
 
@@ -83,7 +87,7 @@ async def _synthesize(text: str, spec: dict, dst: Path) -> list[Word]:
     raise RuntimeError(f"edge-tts failed after {RETRIES} attempts: {last_error}")
 
 
-async def _narrate(lines: list[Line], speakers: dict, workdir: Path):
+async def _narrate(lines: list[Line], speakers: dict, workdir: Path, pacing: dict):
     parts: list[Path] = []
     words: list[Word] = []
     cursor = 0.0
@@ -103,7 +107,7 @@ async def _narrate(lines: list[Line], speakers: dict, workdir: Path):
         cursor += duration
 
         if index < len(lines) - 1:
-            gap = HOOK_GAP if index == 0 else LINE_GAP
+            gap = pacing["hook_gap"] if index == 0 else pacing["line_gap"]
             pad = workdir / f"gap{index:02d}.wav"
             ffmpeg.silence(pad, gap)
             parts.append(pad)
@@ -111,19 +115,19 @@ async def _narrate(lines: list[Line], speakers: dict, workdir: Path):
             line.end = cursor  # the beat's image holds through the pause
 
     tail = workdir / "tail.wav"
-    ffmpeg.silence(tail, TAIL)
+    ffmpeg.silence(tail, pacing["tail"])
     parts.append(tail)
-    lines[-1].end = cursor + TAIL
+    lines[-1].end = cursor + pacing["tail"]
 
     narration = workdir / "narration.wav"
     total = ffmpeg.concat_audio(parts, narration)
     return narration, total, words
 
 
-def narrate(lines: list[Line], speakers: dict, workdir: Path):
+def narrate(lines: list[Line], speakers: dict, workdir: Path, pacing: dict | None = None):
     """Render every line, returning (wav path, total seconds, absolute word timings)."""
     workdir.mkdir(parents=True, exist_ok=True)
-    return asyncio.run(_narrate(lines, speakers, workdir))
+    return asyncio.run(_narrate(lines, speakers, workdir, {**PACING, **(pacing or {})}))
 
 
 def list_voices(prefix: str = "en-US") -> list[str]:

@@ -79,7 +79,9 @@ def produce(
         lines += [tts.Line(b["speaker"], b["text"], b["image_prompt"]) for b in script["beats"]]
 
         print(f"    voicing hook {variant} ({len(lines)} lines)…")
-        narration, total, words = tts.narrate(lines, series["speakers"], variant_dir)
+        narration, total, words = tts.narrate(
+            lines, series["speakers"], variant_dir, series.get("pacing")
+        )
 
         beats: list[render.Beat] = []
         for index, line in enumerate(lines):

@@ -1,0 +1,64 @@
+{
+  "id": "nightshift",
+  "name": "Nightshift",
+  "premise": "First-person accounts from people who work alone at night. One episode is one worker, one shift, one rule they were given and did not entirely keep. Every job has its own list of rules, taped up by whoever had the job before. Nobody who wrote a list is still working. The rules, the things they are written about, and the people who leave them behind are the ongoing lore.",
+  "episode_label_format": "NIGHT {n:03d}",
+  "numbered": true,
+  "target_seconds": [
+    70,
+    95
+  ],
+  "beat_range": [
+    12,
+    16
+  ],
+  "words_per_second": 2.3,
+  "pacing": {
+    "line_gap": 0.34,
+    "hook_gap": 0.55,
+    "tail": 0.8
+  },
+  "art_style": "night photograph, sodium vapour and fluorescent light in the dark, liminal empty interior, wet asphalt and reflections, heavy shadow with one lit area, faint sensor grain and slight motion blur, security camera realism, desaturated except for the light source, nobody's face clearly visible, vertical composition",
+  "caption": {
+    "font": "Anton",
+    "mode": "steady",
+    "size": 112,
+    "primary": "&H00F2F2F2",
+    "highlight": "&H007A7AFF",
+    "outline": "&H00000000",
+    "outline_width": 8,
+    "y_ratio": 0.74
+  },
+  "speakers": {
+    "NARRATOR": {
+      "voice": "en-US-AndrewNeural",
+      "rate": "-6%",
+      "pitch": "-18Hz"
+    }
+  },
+  "default_speaker": "NARRATOR",
+  "voice_note": "Low, tired, matter of fact. Someone recounting this months later to a person they trust. He is not performing fear. He is describing what happened and letting the listener arrive at it first.",
+  "script_guidelines": [
+    "Structure it in four movements: the job, the rules, the night it went wrong, and what is still true now. Do not label them.",
+    "Beat one is the job and the pay. Ordinary, specific, boring. That is what makes the rest land.",
+    "Introduce the rules as a physical object: a laminated card, a list in marker on the back of a door, a note in someone else's handwriting.",
+    "Give two or three rules. One must sound trivial. That is the one that matters.",
+    "The wrong thing should first appear as a detail the narrator did not think about at the time. Let the viewer notice it before he does.",
+    "Escalate through what is missing or wrong rather than what is chasing him. No jump scares, no monsters described in full, no gore.",
+    "The narrator must break or nearly break the trivial rule, and the consequence must be quiet and irreversible.",
+    "Never explain the entity. Explanation is the death of it. He knows less at the end than the viewer wants him to.",
+    "The last beat is present tense and personal — what he still does, still checks, still avoids. End there. No moral, no twist reveal.",
+    "Write like speech: short sentences, some fragments. He repeats himself when he is uneasy.",
+    "Nobody is named except by their job. The place is specific but never a real named town."
+  ],
+  "hashtags": [
+    "#nightshift",
+    "#scarystories",
+    "#horror",
+    "#creepy",
+    "#nosleep",
+    "#storytime",
+    "#fyp"
+  ],
+  "tiktok_emoji": ""
+}

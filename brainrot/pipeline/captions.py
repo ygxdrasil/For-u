@@ -9,11 +9,15 @@ from pathlib import Path
 
 from . import config
 
-MAX_WORDS = 3
-MAX_CHARS = 24
+# Two caption identities. "pop" snaps one to three words in with a scale
+# bounce — the standard high-energy short-form look. "steady" holds a longer
+# phrase and fades it in, because a bouncing caption fights a horror read.
+MODES = {
+    "pop": {"max_words": 3, "max_chars": 24, "intro": r"\fscx82\fscy82\t(0,110,\fscx100\fscy100)\fad(50,0)"},
+    "steady": {"max_words": 4, "max_chars": 34, "intro": r"\fad(160,0)"},
+}
 SPLIT_PAUSE = 0.30       # a gap this long starts a new group
 MIN_EVENT = 0.10
-POP_MS = 110
 
 HEADER = """[Script Info]
 ScriptType: v4.00+
@@ -50,14 +54,14 @@ def _escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
 
 
-def group_words(words) -> list[list]:
+def group_words(words, max_words: int = 3, max_chars: int = 24) -> list[list]:
     groups: list[list] = []
     current: list = []
     for index, word in enumerate(words):
         if current:
             previous = current[-1]
-            too_long = len(current) >= MAX_WORDS
-            too_wide = sum(len(w.text) + 1 for w in current) + len(word.text) > MAX_CHARS
+            too_long = len(current) >= max_words
+            too_wide = sum(len(w.text) + 1 for w in current) + len(word.text) > max_chars
             paused = word.start - previous.end > SPLIT_PAUSE
             ended = previous.text.strip().endswith((".", "!", "?", ":", "—"))
             if too_long or too_wide or paused or ended:
@@ -72,6 +76,7 @@ def group_words(words) -> list[list]:
 def write(
     words, style: dict, font_family: str, dst: Path, total: float, bold: bool = False
 ) -> Path:
+    mode = MODES.get(style.get("mode", "pop"), MODES["pop"])
     highlight = _inline(style["highlight"])
     primary = _inline(style["primary"])
     x = config.WIDTH // 2
@@ -90,7 +95,7 @@ def write(
         )
     ]
 
-    groups = group_words(words)
+    groups = group_words(words, mode["max_words"], mode["max_chars"])
     for group_index, group in enumerate(groups):
         next_group_start = (
             groups[group_index + 1][0].start if group_index + 1 < len(groups) else total
@@ -116,11 +121,7 @@ def write(
                     rendered.append(text)
             body = " ".join(rendered)
 
-            intro = (
-                f"\\fscx82\\fscy82\\t(0,{POP_MS},\\fscx100\\fscy100)\\fad(50,0)"
-                if word_index == 0
-                else ""
-            )
+            intro = mode["intro"] if word_index == 0 else ""
             lines.append(
                 f"Dialogue: 0,{_timestamp(start)},{_timestamp(end)},Pop,,0,0,0,,"
                 f"{{\\an5\\pos({x},{y}){intro}}}{body}"
