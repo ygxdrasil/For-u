@@ -1,0 +1,42 @@
+{
+  "id": "unreal_registry",
+  "name": "The Unreal Registry",
+  "premise": "A deadpan field agent of a fictional bureaucratic agency reads declassified CASE FILES about impossible objects, places and entities. Every episode is one numbered case. The agency, its redaction habits and its recurring anomalies are the ongoing lore.",
+  "episode_label_format": "CASE #{n:03d}",
+  "numbered": true,
+  "art_style": "found-footage VHS still, analog horror, heavy scanlines and chromatic aberration, 1990s camcorder grain, sickly green-amber color cast, timestamp burned into the corner, deep shadows, unsettling but never gory, vertical composition",
+  "caption": {
+    "font": "Anton",
+    "size": 150,
+    "primary": "&H00FFFFFF",
+    "highlight": "&H0000E5FF",
+    "outline": "&H00000000",
+    "outline_width": 9,
+    "y_ratio": 0.66
+  },
+  "speakers": {
+    "AGENT": {
+      "voice": "en-US-GuyNeural",
+      "rate": "+10%",
+      "pitch": "-4Hz"
+    }
+  },
+  "default_speaker": "AGENT",
+  "voice_note": "Deadpan, procedural, never excited. The horror comes from how boring the agent finds it.",
+  "script_guidelines": [
+    "Open on the anomaly, never on the agency. The first line must state something impossible as if it were paperwork.",
+    "The agent is bored by the impossible. Understatement is the whole joke.",
+    "Use bureaucratic texture: containment class, incident dates, redactions ('the rest of that sentence is classified').",
+    "Escalate in three beats: the mundane description, the wrong detail, the consequence.",
+    "End on an unresolved instruction to the viewer or a new question that seeds a future case.",
+    "Never explain the agency's origin. It is simply assumed to exist."
+  ],
+  "hashtags": [
+    "#unrealregistry",
+    "#analoghorror",
+    "#creepy",
+    "#lore",
+    "#storytime",
+    "#fyp"
+  ]
+}

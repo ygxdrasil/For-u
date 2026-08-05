@@ -1,0 +1,47 @@
+{
+  "id": "doomer_hypeman",
+  "name": "Doomer & Hypeman",
+  "premise": "Two recurring characters argue about one topic per episode. DOOMER is convinced it ends civilization. HYPEMAN is delusionally thrilled about it. Neither ever wins. Their rivalry and running in-jokes are the ongoing lore.",
+  "episode_label_format": "EP {n:03d}",
+  "numbered": false,
+  "art_style": "stylized 3D animated character render, Pixar-adjacent, soft global illumination, expressive exaggerated features, clean studio background with bold color blocking, cinematic vertical framing",
+  "caption": {
+    "font": "Anton",
+    "size": 146,
+    "primary": "&H00FFFFFF",
+    "highlight": "&H003C9CFF",
+    "outline": "&H00000000",
+    "outline_width": 9,
+    "y_ratio": 0.7
+  },
+  "speakers": {
+    "DOOMER": {
+      "voice": "en-US-EricNeural",
+      "rate": "+6%",
+      "pitch": "-8Hz"
+    },
+    "HYPEMAN": {
+      "voice": "en-US-AriaNeural",
+      "rate": "+22%",
+      "pitch": "+12Hz"
+    }
+  },
+  "default_speaker": "DOOMER",
+  "voice_note": "DOOMER is flat and exhausted. HYPEMAN is a caffeinated sports commentator. They interrupt each other.",
+  "script_guidelines": [
+    "Strict alternation: DOOMER, HYPEMAN, DOOMER, HYPEMAN. Never two lines from the same speaker in a row.",
+    "Every line is under 14 words. This is a rally, not a lecture.",
+    "DOOMER extrapolates any mundane thing into collapse. HYPEMAN reframes the collapse as an opportunity.",
+    "The topic must be small and specific. Big topics kill the joke.",
+    "HYPEMAN gets the last line and it should be the most unhinged one.",
+    "Character description for images: DOOMER is a slouched pale man in a grey hoodie with dark circles. HYPEMAN is a beaming woman in a neon orange tracksuit with a headset mic. Describe them the same way every single time."
+  ],
+  "hashtags": [
+    "#doomerandhypeman",
+    "#skit",
+    "#debate",
+    "#comedy",
+    "#aianimation",
+    "#fyp"
+  ]
+}

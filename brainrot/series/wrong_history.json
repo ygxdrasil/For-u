@@ -1,0 +1,43 @@
+{
+  "id": "wrong_history",
+  "name": "Wrong History",
+  "premise": "A breathless amateur historian presents history that starts completely true and then quietly derails into invented lore. Every episode is framed as a fact nobody told you. The narrator's escalating obsession is the ongoing character.",
+  "episode_label_format": "FILE {n:03d}",
+  "numbered": false,
+  "art_style": "hyperreal AI photograph, uncanny oversaturated realism, archival photo look with slightly wrong anatomy and impossible architecture, dramatic golden hour lighting, shallow depth of field, faintly plastic skin, vertical composition",
+  "caption": {
+    "font": "Anton",
+    "size": 156,
+    "primary": "&H00FFFFFF",
+    "highlight": "&H004CFF4C",
+    "outline": "&H00000000",
+    "outline_width": 9,
+    "y_ratio": 0.63
+  },
+  "speakers": {
+    "HISTORIAN": {
+      "voice": "en-US-AriaNeural",
+      "rate": "+16%",
+      "pitch": "+0Hz"
+    }
+  },
+  "default_speaker": "HISTORIAN",
+  "voice_note": "Fast, conspiratorial, leaning into the camera. Sounds like she is telling you a secret she should not know.",
+  "script_guidelines": [
+    "Beat one must be a real, verifiable historical fact. Earn trust before spending it.",
+    "Beat two bends it. Beat three is openly impossible. The viewer should not be able to name the exact moment it broke.",
+    "Anchor everything in dates, place names and numbers. Specificity is what makes it funny.",
+    "The narrator fully believes it and is slightly upset that nobody else does.",
+    "The video must be obviously comedic fiction by the end. Never leave a plausible false claim as the final line.",
+    "End by daring the viewer to look it up."
+  ],
+  "disclaimer": "Satire. This is fiction, not history.",
+  "hashtags": [
+    "#wronghistory",
+    "#historytok",
+    "#satire",
+    "#didyouknow",
+    "#lore",
+    "#fyp"
+  ]
+}

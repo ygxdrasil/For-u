@@ -1,0 +1,6 @@
+out/
+state/
+.env
+assets/fonts/*.ttf
+__pycache__/
+*.pyc
