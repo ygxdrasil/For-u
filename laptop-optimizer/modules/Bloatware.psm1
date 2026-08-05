@@ -193,30 +193,61 @@ function Remove-BloatwareItem {
     }
 
     if ($Item.Kind -eq 'Win32') {
-        $quiet = $Item.QuietUninstall
         $label = $Item.Label
+        $quiet = $Item.QuietUninstall
+        $plain = $Item.UninstallString
 
-        if ([string]::IsNullOrWhiteSpace($quiet)) {
-            Write-OptLog "'$label' has no silent uninstall option. Open Settings > Apps and remove it there - it needs its own uninstaller UI." 'Warn'
+        <#
+            Three routes, best first. Plenty of preinstalled software - McAfee
+            especially - registers no quiet uninstall string at all, so falling
+            back to the visible uninstaller is the difference between removing
+            it and telling the user to go and do it themselves.
+        #>
+        $command = $null
+        $silent  = $true
+
+        if (-not [string]::IsNullOrWhiteSpace($quiet)) {
+            $command = $quiet
+        }
+        elseif ($plain -match 'MsiExec(\.exe)?"?\s*/[IXix]\s*(\{[0-9A-Fa-f\-]+\})') {
+            # An MSI product. /X is the uninstall verb; /qn runs it without a UI.
+            $command = "MsiExec.exe /X$($Matches[2]) /qn /norestart"
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($plain)) {
+            $command = $plain
+            $silent  = $false
+        }
+        else {
+            Write-OptLog "'$label' registers no uninstaller this tool can call. Remove it from Settings > Apps > Installed apps." 'Warn'
             return $false
         }
 
+        # Shown so preview mode tells you exactly what would be run, not just that
+        # something would be.
+        Write-OptLog "Uninstall command for '$label': $command" 'Info'
+
+        if (-not $silent) {
+            Write-OptLog "'$label' has no silent uninstaller, so its own uninstall window will open. Follow its prompts - this app waits until you have finished." 'Warn'
+        }
+
+        $showWindow = -not $silent
+
         $action = {
-            $exe = $quiet
+            $exe = $command
             $arguments = ''
-            if ($quiet -match '^"([^"]+)"\s*(.*)$') {
+            if ($command -match '^"([^"]+)"\s*(.*)$') {
                 $exe = $Matches[1]
                 $arguments = $Matches[2]
-            } elseif ($quiet -match '^(\S+\.exe)\s*(.*)$') {
+            } elseif ($command -match '^(\S+\.exe)\s*(.*)$') {
                 $exe = $Matches[1]
                 $arguments = $Matches[2]
             }
 
-            if ([string]::IsNullOrWhiteSpace($arguments)) {
-                Start-Process -FilePath $exe -Wait -NoNewWindow -ErrorAction Stop
-            } else {
-                Start-Process -FilePath $exe -ArgumentList $arguments -Wait -NoNewWindow -ErrorAction Stop
-            }
+            $params = @{ FilePath = $exe; Wait = $true; ErrorAction = 'Stop' }
+            if (-not [string]::IsNullOrWhiteSpace($arguments)) { $params.ArgumentList = $arguments }
+            if (-not $showWindow) { $params.NoNewWindow = $true }
+
+            Start-Process @params
         }.GetNewClosure()
 
         return Invoke-Guarded `
