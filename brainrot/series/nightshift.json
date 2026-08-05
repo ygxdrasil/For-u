@@ -60,5 +60,15 @@
     "#storytime",
     "#fyp"
   ],
-  "tiktok_emoji": ""
+  "tiktok_emoji": "",
+  "motion": {
+    "shake": 13,
+    "grain": 9,
+    "flicker": 0.012,
+    "vignette_pulse": 0.03
+  },
+  "transition": {
+    "type": "dissolve",
+    "duration": 0.45
+  }
 }

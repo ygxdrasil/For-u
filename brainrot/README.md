@@ -73,6 +73,38 @@ follow. Editing a series is editing its JSON. No code changes.
 Running several for a couple of weeks and killing the ones that flop is the
 intended way to use this.
 
+## Animation
+
+Ken Burns alone reads as a slideshow. A series can add a `motion` block, and
+every effect in it is evaluated per frame by ffmpeg — free, unlimited, and it
+works on whatever stills you already have:
+
+```json
+"motion": { "shake": 13, "grain": 9, "flicker": 0.012, "vignette_pulse": 0.03 },
+"transition": { "type": "dissolve", "duration": 0.45 }
+```
+
+- **shake** — a handheld camera, in pixels of excursion. Two incommensurate
+  sines per axis, phase-shifted by the beat index, so it never visibly loops
+  or repeats between shots. zoompan renders onto a padded canvas and the shake
+  is cropped back out of the margin, so nothing is upscaled to pay for it.
+- **grain** — `allf=t` regenerates the noise pattern every frame, so the grain
+  actually moves instead of sitting on the image like a texture.
+- **flicker** — per-frame exposure drift. A slow wave plus a fast one reads as
+  a failing fluorescent tube rather than a fade.
+- **vignette_pulse** — the vignette breathes on a five second cycle.
+- **transition: dissolve** — cross fades instead of hard cuts. Each beat is
+  rendered `duration` longer to pay for the overlap, so the total still lands
+  exactly on the narration length and the captions stay in sync.
+
+Omit the block and a series renders exactly as before. `unreal_registry` runs
+heavy grain and flicker with hard cuts, which is what sells VHS; `nightshift`
+runs the handheld and dissolves.
+
+Real image-to-video is still available through `--animate hf` on Hugging
+Face's free tier. It is best effort — those tiers are rate limited and often
+cold — and any failure falls back to the procedural motion above.
+
 ### Nightshift
 
 The horror series is built differently from the other three, and the series

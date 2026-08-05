@@ -38,5 +38,11 @@
     "#lore",
     "#storytime",
     "#fyp"
-  ]
+  ],
+  "motion": {
+    "shake": 7,
+    "grain": 18,
+    "flicker": 0.025,
+    "vignette_pulse": 0.04
+  }
 }

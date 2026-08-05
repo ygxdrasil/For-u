@@ -110,7 +110,16 @@ def produce(
         )
         destination = folder / f"hook{variant}.mp4"
         print(f"    rendering {destination.name} ({total:.1f}s)…      ")
-        render.render(beats, narration, subtitles, fonts_dir, destination, seed=seed)
+        render.render(
+            beats,
+            narration,
+            subtitles,
+            fonts_dir,
+            destination,
+            seed=seed,
+            motion=series.get("motion"),
+            transition=series.get("transition"),
+        )
         variants.append(destination.name)
 
     (folder / "script.json").write_text(
