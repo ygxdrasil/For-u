@@ -26,8 +26,10 @@ MOTIONS = [
 
 
 # zoompan works on the pre-scaled frame, and oversampling is what keeps its
-# integer stepping from looking like jitter. 1.5x the output covers the 1.20
-# maximum zoom with room to spare; 2x doubled render time for no visible gain.
+# integer stepping from looking like jitter. 1.5x is enough: at the 1.20
+# maximum zoom the crop is 1350x2400, so the result is always downsampled to
+# 1080x1920 and never upscaled. Measured against 2x on a 17-beat episode it
+# renders in 117s against 132s — a modest saving, and no quality cost.
 OVERSAMPLE = 1.5
 
 
