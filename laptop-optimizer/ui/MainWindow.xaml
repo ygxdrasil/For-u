@@ -1,0 +1,300 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Laptop Optimizer"
+    Height="760" Width="1040"
+    MinHeight="600" MinWidth="880"
+    WindowStartupLocation="CenterScreen"
+    Background="#12141A">
+
+    <Window.Resources>
+
+        <SolidColorBrush x:Key="Bg"        Color="#12141A"/>
+        <SolidColorBrush x:Key="Panel"     Color="#1C1F27"/>
+        <SolidColorBrush x:Key="PanelSoft" Color="#232733"/>
+        <SolidColorBrush x:Key="Text"      Color="#E6E8EC"/>
+        <SolidColorBrush x:Key="Muted"     Color="#9BA3AF"/>
+        <SolidColorBrush x:Key="Accent"    Color="#4C9AFF"/>
+        <SolidColorBrush x:Key="Good"      Color="#3DDC97"/>
+        <SolidColorBrush x:Key="Warn"      Color="#F5A623"/>
+        <SolidColorBrush x:Key="Bad"       Color="#FF6B6B"/>
+        <SolidColorBrush x:Key="Line"      Color="#2C313D"/>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#E6E8EC"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#E6E8EC"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#0B0D12"/>
+            <Setter Property="Background" Value="#4C9AFF"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="26,12"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#6BAEFF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Background" Value="#39414F"/>
+                                <Setter Property="Foreground" Value="#7C8797"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#E6E8EC"/>
+            <Setter Property="Background" Value="#232733"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="16,9"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#333949"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#6B7484"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="#9BA3AF"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Chrome" Background="Transparent" Padding="18,11" Margin="0,0,4,0"
+                                CornerRadius="6,6,0,0" BorderThickness="0,0,0,2" BorderBrush="Transparent">
+                            <ContentPresenter ContentSource="Header" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#1C1F27"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#4C9AFF"/>
+                                <Setter Property="Foreground" Value="#E6E8EC"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#E6E8EC"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="#12141A"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+
+        <Style TargetType="ProgressBar">
+            <Setter Property="Height" Value="6"/>
+            <Setter Property="Background" Value="#232733"/>
+            <Setter Property="Foreground" Value="#4C9AFF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+
+    </Window.Resources>
+
+    <DockPanel>
+
+        <!-- Header -->
+        <Border DockPanel.Dock="Top" Background="#1C1F27" Padding="24,18">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Laptop Optimizer" FontSize="21" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="MachineLine" Text="Reading system information..."
+                               Foreground="#9BA3AF" FontSize="12" Margin="0,4,0,0"/>
+                </StackPanel>
+
+                <Border Grid.Column="1" x:Name="AdminBadge" Background="#232733" CornerRadius="5"
+                        Padding="12,7" VerticalAlignment="Center">
+                    <TextBlock x:Name="AdminText" Text="checking..." FontSize="12" Foreground="#9BA3AF"/>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- Footer -->
+        <Border DockPanel.Dock="Bottom" Background="#1C1F27" Padding="24,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox x:Name="DryRunBox" Content="Preview only (change nothing)" IsChecked="True"/>
+                    <CheckBox x:Name="CleanupBox" Content="Include disk cleanup" Margin="22,0,0,0"/>
+                </StackPanel>
+
+                <TextBlock Grid.Column="1" x:Name="FooterNote"
+                           Text="Preview is on. Nothing will be changed until you turn it off."
+                           Foreground="#9BA3AF" FontSize="12" VerticalAlignment="Center" Margin="24,0"/>
+
+                <Button Grid.Column="2" x:Name="OpenLogButton" Content="Open log folder"
+                        Style="{StaticResource SecondaryButton}"/>
+            </Grid>
+        </Border>
+
+        <!-- Body -->
+        <TabControl x:Name="Tabs" Margin="16,10,16,10">
+
+            <TabItem Header="Optimize">
+                <Border Background="#1C1F27" CornerRadius="0,8,8,8" Padding="24">
+                    <DockPanel>
+
+                        <StackPanel DockPanel.Dock="Top">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Button Grid.Column="0" x:Name="RunButton" Content="Run optimization"
+                                        Style="{StaticResource PrimaryButton}"/>
+
+                                <StackPanel Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="StatusText" Text="Ready."/>
+                                    <ProgressBar x:Name="Progress" Margin="0,8,0,0" Minimum="0" Maximum="100" Value="0"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Border x:Name="SummaryCard" Background="#232733" CornerRadius="7"
+                                    Padding="18" Margin="0,20,0,0" Visibility="Collapsed">
+                                <StackPanel x:Name="SummaryPanel"/>
+                            </Border>
+
+                            <TextBlock Text="Activity" Foreground="#9BA3AF" FontSize="12"
+                                       Margin="0,20,0,6"/>
+                        </StackPanel>
+
+                        <Border Background="#16191F" CornerRadius="6" Padding="4">
+                            <ScrollViewer x:Name="LogScroller" VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="LogPanel" Margin="10,8"/>
+                            </ScrollViewer>
+                        </Border>
+
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <TabItem Header="What is actually wrong">
+                <Border Background="#1C1F27" CornerRadius="0,8,8,8" Padding="24">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+                            <TextBlock Text="Diagnosis" FontSize="17" FontWeight="SemiBold"/>
+                            <TextBlock Foreground="#9BA3AF" FontSize="12" Margin="0,5,0,0"
+                                       Text="A fast laptop that feels slow usually has one specific cause, not a hundred small ones. This is the hunt for it."/>
+                            <Button x:Name="ScanButton" Content="Run diagnosis"
+                                    Style="{StaticResource SecondaryButton}"
+                                    HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                        </StackPanel>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="FindingsPanel"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <TabItem Header="Preinstalled software">
+                <Border Background="#1C1F27" CornerRadius="0,8,8,8" Padding="24">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+                            <TextBlock Text="Preinstalled software" FontSize="17" FontWeight="SemiBold"/>
+                            <TextBlock Foreground="#9BA3AF" FontSize="12" Margin="0,5,0,0"
+                                       Text="Nothing here is removed automatically. Uninstalls are the one thing the undo file cannot reverse, so you choose. Items recommended for removal are pre-ticked."/>
+                            <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                <Button x:Name="ScanBloatButton" Content="Scan for preinstalled software"
+                                        Style="{StaticResource SecondaryButton}"/>
+                                <Button x:Name="RemoveBloatButton" Content="Remove ticked items"
+                                        Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" IsEnabled="False"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="BloatPanel"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <TabItem Header="Details">
+                <Border Background="#1C1F27" CornerRadius="0,8,8,8" Padding="24">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+                            <TextBlock Text="Everything the tool can see" FontSize="17" FontWeight="SemiBold"/>
+                            <TextBlock Foreground="#9BA3AF" FontSize="12" Margin="0,5,0,0"
+                                       Text="Startup entries, the service plan, and drive health - including the entries left alone and why."/>
+                            <Button x:Name="DetailsButton" Content="Load details"
+                                    Style="{StaticResource SecondaryButton}"
+                                    HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                        </StackPanel>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="DetailsPanel"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <TabItem Header="Undo">
+                <Border Background="#1C1F27" CornerRadius="0,8,8,8" Padding="24">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+                            <TextBlock Text="Undo a previous run" FontSize="17" FontWeight="SemiBold"/>
+                            <TextBlock Foreground="#9BA3AF" FontSize="12" Margin="0,5,0,0"
+                                       Text="Every run writes an undo file listing each individual change. Replaying it reverses exactly what this tool did and nothing else. Uninstalled apps have to be reinstalled by hand."/>
+                            <Button x:Name="RefreshUndoButton" Content="Refresh"
+                                    Style="{StaticResource SecondaryButton}"
+                                    HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                        </StackPanel>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="UndoPanel"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+        </TabControl>
+
+    </DockPanel>
+</Window>
