@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="fonts.css">
+<style>
+  body{margin:0;overflow:hidden;background:#06080c;}
+  #canvas{width:512px;height:512px;position:relative;}
+  svg{display:block;}
+</style>
+</head>
+<body>
+<div id="canvas">
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- background glows -->
+    <radialGradient id="bgMag" cx="50%" cy="48%" r="55%">
+      <stop offset="0%" stop-color="#ff2bd6" stop-opacity="0.28"/>
+      <stop offset="45%" stop-color="#ff2bd6" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ff2bd6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="50%" cy="46%" r="72%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="55%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="82%" stop-color="#000000" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.66"/>
+    </radialGradient>
+    <!-- plate gradients -->
+    <linearGradient id="plateTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#343c48"/>
+      <stop offset="100%" stop-color="#1e2530"/>
+    </linearGradient>
+    <linearGradient id="plateMid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2a3240"/>
+      <stop offset="100%" stop-color="#171d26"/>
+    </linearGradient>
+    <linearGradient id="plateLow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#222937"/>
+      <stop offset="100%" stop-color="#10151d"/>
+    </linearGradient>
+    <linearGradient id="plateEar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#242b38"/>
+      <stop offset="100%" stop-color="#12171f"/>
+    </linearGradient>
+    <linearGradient id="visorRecess" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#04060a"/>
+      <stop offset="100%" stop-color="#0c1016"/>
+    </linearGradient>
+    <!-- accent gradients -->
+    <linearGradient id="magSpill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff2bd6" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#ff2bd6" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ff2bd6" stop-opacity="0.38"/>
+    </linearGradient>
+    <linearGradient id="cyanWash" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0%" stop-color="#22e6ff" stop-opacity="0"/>
+      <stop offset="70%" stop-color="#22e6ff" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#22e6ff" stop-opacity="0.20"/>
+    </linearGradient>
+    <linearGradient id="eyeFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff5ce1"/>
+      <stop offset="100%" stop-color="#ff2bd6"/>
+    </linearGradient>
+    <radialGradient id="eyeHalo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff2bd6" stop-opacity="0.65"/>
+      <stop offset="50%" stop-color="#ff2bd6" stop-opacity="0.26"/>
+      <stop offset="100%" stop-color="#ff2bd6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="underGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff2bd6" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#ff2bd6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="streak" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff2bd6" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#ff5ce1" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ff2bd6" stop-opacity="0"/>
+    </linearGradient>
+    <!-- filters -->
+    <filter id="blurBig" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <filter id="blurMid" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <filter id="blurSm" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.5"/>
+    </filter>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+    <!-- grid pattern -->
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#1e2530" stroke-width="1"/>
+    </pattern>
+    <!-- head silhouette clip (union of plates) -->
+    <clipPath id="headClip">
+      <polygon points="140,70 372,70 400,108 112,108"/>
+      <polygon points="114,114 398,114 420,168 92,168"/>
+      <polygon points="88,214 424,214 424,228 256,248 88,228"/>
+      <polygon points="92,172 420,172 436,200 436,214 76,214 76,200"/>
+      <polygon points="88,218 424,218 408,286 104,286"/>
+      <polygon points="104,290 250,290 250,352 120,352"/>
+      <polygon points="262,290 408,290 392,352 262,352"/>
+      <polygon points="136,356 376,356 340,430 172,430"/>
+      <rect x="52" y="190" width="36" height="140"/>
+      <rect x="424" y="190" width="36" height="140"/>
+    </clipPath>
+  </defs>
+
+  <!-- ===== BACKGROUND ===== -->
+  <rect width="512" height="512" fill="#06080c"/>
+  <rect width="512" height="512" fill="url(#grid)" opacity="0.35"/>
+  <!-- faint distant panel blocks -->
+  <g opacity="0.4">
+    <rect x="0" y="64" width="96" height="96" fill="#0c1016"/>
+    <rect x="416" y="352" width="96" height="128" fill="#0c1016"/>
+    <rect x="384" y="32" width="128" height="64" fill="#0a0d12"/>
+    <rect x="32" y="384" width="64" height="96" fill="#0a0d12"/>
+  </g>
+  <!-- magenta glow behind head -->
+  <ellipse cx="256" cy="245" rx="250" ry="240" fill="url(#bgMag)"/>
+
+  <!-- ===== SHOULDERS (behind, grounding the bust) ===== -->
+  <g stroke="#06080c" stroke-width="3">
+    <polygon points="6,512 176,512 150,448 36,452" fill="url(#plateLow)"/>
+    <polygon points="336,512 506,512 476,452 362,448" fill="url(#plateLow)"/>
+    <rect x="196" y="444" width="120" height="68" fill="#10151d"/>
+    <rect x="216" y="452" width="16" height="60" fill="#06080c"/>
+    <rect x="280" y="452" width="16" height="60" fill="#06080c"/>
+  </g>
+  <polygon points="36,452 150,448 152,453 38,457" fill="#7df4ff" opacity="0.75" filter="url(#blurSm)"/>
+  <polygon points="362,448 476,452 474,457 360,453" fill="#ff5ce1" opacity="0.6" filter="url(#blurSm)"/>
+
+  <!-- ===== HEAD ===== -->
+  <g stroke="#06080c" stroke-width="3" stroke-linejoin="miter">
+    <!-- ears / side armor -->
+    <rect x="52" y="190" width="36" height="140" fill="url(#plateEar)"/>
+    <rect x="424" y="190" width="36" height="140" fill="url(#plateEar)"/>
+    <!-- antenna -->
+    <rect x="166" y="50" width="28" height="22" fill="url(#plateTop)"/>
+    <!-- crown -->
+    <polygon points="140,70 372,70 400,108 112,108" fill="url(#plateTop)"/>
+    <!-- forehead -->
+    <polygon points="114,114 398,114 420,168 92,168" fill="url(#plateMid)"/>
+    <!-- brow -->
+    <polygon points="92,172 420,172 436,200 436,214 76,214 76,200" fill="url(#plateTop)"/>
+    <!-- visor recess -->
+    <polygon points="88,218 424,218 408,286 104,286" fill="url(#visorRecess)"/>
+    <!-- cheeks -->
+    <polygon points="104,290 250,290 250,352 120,352" fill="url(#plateMid)"/>
+    <polygon points="262,290 408,290 392,352 262,352" fill="url(#plateMid)"/>
+    <!-- jaw -->
+    <polygon points="136,356 376,356 340,430 172,430" fill="url(#plateLow)"/>
+  </g>
+
+  <!-- panel micro-details -->
+  <g>
+    <!-- forehead seam notches -->
+    <rect x="160" y="126" width="52" height="10" fill="#12171f"/>
+    <rect x="300" y="126" width="52" height="10" fill="#12171f"/>
+    <!-- forehead center hex bolt -->
+    <rect x="244" y="132" width="24" height="24" fill="#12171f" stroke="#06080c" stroke-width="2"/>
+    <!-- chin vents -->
+    <rect x="216" y="374" width="16" height="34" fill="#06080c"/>
+    <rect x="248" y="374" width="16" height="34" fill="#06080c"/>
+    <rect x="280" y="374" width="16" height="34" fill="#06080c"/>
+    <!-- ear slits -->
+    <rect x="60" y="210" width="20" height="8" fill="#06080c"/>
+    <rect x="60" y="228" width="20" height="8" fill="#06080c"/>
+    <rect x="432" y="210" width="20" height="8" fill="#06080c"/>
+    <rect x="432" y="228" width="20" height="8" fill="#06080c"/>
+  </g>
+
+  <!-- ===== SIDE LIGHT WASHES (clipped to head) ===== -->
+  <g clip-path="url(#headClip)">
+    <rect x="256" y="50" width="220" height="400" fill="url(#magSpill)"/>
+    <rect x="40" y="50" width="200" height="400" fill="url(#cyanWash)"/>
+    <!-- eye underglow onto cheeks & brow -->
+    <ellipse cx="256" cy="262" rx="190" ry="110" fill="url(#underGlow)"/>
+  </g>
+
+  <!-- ===== EYE ===== -->
+  <!-- halo -->
+  <ellipse cx="256" cy="260" rx="160" ry="95" fill="url(#eyeHalo)"/>
+  <!-- streak across visor -->
+  <rect x="104" y="255" width="304" height="14" fill="url(#streak)" filter="url(#blurSm)"/>
+  <!-- glow stack -->
+  <polygon points="198,240 314,240 334,262 314,284 198,284 178,262" fill="#ff2bd6" filter="url(#blurBig)" opacity="0.9"/>
+  <polygon points="198,240 314,240 334,262 314,284 198,284 178,262" fill="#ff5ce1" filter="url(#blurMid)"/>
+  <polygon points="198,240 314,240 334,262 314,284 198,284 178,262" fill="url(#eyeFill)"/>
+  <!-- white-hot core -->
+  <polygon points="216,252 296,252 310,262 296,272 216,272 202,262" fill="#ffffff" filter="url(#blurSm)" opacity="0.85"/>
+  <polygon points="224,256 288,256 298,262 288,268 224,268 214,262" fill="#ffffff"/>
+  <!-- angry V-brow overhang cutting the eye -->
+  <polygon points="88,214 424,214 424,228 256,248 88,228" fill="url(#plateTop)" stroke="#06080c" stroke-width="3"/>
+  <polygon points="88,228 256,248 424,228 424,236 256,256 88,236" fill="#000000" opacity="0.35" filter="url(#blurSm)"/>
+
+  <!-- ===== CYAN SEAMS + RIM LIGHT ===== -->
+  <g stroke="#22e6ff" stroke-width="2.5" fill="none" filter="url(#blurSm)" opacity="0.9">
+    <line x1="256" y1="114" x2="256" y2="168"/>
+    <polyline points="88,229 256,249 424,229"/>
+  </g>
+  <g stroke="#7df4ff" stroke-width="2" fill="none" opacity="0.95">
+    <line x1="256" y1="114" x2="256" y2="168"/>
+    <polyline points="88,229 256,249 424,229"/>
+  </g>
+  <g stroke="#22e6ff" stroke-width="2" fill="none" opacity="0.45">
+    <line x1="250" y1="322" x2="250" y2="352"/>
+    <line x1="262" y1="322" x2="262" y2="352"/>
+  </g>
+  <!-- cyan rim, left silhouette -->
+  <g fill="#7df4ff" filter="url(#blurSm)" opacity="0.9">
+    <polygon points="140,70 148,70 120,108 112,108"/>
+    <polygon points="114,114 122,114 100,168 92,168"/>
+    <polygon points="52,190 57,190 57,330 52,330"/>
+    <polygon points="104,290 112,290 128,352 120,352"/>
+    <polygon points="136,356 144,356 180,430 172,430"/>
+  </g>
+  <g fill="#dffaff" opacity="0.85">
+    <polygon points="140,70 145,70 117,108 112,108"/>
+    <polygon points="114,114 119,114 97,168 92,168"/>
+    <polygon points="52,190 55,190 55,330 52,330"/>
+    <polygon points="104,290 109,290 125,352 120,352"/>
+    <polygon points="136,356 141,356 177,430 172,430"/>
+  </g>
+  <!-- magenta rim, right silhouette -->
+  <g fill="#ff5ce1" filter="url(#blurSm)" opacity="0.7">
+    <polygon points="366,70 372,70 400,108 394,108"/>
+    <polygon points="392,114 398,114 420,168 414,168"/>
+    <polygon points="455,190 460,190 460,330 455,330"/>
+    <polygon points="400,290 408,290 392,352 384,352"/>
+    <polygon points="370,356 376,356 340,430 334,430"/>
+  </g>
+  <!-- cyan sensor dots on ears -->
+  <g>
+    <rect x="64" y="300" width="12" height="12" fill="#22e6ff" filter="url(#blurSm)"/>
+    <rect x="66" y="302" width="8" height="8" fill="#7df4ff"/>
+    <rect x="436" y="300" width="12" height="12" fill="#22e6ff" filter="url(#blurSm)" opacity="0.8"/>
+    <rect x="438" y="302" width="8" height="8" fill="#7df4ff" opacity="0.8"/>
+  </g>
+
+  <!-- ===== VIGNETTE + GRAIN ===== -->
+  <rect width="512" height="512" fill="url(#vignette)"/>
+  <rect width="512" height="512" filter="url(#grain)" opacity="0.045" style="mix-blend-mode:overlay"/>
+</svg>
+</div>
+</body>
+</html>
