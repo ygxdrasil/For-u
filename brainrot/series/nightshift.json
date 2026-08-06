@@ -70,5 +70,12 @@
   "transition": {
     "type": "dissolve",
     "duration": 0.45
-  }
+  },
+  "horde_models": [
+    "ICBINP - I Can't Believe It's Not Photography",
+    "Realistic Vision",
+    "AbsoluteReality",
+    "Edge Of Realism"
+  ],
+  "negative": "person, face, portrait, people, crowd, daytime, bright sunlight, cartoon, illustration"
 }

@@ -46,16 +46,34 @@ render, useless as content.
 | Scripts | `GEMINI_API_KEY` | yes, no card | https://aistudio.google.com/apikey |
 | Images | `POLLINATIONS_TOKEN` | free tier ≈15k images/week | https://auth.pollinations.ai |
 | Images | `CF_ACCOUNT_ID` + `CF_API_TOKEN` | free tier 10k neurons/day | Cloudflare → Workers AI |
+| Images | *nothing* | AI Horde, anonymous | works out of the box |
 
 Image providers are tried in order and the first one that answers wins.
 Pin one with `--images cloudflare`.
 
-Two notes on images. Pollinations' **anonymous** endpoint no longer works —
-as of 2026 every model returns `402 insufficient balance`, so a free token is
-now required. And Gemini image models are excluded from the automatic chain
-on purpose: unlike its text models they are not reliably free tier, and this
-pipeline promises a zero-cost run. Opt in with `--images gemini` if you want
-them.
+**Images work with no keys at all.** The last provider in the chain is
+[AI Horde](https://aihorde.net), a volunteer GPU pool whose anonymous API key
+(`0000000000`) is a real, supported mode rather than a loophole. It is slower
+and lower fidelity than Flux on the paid-adjacent tiers, and anonymous jobs
+queue behind registered ones — but it means a clean checkout produces actual
+visuals instead of placeholder cards. Because it is a queue, every still in an
+episode is submitted at once and awaited together: one wait, not seventeen.
+
+Each series names its preferred `horde_models`, which is what keeps the look
+consistent — `nightshift` asks for ICBINP (photoreal), `unreal_registry` for
+Analog Madness (film stock). Any listed model's workers can take the job, so
+naming three keeps the queue short. Check live worker counts and ETAs at
+`https://aihorde.net/api/v2/status/models?type=image` before changing them;
+a model with one worker will stall a batch.
+
+Set `AIHORDE_API_KEY` if you register — it buys queue priority, still free.
+
+Two notes on the other providers. Pollinations' **anonymous** endpoint no
+longer works — as of 2026 every model returns `402 insufficient balance`, so a
+free token is now required. And Gemini image models are excluded from the
+automatic chain on purpose: unlike its text models they are not reliably free
+tier, and this pipeline promises a zero-cost run. Opt in with
+`--images gemini` if you want them.
 
 ## The series
 

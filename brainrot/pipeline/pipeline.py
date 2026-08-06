@@ -70,6 +70,23 @@ def produce(
     hooks = script["hooks"] if ab else script["hooks"][:1]
     variants: list[str] = []
 
+    # Every still the episode needs, in one batch. AI Horde is a queue, so
+    # asking for seventeen images at once costs one wait rather than seventeen.
+    # The body shots are shared across hook variants; only the opener differs.
+    hook_images = {
+        hook["variant"]: work / f"hook{hook['variant']}.img" for hook in hooks
+    }
+    beat_images = [work / f"beat{index:02d}.img" for index in range(len(script["beats"]))]
+    specs = [
+        (hook["image_prompt"], hook_images[hook["variant"]], seed + 900 + index)
+        for index, hook in enumerate(hooks)
+    ] + [
+        (beat["image_prompt"], beat_images[index], seed + index)
+        for index, beat in enumerate(script["beats"])
+    ]
+    print(f"    fetching {len(specs)} stills…")
+    images.fetch_many(specs, series)
+
     for hook in hooks:
         variant = hook["variant"]
         variant_dir = work / f"hook{variant}"
@@ -77,6 +94,7 @@ def produce(
 
         lines = [tts.Line(hook["speaker"], hook["text"], hook["image_prompt"])]
         lines += [tts.Line(b["speaker"], b["text"], b["image_prompt"]) for b in script["beats"]]
+        shots = [hook_images[variant]] + beat_images
 
         print(f"    voicing hook {variant} ({len(lines)} lines)…")
         narration, total, words = tts.narrate(
@@ -84,13 +102,7 @@ def produce(
         )
 
         beats: list[render.Beat] = []
-        for index, line in enumerate(lines):
-            # Beat images are keyed on prompt+seed, so variant B reuses every
-            # still variant A already downloaded — only the hook shot differs.
-            image = work / f"beat{index:02d}_{variant if index == 0 else 'shared'}.jpg"
-            print(f"    image {index + 1}/{len(lines)}…", end="\r")
-            images.fetch(line.image_prompt, series, image, seed + index)
-
+        for index, (line, image) in enumerate(zip(lines, shots)):
             clip = None
             if animate_mode == "hf":
                 clip = animate.try_hf_clip(

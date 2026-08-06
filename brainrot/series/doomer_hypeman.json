@@ -43,5 +43,11 @@
     "#comedy",
     "#aianimation",
     "#fyp"
-  ]
+  ],
+  "horde_models": [
+    "Deliberate",
+    "Rev Animated",
+    "majicMIX realistic"
+  ],
+  "negative": "photorealistic, live action, gore"
 }

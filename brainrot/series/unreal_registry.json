@@ -44,5 +44,12 @@
     "grain": 18,
     "flicker": 0.025,
     "vignette_pulse": 0.04
-  }
+  },
+  "horde_models": [
+    "Analog Madness",
+    "Analog Diffusion",
+    "ICBINP - I Can't Believe It's Not Photography",
+    "Deliberate"
+  ],
+  "negative": "person, face, portrait, modern smartphone, clean digital look, cartoon"
 }

@@ -39,5 +39,11 @@
     "#didyouknow",
     "#lore",
     "#fyp"
-  ]
+  ],
+  "horde_models": [
+    "ICBINP - I Can't Believe It's Not Photography",
+    "AbsoluteReality",
+    "Realistic Vision"
+  ],
+  "negative": "modern clothing, cartoon, cgi render"
 }
